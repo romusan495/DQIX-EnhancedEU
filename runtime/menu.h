@@ -24,10 +24,11 @@ enum {
     MI_TEXPACK = 280, MI_TEXDUMP, MI_TEXRELOAD, MI_HDTEXT, MI_SMOOTH2D, MI_TEXUP,
     MI_FARM = 300, MI_FARM_TARGET, MI_FARM_FAST, MI_FARM_HELP,             /* Modern > Farm gold by itself (farm.c) */
     MI_OUTLINE0 = 296,                                                  /* outlines: the DS's, thin, none (+0..2) */
-    MI_FONT0 = 290,                                                     /* HD text fonts (+0..5, see g_fonts in frontend_sdl.c) */
+    MI_FONT0 = 600,                                                     /* HD text fonts (+0..N_FONTS-1, see g_fonts in frontend_sdl.c) */
     MI_HDMOVIE = 310,                                                   /* HD movies from the movies folder */
     MI_HUD = 320,                                                       /* widescreen battles: the HUD over the 3D */
 };
+#define N_FONTS 15                                                      /* MI_FONT0 + i */
 
 /* shell_names: the console colours, in order (MI_SHELLC0 + i) */
 void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells);

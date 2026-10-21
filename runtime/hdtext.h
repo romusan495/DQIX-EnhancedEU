@@ -25,6 +25,7 @@ uint32_t hdtext_tag(uint32_t src2);           /* the tag of a VRAM pixel: src2 =
 #define HDT_LX(t)    (((t) >> 8) & 31)
 #define HDT_LY(t)    (((t) >> 4) & 15)
 #define HDT_INK(t)   ((t) & 1)
+#define HDT_TAG(inst, x, y, ink) (0x80000000u | (uint32_t)(inst) << 13 | (uint32_t)(x) << 8 | (uint32_t)(y) << 4 | (uint32_t)(ink))
 
 /* per frame, from the 2D engines */
 typedef struct { int x, y, w; int font, glyph; uint32_t color; int has_color; uint32_t inst; } HdGlyph;   /* glyph: for hdtext_render */
@@ -32,6 +33,12 @@ void hdtext_frame_start(void);
 void hdtext_seen(int eng, uint32_t tag, int x, int y, int ink_shown, uint32_t rgb);   /* a letter's pixel shows at (x, y) (its ink in this colour) */
 extern uint8_t g_hdtext_mask[2][256 * 192];   /* 255 where a letter's box shows */
 int hdtext_glyphs(int eng, const HdGlyph** out);                    /* this frame's letters, in drawing order */
+
+/* letters drawn into a texture (GlyphCell): a 4-bit texture, w x h, at p
+ * (rows of w / 2 bytes); rgba: it decoded. out (w * HDT_R x h * HDT_R RGBA)
+ * gets its letters at full resolution, in the colours they show; 0: no letters */
+int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t* out);
+uint32_t hdtext_texture_key(const uint8_t* p, int w, int h);       /* which letters it holds (0: none) */
 
 /* the letters at high resolution: R pixels per DS pixel, 12 rows */
 #define HDT_R 8

@@ -68,7 +68,8 @@ static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: H
 static int g_hdtext = 1;                                          /* Enhanced: the game's text drawn at full resolution (hdtext.h) */
 static int g_hdmovie = 1;                                         /* Enhanced: the movies from movies/ in HD (hdmovie.h) */
 static char g_hdfont[256] = "georgia.ttf";                        /* ...with this font ("original": the game's letters, smoothed) */
-static const char* const g_fonts[6] = { "original", "georgia.ttf", "pala.ttf", "constan.ttf", "times.ttf", "segoeui.ttf" };   /* MI_FONT0 + i */
+static const char* const g_fonts[N_FONTS] = { "original", "georgia.ttf", "pala.ttf", "constan.ttf", "times.ttf", "segoeui.ttf",   /* MI_FONT0 + i: Windows' */
+    "Lora.ttf", "CrimsonPro.ttf", "Alegreya.ttf", "Spectral.ttf", "EBGaramond.ttf", "Philosopher.ttf", "Marcellus.ttf", "Nunito.ttf", "Fredoka.ttf" };   /* ours (fonts/) */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
 static int g_small_opacity = 50;                                  /* widescreen: how solid the small screen over the field is (O), % */
 static int g_wide_dyn;                                            /* widescreen: 0 basic (the corner stays), 1 dynamic (experimental: slides for menus) */
@@ -1333,7 +1334,7 @@ static void menu_sync(void) {
     menu_check(MI_TEXDUMP, g_texdump); menu_enable(MI_TEXDUMP, g_gl && !g_classic);
     menu_check(MI_HDTEXT, g_hdtext); menu_enable(MI_HDTEXT, g_gl && !g_classic);
     menu_check(MI_HDMOVIE, g_hdmovie); menu_enable(MI_HDMOVIE, g_gl && !g_classic);
-    for (int i = 0; i < 6; i++) { menu_check(MI_FONT0 + i, !strcmp(g_hdfont, g_fonts[i])); menu_enable(MI_FONT0 + i, g_gl && !g_classic && g_hdtext); }
+    for (int i = 0; i < N_FONTS; i++) { menu_check(MI_FONT0 + i, !strcmp(g_hdfont, g_fonts[i])); menu_enable(MI_FONT0 + i, g_gl && !g_classic && g_hdtext); }
     menu_check(MI_LCD, g_opt.lcd); menu_enable(MI_LCD, g_gl);
     int lcd = g_gl && g_opt.lcd;
     menu_check(MI_LCDCOL, g_opt.lcd_color); menu_enable(MI_LCDCOL, lcd);
@@ -1901,9 +1902,6 @@ static void do_action(int id) {
     case MI_TEXDUMP: if (g_gl) { g_texdump = !g_texdump; gl_set_texture_dump(g_texdump); } break;
     case MI_HDTEXT: if (g_gl) { g_hdtext = !g_hdtext; apply_mode(); } break;
     case MI_HDMOVIE: if (g_gl) { g_hdmovie = !g_hdmovie; if (g_hdmovie) hdmovie_init(); apply_mode(); } break;   /* on: look in movies/ again */
-    case MI_FONT0: case MI_FONT0 + 1: case MI_FONT0 + 2: case MI_FONT0 + 3: case MI_FONT0 + 4: case MI_FONT0 + 5:
-        snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont);
-        break;
     case MI_POPOUT:
         if (!g_gl) break;
         if (g_wide && !g_side_by_side) g_wide_pop = !g_wide_pop;
@@ -2050,7 +2048,8 @@ static void do_action(int id) {
             "DS Lite screen colours: Pokefan531's measured DS Lite profile.", g_win);
         break;
     default:
-        if (id >= MI_SHELLC0 && id < MI_SHELLC0 + N_SHELLS) { g_opt.shell_color = id - MI_SHELLC0; g_color_chosen = 1; relayout = 1; }
+        if (id >= MI_FONT0 && id < MI_FONT0 + N_FONTS) { snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont); }
+        else if (id >= MI_SHELLC0 && id < MI_SHELLC0 + N_SHELLS) { g_opt.shell_color = id - MI_SHELLC0; g_color_chosen = 1; relayout = 1; }
         else return;
     }
     if (relayout && g_win) {                                   /* a new window size only when one was asked for */

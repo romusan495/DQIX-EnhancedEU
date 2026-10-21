@@ -76,6 +76,16 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(fnt, MI_FONT0 + 3, L"&Constantia");
     item(fnt, MI_FONT0 + 4, L"&Times New Roman");
     item(fnt, MI_FONT0 + 5, L"Segoe &UI");
+    sep(fnt);                                                   /* these come with the game (fonts/) */
+    item(fnt, MI_FONT0 + 6, L"&Lora");
+    item(fnt, MI_FONT0 + 7, L"C&rimson Pro");
+    item(fnt, MI_FONT0 + 8, L"&Alegreya");
+    item(fnt, MI_FONT0 + 9, L"Spectral");
+    item(fnt, MI_FONT0 + 10, L"&EB Garamond");
+    item(fnt, MI_FONT0 + 11, L"P&hilosopher");
+    item(fnt, MI_FONT0 + 12, L"&Marcellus");
+    item(fnt, MI_FONT0 + 13, L"&Nunito (rounded)");
+    item(fnt, MI_FONT0 + 14, L"&Fredoka (rounded, bold)");
     sep(gfx);
     item(gfx, MI_HDMOVIE, L"HD &movies from the movies folder (Enhanced)");
 
