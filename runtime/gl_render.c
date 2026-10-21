@@ -609,6 +609,7 @@ static float g_half_w = 128.0f;                                /* the frame bein
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
+static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
 static int g_ready;
 
 const int* g_gl_scale = &g_scale;
@@ -987,6 +988,7 @@ static void free_fbs(void) {
         p_glDeleteTextures(4, t); p_glDeleteFramebuffers(2, b);
     }
     p_glDeleteTextures(1, &final_tex); p_glDeleteFramebuffers(1, &final_fbo);
+    if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); held_tex = held_fbo = 0; held_w = held_h = 0; }
 }
 
 /* The largest 3D resolution this GPU can hold: widescreen up to 512 DS
@@ -1613,12 +1615,71 @@ static GLuint ghost_step(float keep) {
     return ghost_tex[cur];
 }
 
+/* Keep this frame's picture (both screens) to show later: the map window
+ * keeps the last map while a battle shows its commands on that screen. */
+void gl_hold(void) {
+    if (held_w != g_fb3_w || held_h != g_fb_h * 2) {
+        if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); }
+        held_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h * 2, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+        p_glGenFramebuffers(1, &held_fbo);
+        p_glBindFramebuffer(GL_FRAMEBUFFER, held_fbo);
+        p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, held_tex, 0);
+        held_w = g_fb3_w; held_h = g_fb_h * 2;
+    }
+    p_glBindFramebuffer(GL_FRAMEBUFFER, held_fbo);
+    p_glViewport(0, 0, held_w, held_h);
+    p_glDisable(GL_DEPTH_TEST); p_glDisable(GL_BLEND);
+    p_glUseProgram(prog_copy);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, final_tex); p_glBindSampler(0, 0);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), -1, -1, 2, 2);
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_uv"), 0, 0, 1, 1);
+    p_glBindVertexArray(vao_quad);
+    p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+/* Widescreen battle HUD: parts of a screen (the party's panels, the commands)
+ * drawn over the picture just shown, each where the layout puts it. */
+static void draw_pieces(const GlPresent* v, GLuint src) {
+    float W = (float)(256 + 2 * g_wside);
+    p_glUseProgram(prog_copy);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, src); p_glBindSampler(0, 0);
+    p_glGenerateMipmap(GL_TEXTURE_2D);                           /* drawn smaller than rendered: averaged, not shimmering */
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
+    GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
+    p_glBindVertexArray(vao_quad);
+    for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) {
+        const float* q = v->piece[i];
+        if (q[2] <= 0 || q[3] <= 0) continue;
+        /* canvas (DS pixels, y down) -> window pixels -> NDC (y up); the rect's origin is its bottom left */
+        float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
+        p_glUniform4f(loc_rect, x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
+                      q[2] * v->sc / (float)v->win_w * 2, q[3] * v->sc / (float)v->win_h * 2);
+        /* the screen in the composed picture: the top one in the upper half, the DS's 256 columns after the sides */
+        float vtop = q[4] < 0.5f ? 1.0f : 0.5f;
+        p_glUniform4f(loc_uv, ((float)g_wside + q[5]) / W, vtop - (q[6] + q[8]) / 384.0f, q[7] / W, q[8] / 384.0f);
+        p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+}
+
 /* Draw the screens (and the console, if chosen) into the window. Call once
  * per emulated frame: the motion blur advances with every call. */
 void gl_present(const GlPresent* v) {
+    if (v->held && !held_tex) {                                   /* nothing kept yet: black */
+        p_glBindFramebuffer(GL_FRAMEBUFFER, 0); p_glViewport(0, 0, v->win_w, v->win_h);
+        p_glClearColor(0, 0, 0, 1); p_glClear(GL_COLOR_BUFFER_BIT);
+        return;
+    }
     int ghost = v->lcd && v->ghost;
-    GLuint src = final_tex;
-    if (ghost && v->again && ghost_cur >= 0) src = ghost_tex[ghost_cur];   /* a second window: this frame's blur as it is */
+    GLuint src = v->held ? held_tex : final_tex;
+    if (v->held) ghost = 0;
+    else if (ghost && v->again && ghost_cur >= 0) src = ghost_tex[ghost_cur];   /* a second window: this frame's blur as it is */
     else if (ghost) src = ghost_step(0.35f);
     else if (!v->again) ghost_cur = -1;
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1676,6 +1737,7 @@ void gl_present(const GlPresent* v) {
     p_glUniform4f(p_glGetUniformLocation(P, "u_uv"), 0, 0, 1, 1);
     p_glBindVertexArray(vao_quad);
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    if (v->npiece) draw_pieces(v, final_tex);
 }
 
 /* A console photo (RGBA, rows top-down), drawn around the screens. */

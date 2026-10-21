@@ -26,6 +26,7 @@ enum {
     MI_OUTLINE0 = 296,                                                  /* outlines: the DS's, thin, none (+0..2) */
     MI_FONT0 = 290,                                                     /* HD text fonts (+0..5, see g_fonts in frontend_sdl.c) */
     MI_HDMOVIE = 310,                                                   /* HD movies from the movies folder */
+    MI_HUD = 320,                                                       /* widescreen battles: the HUD over the 3D */
 };
 
 /* shell_names: the console colours, in order (MI_SHELLC0 + i) */

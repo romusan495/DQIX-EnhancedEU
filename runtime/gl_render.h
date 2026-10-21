@@ -33,7 +33,12 @@ typedef struct {
     float lid[3], base[3], btn[3], hinge[3];          /* its colours (linear 0..1, as shown) */
     int skin;                                         /* draw the console photo (gl_set_skin) instead */
     float skin_k;                                     /* photo pixels per canvas unit */
+    int npiece;                                       /* parts of a screen drawn over the canvas (widescreen battle HUD) */
+    float piece[8][9];                                /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom); x, y, w, h on it */
+    int held;                                         /* show the picture kept by gl_hold() instead of this frame's */
 } GlPresent;
+#define GL_MAX_PIECES 8
+void gl_hold(void);                                   /* keep this frame's picture (the map window during battles) */
 void gl_set_skin(const uint8_t* rgba, int w, int h);
 void gl_present(const GlPresent* v);
 uint8_t* gl_read_window(int w, int h);
