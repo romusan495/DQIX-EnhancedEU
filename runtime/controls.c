@@ -78,36 +78,59 @@ void controls_key_name(int key, char* out, size_t n) {
              nm && nm[0] ? nm : "?");
 }
 
-static const struct { int pad; const char* ini; const char* name; } PADS[] = {
-    { SDL_CONTROLLER_BUTTON_B, "b", "Right face button" },
-    { SDL_CONTROLLER_BUTTON_A, "a", "Bottom face button" },
-    { SDL_CONTROLLER_BUTTON_Y, "y", "Top face button" },
-    { SDL_CONTROLLER_BUTTON_X, "x", "Left face button" },
-    { SDL_CONTROLLER_BUTTON_BACK, "back", "Back / Select" },
-    { SDL_CONTROLLER_BUTTON_GUIDE, "guide", "Home / Guide" },
-    { SDL_CONTROLLER_BUTTON_START, "start", "Start" },
-    { SDL_CONTROLLER_BUTTON_LEFTSTICK, "leftstick", "Left stick click" },
-    { SDL_CONTROLLER_BUTTON_RIGHTSTICK, "rightstick", "Right stick click" },
-    { SDL_CONTROLLER_BUTTON_LEFTSHOULDER, "leftshoulder", "Left shoulder" },
-    { SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, "rightshoulder", "Right shoulder" },
-    { SDL_CONTROLLER_BUTTON_DPAD_UP, "dpup", "D-pad up" },
-    { SDL_CONTROLLER_BUTTON_DPAD_DOWN, "dpdown", "D-pad down" },
-    { SDL_CONTROLLER_BUTTON_DPAD_LEFT, "dpleft", "D-pad left" },
-    { SDL_CONTROLLER_BUTTON_DPAD_RIGHT, "dpright", "D-pad right" },
-    { SDL_CONTROLLER_BUTTON_MISC1, "misc1", "Share / Capture" },
-    { SDL_CONTROLLER_BUTTON_PADDLE1, "paddle1", "Back paddle 1" },
-    { SDL_CONTROLLER_BUTTON_PADDLE2, "paddle2", "Back paddle 2" },
-    { SDL_CONTROLLER_BUTTON_PADDLE3, "paddle3", "Back paddle 3" },
-    { SDL_CONTROLLER_BUTTON_PADDLE4, "paddle4", "Back paddle 4" },
-    { SDL_CONTROLLER_BUTTON_TOUCHPAD, "touchpad", "Touchpad click" },
-    { CTL_PAD_LT, "lefttrigger", "Left trigger" },
-    { CTL_PAD_RT, "righttrigger", "Right trigger" },
+/* names: generic, then as printed on PlayStation, Xbox and Nintendo controllers
+ * (the buttons are by position, so on a Nintendo one the right button is A) */
+static const struct { int pad; const char* ini; const char* name; const char* ps; const char* xb; const char* nin; } PADS[] = {
+    { SDL_CONTROLLER_BUTTON_B, "b", "Right face button", "Circle", "B", "A" },
+    { SDL_CONTROLLER_BUTTON_A, "a", "Bottom face button", "Cross", "A", "B" },
+    { SDL_CONTROLLER_BUTTON_Y, "y", "Top face button", "Triangle", "Y", "X" },
+    { SDL_CONTROLLER_BUTTON_X, "x", "Left face button", "Square", "X", "Y" },
+    { SDL_CONTROLLER_BUTTON_BACK, "back", "Back / Select", "Create / Share", "View", "-" },
+    { SDL_CONTROLLER_BUTTON_GUIDE, "guide", "Home / Guide", "PS button", "Xbox button", "Home" },
+    { SDL_CONTROLLER_BUTTON_START, "start", "Start", "Options", "Menu", "+" },
+    { SDL_CONTROLLER_BUTTON_LEFTSTICK, "leftstick", "Left stick click", "L3", "Left stick click", "Left stick click" },
+    { SDL_CONTROLLER_BUTTON_RIGHTSTICK, "rightstick", "Right stick click", "R3", "Right stick click", "Right stick click" },
+    { SDL_CONTROLLER_BUTTON_LEFTSHOULDER, "leftshoulder", "Left shoulder", "L1", "LB", "L" },
+    { SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, "rightshoulder", "Right shoulder", "R1", "RB", "R" },
+    { SDL_CONTROLLER_BUTTON_DPAD_UP, "dpup", "D-pad up", 0, 0, 0 },
+    { SDL_CONTROLLER_BUTTON_DPAD_DOWN, "dpdown", "D-pad down", 0, 0, 0 },
+    { SDL_CONTROLLER_BUTTON_DPAD_LEFT, "dpleft", "D-pad left", 0, 0, 0 },
+    { SDL_CONTROLLER_BUTTON_DPAD_RIGHT, "dpright", "D-pad right", 0, 0, 0 },
+    { SDL_CONTROLLER_BUTTON_MISC1, "misc1", "Share / Capture", "Mute button", "Share", "Capture" },
+    { SDL_CONTROLLER_BUTTON_PADDLE1, "paddle1", "Back paddle 1", "Back button 1", 0, 0 },
+    { SDL_CONTROLLER_BUTTON_PADDLE2, "paddle2", "Back paddle 2", "Back button 2", 0, 0 },
+    { SDL_CONTROLLER_BUTTON_PADDLE3, "paddle3", "Back paddle 3", "Back button 3", 0, 0 },
+    { SDL_CONTROLLER_BUTTON_PADDLE4, "paddle4", "Back paddle 4", "Back button 4", 0, 0 },
+    { SDL_CONTROLLER_BUTTON_TOUCHPAD, "touchpad", "Touchpad click", "Touchpad click", 0, 0 },
+    { CTL_PAD_LT, "lefttrigger", "Left trigger", "L2", "LT", "ZL" },
+    { CTL_PAD_RT, "righttrigger", "Right trigger", "R2", "RT", "ZR" },
 };
 #define N_PADS ((int)(sizeof PADS / sizeof PADS[0]))
 
+int g_ctl_pad_style = CTL_STYLE_GENERIC;
+char g_ctl_pad_label[96];
+
 void controls_pad_name(int pad, char* out, size_t n) {
-    for (int i = 0; i < N_PADS; i++) if (PADS[i].pad == pad) { snprintf(out, n, "%s", PADS[i].name); return; }
+    for (int i = 0; i < N_PADS; i++) if (PADS[i].pad == pad) {
+        const char* s = g_ctl_pad_style == CTL_STYLE_PLAYSTATION ? PADS[i].ps : g_ctl_pad_style == CTL_STYLE_XBOX ? PADS[i].xb :
+                        g_ctl_pad_style == CTL_STYLE_NINTENDO ? PADS[i].nin : 0;
+        snprintf(out, n, "%s", s ? s : PADS[i].name);
+        return;
+    }
     snprintf(out, n, "-");
+}
+
+void controls_pad_detect(SDL_GameController* p) {
+    g_ctl_pad_style = CTL_STYLE_GENERIC; g_ctl_pad_label[0] = 0;
+    if (!p) return;
+    const char* nm = SDL_GameControllerName(p);
+    snprintf(g_ctl_pad_label, sizeof g_ctl_pad_label, "%s", nm ? nm : "Controller");
+    switch (SDL_GameControllerGetType(p)) {
+    case SDL_CONTROLLER_TYPE_PS3: case SDL_CONTROLLER_TYPE_PS4: case SDL_CONTROLLER_TYPE_PS5: g_ctl_pad_style = CTL_STYLE_PLAYSTATION; break;
+    case SDL_CONTROLLER_TYPE_XBOX360: case SDL_CONTROLLER_TYPE_XBOXONE: g_ctl_pad_style = CTL_STYLE_XBOX; break;
+    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO: g_ctl_pad_style = CTL_STYLE_NINTENDO; break;
+    default: break;
+    }
 }
 
 /* ---------------------------------------------------------------- state */

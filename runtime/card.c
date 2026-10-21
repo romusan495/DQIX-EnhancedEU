@@ -8,6 +8,7 @@
 static uint8_t g_card_buf[0x4000];
 static uint32_t g_card_len, g_card_pos;
 static Core* g_card_owner;
+void (*g_card_read_hook)(uint32_t addr, uint32_t len);   /* HD movies (hdmovie.c) see what the game reads */
 
 /* Transfer timing, like the hardware: the command and the gap-1 delay, then
  * each data word takes 4 bus cycles, with the gap-2 delay before every
@@ -47,6 +48,7 @@ static void rom_start(Core* k, uint32_t ctl) {
             if (a < 0x8000) a = 0x8000 + (a & 0x1FF);
             g_card_buf[i] = g_rom[a % g_rom_size];
         }
+        if (g_card_read_hook) g_card_read_hook(addr, len);
         int dmas = 0;
         for (int ch = 0; ch < 4; ch++) if (k->dma[ch].pending == DMA_CARD && (k->dma[ch].ctl & 0x80000000u)) {
             dmas |= 1 << ch;

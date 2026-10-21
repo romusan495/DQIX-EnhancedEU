@@ -46,3 +46,8 @@ upload-to-github.bat
 /rom/last-rom.txt
 # the in-game updater's working folder (downloads, the previous version)
 /update/
+# local-only folders on the play machine (backups made by work sessions, one-off scripts, logs)
+/backup-*/
+/correction-rom-europe/
+/deplacer-jeu/
+setup-log.txt

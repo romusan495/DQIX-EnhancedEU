@@ -11,6 +11,7 @@ int gl_render_max_scale(void);                        /* ...that this GPU can ho
 void gl_set_smooth(int on);                           /* smooth textures (filtered) instead of the DS's blocks */
 void gl_set_texture_pack(int on);                     /* HD textures: textures/<name>.png drawn instead of the game's */
 void gl_set_texture_dump(int on);                     /* write every new texture to textures/dump/ (for making a pack) */
+void gl_set_outline(int mode);                         /* Enhanced: characters' outlines: 0 the DS's, 1 thin, 2 none */
 void gl_set_smooth2d(int on);                         /* Enhanced: the 2D screens smoothed (xBR) */
 void gl_set_tex_upscale(int on);                      /* Enhanced: the 3D textures upscaled (xBR, 4x) */
 int gl_reload_texture_pack(void);                     /* look in textures/ again; how many were found */

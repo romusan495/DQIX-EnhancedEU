@@ -573,6 +573,22 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 g_hdtext_mask[eng][y * 256 + x] = 255;
             }
         }
+        /* a letter drawn on an opaque box (battle menus, the PV/PM labels): the box
+         * stays, and where the game's ink was, the box's colour from beside the
+         * letter, so what's behind the box doesn't show through the letter */
+        int paperL = -1; uint32_t paper = 0;
+        if (skipL >= 0) {
+            const BgLine* bl = &bgl[skipL]; uint32_t t = bl->tag[x];
+            if (!HDT_INK(t) && (bl->col[x] & PX_OPAQUE)) skipL = -1;
+            else if (HDT_INK(t))
+                for (int d = 1; d <= 16 && paperL < 0; d++)
+                    for (int s = -1; s <= 1; s += 2) {
+                        int q = x + s * d;
+                        if (q < 0 || q > 255) continue;
+                        uint32_t tq = bl->tag[q];
+                        if (tq && HDT_INST(tq) == HDT_INST(t) && !HDT_INK(tq) && (bl->col[q] & PX_OPAQUE)) { paper = bl->col[q]; paperL = skipL; skipL = -1; break; }
+                    }
+        }
         for (int k = 0; k < norder; k++) {
             int L = order[k];
             uint32_t v;
@@ -589,8 +605,11 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                     v = (c & 0x3F3F3F) | ((0x40u | ((c >> 24) & 0x1F)) << 24);
                 }
             } else {
+                if (L == paperL) { if (!(wm & (1 << L))) continue; v = to6(paper) | (1u << (24 + L)); }
+                else {
                 if (!(wm & (1 << L)) || !(bgl[L].col[x] & PX_OPAQUE)) continue;
                 v = to6(bgl[L].col[x]) | (1u << (24 + L));
+                }
             }
             v3 = v2; v2 = v1; v1 = v;
         }

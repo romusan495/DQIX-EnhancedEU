@@ -22,6 +22,7 @@
 #include "gpu3d.h"
 #include "gl_render.h"
 #include "hdtext.h"
+#include "hdmovie.h"
 
 /* ---------------------------------------------------------------- GL functions */
 #define GL_FUNCS(X) \
@@ -173,6 +174,7 @@ static const char* FS_POST =
     "in vec2 v_uv; out vec4 o_color;\n"
     "uniform sampler2D u_color; uniform sampler2D u_attr; uniform sampler2D u_depth;\n"
     "uniform int u_edge; uniform vec3 u_edgecol[8]; uniform int u_scale; uniform int u_aa;\n"
+    "uniform int u_estep; uniform float u_emix;\n"                       /* outlines: neighbour distance, how much of the outline colour */
     "uniform int u_fog; uniform int u_fog_alpha_only; uniform vec4 u_fogcol; uniform float u_fogtab[32];\n"
     "uniform int u_fogoff; uniform int u_fogshift; uniform int u_wbuf;\n"
     "void main() {\n"
@@ -181,7 +183,7 @@ static const char* FS_POST =
     "  if (u_edge != 0 && at.b > 0.5 && at.a > 0.5) {\n"
     "    float id = at.r; float d = texelFetch(u_depth, p, 0).r;\n"
     "    ivec2 sz = textureSize(u_color, 0);\n"
-    "    ivec2 o[4] = ivec2[4](ivec2(-u_scale, 0), ivec2(u_scale, 0), ivec2(0, -u_scale), ivec2(0, u_scale));\n"
+    "    ivec2 o[4] = ivec2[4](ivec2(-u_estep, 0), ivec2(u_estep, 0), ivec2(0, -u_estep), ivec2(0, u_estep));\n"
     "    for (int k = 0; k < 4; k++) {\n"
     "      ivec2 q = p + o[k];\n"
     "      if (q.x < 0 || q.y < 0 || q.x >= sz.x || q.y >= sz.y) continue;\n"
@@ -190,7 +192,7 @@ static const char* FS_POST =
     /* with anti-aliasing on, the DS blends a marked edge half and half with what is behind it
      * (the soft outlines of DQIX's characters); the farther neighbour stands in for that */
     "        if (u_aa != 0) { vec4 b = texelFetch(u_color, q, 0); c = vec4(b.a > 0.0 ? mix(b.rgb, u_edgecol[i], 17.0 / 32.0) : u_edgecol[i], b.a > 0.0 ? max(c.a, b.a) : c.a); }\n"
-    "        else c = vec4(u_edgecol[i], c.a);\n"
+    "        else c = vec4(mix(c.rgb, u_edgecol[i], u_emix), c.a);\n"
     "        break; }\n"
     "    }\n"
     "  }\n"
@@ -311,6 +313,15 @@ static const char* FS_TEXT =
     "  if (a <= 0.0) discard;\n"
     "  o_color = vec4(v_col, a);\n"
     "}\n";
+
+/* HD movies (hdmovie.h): the upscaled frame over one screen, solid where
+ * the screen shows the movie (u_mask), the game's pixels elsewhere. */
+static const char* FS_MOVIE =
+    "#version 330 core\n"
+    "in vec2 v_uv; out vec4 o_color;\n"
+    "uniform sampler2D u_hd; uniform sampler2D u_mask;\n"
+    "void main() { vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);\n"
+    "  o_color = vec4(texture(u_hd, uv).rgb, texture(u_mask, uv).r); }\n";
 
 static const char* FS_COPY =
     "#version 330 core\n"
@@ -577,7 +588,7 @@ static GLuint program(const char* vs, const char* fs, int poly) {
 
 /* ---------------------------------------------------------------- state */
 static int g_scale = 2;
-static GLuint prog_poly, prog_post, prog_comp, prog_copy, prog_screen, prog_ghost, prog_text;
+static GLuint prog_poly, prog_post, prog_comp, prog_copy, prog_screen, prog_ghost, prog_text, prog_movie;
 static GLuint ghost_tex[2], ghost_fbo[2]; static int ghost_cur = -1, ghost_w, ghost_h;
 static GLuint skin_tex; static int skin_w, skin_h;          /* console photo (View > Console colour) */
 static GLuint vao_poly, vbo_poly, vao_quad, vbo_quad;
@@ -608,6 +619,7 @@ typedef struct { uint32_t ti, pl; uint64_t hash; GLuint tex, hd, up; int w, h, u
 static TexEntry g_texcache[TEXCACHE];
 static int g_smooth;                                           /* smooth textures (bilinear filtering) */
 static int g_smooth2d;                                         /* smooth 2D (FS_COMP's smooth2d) */
+static int g_outline;                                          /* 0 the DS's outlines, 1 thin and soft, 2 none */
 static int g_texup;                                            /* upscale textures (xbr_upscale) */
 static uint64_t g_frameno;
 static uint8_t* g_decode;
@@ -723,6 +735,7 @@ static void xbr_upscale(const uint8_t* src, int w, int h, int f, uint8_t* dst) {
 #ifdef _WIN32
 #include <io.h>
 #include <direct.h>
+#include <process.h>
 #define mkdir_one(p) _mkdir(p)
 #else
 #include <dirent.h>
@@ -853,6 +866,7 @@ static GLuint pack_texture(uint64_t key) {
     return t->tex;
 }
 
+static void textures_hd_after(void);
 static void dump_texture(uint64_t key, const uint8_t* rgba, int w, int h) {
     for (int i = 0; i < g_dumped_n; i++) if (g_dumped[i] == key) return;   /* (few thousand at most) */
     if (g_dumped_n == g_dumped_cap) { g_dumped_cap = g_dumped_cap ? g_dumped_cap * 2 : 1024; g_dumped = realloc(g_dumped, sizeof *g_dumped * (size_t)g_dumped_cap); }
@@ -862,12 +876,24 @@ static void dump_texture(uint64_t key, const uint8_t* rgba, int w, int h) {
     if (f) { fclose(f); return; }                              /* dumped in an earlier run */
     mkdir_one(PACK_DIR); mkdir_one(PACK_DIR "/dump");
     stbi_write_png(path, w, h, 4, rgba, w * 4);
+    static int any;
+    if (!any++) atexit(textures_hd_after);
+}
+
+/* New textures were dumped: when the game closes, textures-hd.exe (next to the
+ * game, if it's there) makes their HD versions with Real-ESRGAN, for next time. */
+static void textures_hd_after(void) {
+#ifdef _WIN32
+    FILE* f = fopen("textures-hd.exe", "rb");
+    if (f) { fclose(f); _spawnl(_P_DETACH, "textures-hd.exe", "textures-hd.exe", NULL); }
+#endif
 }
 
 static void texcache_redo(void) { for (int i = 0; i < TEXCACHE; i++) g_texcache[i].w = 0; }   /* every texture decodes again */
 
 void gl_set_texture_pack(int on) { g_pack_on = on != 0; if (!g_pack_on) pack_unload(); texcache_redo(); }
 void gl_set_smooth2d(int on) { g_smooth2d = on != 0; }
+void gl_set_outline(int mode) { g_outline = mode >= 0 && mode <= 2 ? mode : 0; }
 void gl_set_tex_upscale(int on) { on = on != 0; if (on != g_texup) { g_texup = on; texcache_redo(); } }
 void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); }
 int gl_reload_texture_pack(void) { pack_unload(); texcache_redo(); if (g_pack_on) pack_load_list(); return g_pack_n; }
@@ -982,6 +1008,7 @@ int gl_render_init(int scale) {
     prog_screen = program(VS_QUAD, FS_SCREEN, 0);
     prog_ghost = program(VS_QUAD, FS_GHOST, 0);
     prog_text = program(VS_TEXT, FS_TEXT, 2);
+    prog_movie = program(VS_QUAD, FS_MOVIE, 0);
     if (!prog_poly || !prog_post || !prog_comp || !prog_copy || !prog_screen || !prog_ghost) return 0;
     p_glGenVertexArrays(1, &vao_poly); p_glBindVertexArray(vao_poly);
     p_glGenBuffers(1, &vbo_poly); p_glBindBuffer(GL_ARRAY_BUFFER, vbo_poly);
@@ -1195,7 +1222,7 @@ static void gl_render_(const Frame3D* f) {
     { static float ew = -1; if (ew < 0) { const char* e = getenv("DQIX_EDGEW"); ew = e ? (float)atof(e) : 0; }
       /* outlines: one DS pixel wide at 1x; above that half of one, so a thin leg or
        * arm keeps its colour inside the outline instead of becoming all outline */
-      p_glUniform1f(p_glGetUniformLocation(prog_poly, "u_edgew"), ew > 0 ? ew : g_scale >= 2 ? (float)g_scale * 0.5f : 1.0f); }
+      p_glUniform1f(p_glGetUniformLocation(prog_poly, "u_edgew"), ew > 0 ? ew : g_outline == 1 ? 1.0f : g_scale >= 2 ? (float)g_scale * 0.5f : 1.0f); }
     p_glUniform1i(p_glGetUniformLocation(prog_poly, "u_tex"), 0);
     p_glUniform1i(p_glGetUniformLocation(prog_poly, "u_highlight"), (disp3d >> 1) & 1);
     p_glUniform1i(p_glGetUniformLocation(prog_poly, "u_alphatest"), (disp3d >> 2) & 1);
@@ -1320,7 +1347,10 @@ static void gl_render_(const Frame3D* f) {
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_color"), 0);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_attr"), 1);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_depth"), 2);
-    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_edge"), (disp3d >> 5) & 1);
+    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_edge"), g_outline != 2 && ((disp3d >> 5) & 1));
+    /* thin outlines: one screen pixel, most of the outline colour (no dotted lines along chins and fingers) */
+    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_estep"), g_outline == 1 ? 1 : g_scale);
+    p_glUniform1f(p_glGetUniformLocation(prog_post, "u_emix"), g_outline == 1 ? 0.7f : 1.0f);
     /* the DS's half-and-half outlines (anti-aliasing) only at 1x: at higher resolutions
      * they turn into a see-through band around characters */
     { static int eb = -2; if (eb == -2) eb = getenv("DQIX_EDGEBLEND") ? atoi(getenv("DQIX_EDGEBLEND")) : -1;
@@ -1468,6 +1498,41 @@ static void draw_text(int eng, int top, float W, float wside) {
     p_glBindVertexArray(vao_quad);
 }
 
+/* ---------------------------------------------------------------- HD movies */
+static GLuint movie_tex[2], movie_mask[2];
+static int movie_w[2], movie_h[2];
+
+/* Over the screen just drawn (bound: final_fbo, prog_comp, u_rect set), the
+ * HD frame of the movie it shows, if any (r: the screen's rectangle, NDC). */
+static void draw_movie(int eng, const float* r) {
+    const uint8_t *rgb, *mask; int w, h, fresh;
+    if (!prog_movie || !hdmovie_frame(eng, g_engine_out[eng], &rgb, &w, &h, &mask, &fresh)) return;
+    if (!movie_tex[eng] || movie_w[eng] != w || movie_h[eng] != h) {
+        if (movie_tex[eng]) p_glDeleteTextures(1, &movie_tex[eng]);
+        movie_tex[eng] = new_tex(GL_RGB8, w, h, GL_RGB, GL_UNSIGNED_BYTE, GL_LINEAR);
+        movie_w[eng] = w; movie_h[eng] = h; fresh = 1;
+    }
+    if (!movie_mask[eng]) movie_mask[eng] = new_tex(GL_R8, 256, 192, GL_RED, GL_UNSIGNED_BYTE, GL_LINEAR);
+    p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (fresh) { p_glBindTexture(GL_TEXTURE_2D, movie_tex[eng]); p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, rgb); }
+    p_glBindTexture(GL_TEXTURE_2D, movie_mask[eng]);
+    p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RED, GL_UNSIGNED_BYTE, mask);
+    p_glUseProgram(prog_movie);
+    p_glUniform4f(p_glGetUniformLocation(prog_movie, "u_rect"), r[0], r[1], r[2], r[3]);
+    p_glUniform4f(p_glGetUniformLocation(prog_movie, "u_uv"), 0, 0, 1, 1);
+    p_glUniform1i(p_glGetUniformLocation(prog_movie, "u_hd"), 0);
+    p_glUniform1i(p_glGetUniformLocation(prog_movie, "u_mask"), 1);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, movie_tex[eng]); p_glBindSampler(0, 0);
+    p_glActiveTexture(GL_TEXTURE1); p_glBindTexture(GL_TEXTURE_2D, movie_mask[eng]); p_glBindSampler(1, 0);
+    p_glEnable(GL_BLEND);
+    p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+    p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    p_glDisable(GL_BLEND);
+    p_glActiveTexture(GL_TEXTURE0);
+    p_glUseProgram(prog_comp);
+}
+
 void gl_compose(int a_on_top, int lcd_on) {
     upload_rgb(tex_col[0], g_engine_out[0]);
     upload_rgb(tex_col[1], g_engine_out[1]);
@@ -1509,6 +1574,7 @@ void gl_compose(int a_on_top, int lcd_on) {
         if (wide) p_glUniform4f(loc_rect, -1.0f, top ? 0.0f : -1.0f, 2.0f, 1.0f);   /* top screen = upper half of NDC */
         else p_glUniform4f(loc_rect, -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f);
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
+        if (g_hdmovie_on && !wide) { const float r[4] = { -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f }; draw_movie(eng, r); }
         if (g_hdtext_on) draw_text(eng, top, W, (float)g_wside);
     }
     p_glActiveTexture(GL_TEXTURE0);

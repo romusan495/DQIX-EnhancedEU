@@ -59,6 +59,10 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(gfx, MI_SMOOTH, L"&Smooth textures (Enhanced)");
     item(gfx, MI_TEXUP, L"&Upscaled textures, xBR (Enhanced)");
     item(gfx, MI_SMOOTH2D, L"Smooth &2D: menus, maps, sprites (Enhanced)");
+    HMENU oln = sub(gfx, L"Character &outlines (Enhanced)");
+    item(oln, MI_OUTLINE0, L"Like the &DS");
+    item(oln, MI_OUTLINE0 + 1, L"&Thin");
+    item(oln, MI_OUTLINE0 + 2, L"&None");
     sep(gfx);
     item(gfx, MI_TEXPACK, L"&HD textures from the textures folder (Enhanced)");
     item(gfx, MI_TEXRELOAD, L"&Reload the HD textures");
@@ -72,6 +76,8 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(fnt, MI_FONT0 + 3, L"&Constantia");
     item(fnt, MI_FONT0 + 4, L"&Times New Roman");
     item(fnt, MI_FONT0 + 5, L"Segoe &UI");
+    sep(gfx);
+    item(gfx, MI_HDMOVIE, L"HD &movies from the movies folder (Enhanced)");
 
     HMENU scr = sub(g_bar, L"&Screen");
     item(scr, MI_LCD, L"&DS Lite screen\tF6");
@@ -158,6 +164,13 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(modern, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental)");
     item(modern, MI_CORNER, L"Top screen in the &corner (the field as on the DS)");
     item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
+    sep(modern);
+    HMENU farm = sub(modern, L"Farm &gold by itself");
+    item(farm, MI_FARM, L"&Farm here now\tCtrl+G");
+    item(farm, MI_FARM_TARGET, L"Gold &target...");
+    item(farm, MI_FARM_FAST, L"Fast &forward while farming");
+    sep(farm);
+    item(farm, MI_FARM_HELP, L"&How does it work?");
     sep(modern);
     item(modern, MI_MODERN_HELP, L"&What is this?");
     HMENU lang = sub(g_bar, L"&Language");
@@ -625,10 +638,20 @@ void volume_window_refresh(void) { if (g_vol) { SetScrollPos(GetDlgItem(g_vol, I
 #define ID_CTL_STATUS 4106
 static HWND g_ctlw;
 static int g_ctl_req = -1, g_ctl_req_what;
+static void ctl_status(HWND h) {                            /* which controller is connected (checked every second) */
+    char st[160]; wchar_t ws[160], cur[160];
+    if (g_ctl_pad_label[0]) snprintf(st, sizeof st, "Controller: %s", g_ctl_pad_label);
+    else snprintf(st, sizeof st, "No controller connected");
+    MultiByteToWideChar(CP_UTF8, 0, st, -1, ws, 160); ws[159] = 0;
+    GetDlgItemTextW(h, ID_CTL_STATUS, cur, 160);
+    if (wcscmp(cur, ws)) SetDlgItemTextW(h, ID_CTL_STATUS, ws);
+}
+static int g_ctl_style_shown = -1;
 static void ctl_fill(HWND h) {
     HWND l = GetDlgItem(h, ID_CTL_LIST);
     int sel = (int)SendMessageW(l, LB_GETCURSEL, 0, 0), top = (int)SendMessageW(l, LB_GETTOPINDEX, 0, 0);
     SendMessageW(l, LB_RESETCONTENT, 0, 0);
+    g_ctl_style_shown = g_ctl_pad_style;
     for (int a = 0; a < CA_N; a++) {
         char k0[64], k1[64], pd[64], row[300];
         controls_key_name(g_ctl_key[a][0], k0, sizeof k0); controls_key_name(g_ctl_key[a][1], k1, sizeof k1);
@@ -639,6 +662,7 @@ static void ctl_fill(HWND h) {
     }
     SendMessageW(l, LB_SETTOPINDEX, (WPARAM)top, 0);
     if (sel >= 0) SendMessageW(l, LB_SETCURSEL, (WPARAM)sel, 0);
+    ctl_status(h);
 }
 static INT_PTR CALLBACK ctl_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
@@ -648,8 +672,12 @@ static INT_PTR CALLBACK ctl_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         SendDlgItemMessageW(h, ID_CTL_LIST, LB_SETTABSTOPS, 3, (LPARAM)tabs);
         ctl_fill(h);
         SendDlgItemMessageW(h, ID_CTL_LIST, LB_SETCURSEL, 0, 0);
+        SetTimer(h, 1, 1000, NULL);
         return TRUE;
     }
+    case WM_TIMER:                                               /* a controller plugged in or out: its button names */
+        if (g_ctl_style_shown != g_ctl_pad_style) ctl_fill(h); else ctl_status(h);
+        return TRUE;
     case WM_COMMAND: {
         int sel = (int)SendDlgItemMessageW(h, ID_CTL_LIST, LB_GETCURSEL, 0, 0);
         switch (LOWORD(wp)) {
@@ -687,7 +715,7 @@ void controls_window_open(SDL_Window* win) {
     memset(buf, 0, sizeof buf);
     DLGTEMPLATE* d = (DLGTEMPLATE*)align4(buf);
     d->style = DS_MODALFRAME | DS_CENTER | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
-    d->cdit = 10; d->cx = 400; d->cy = 290;
+    d->cdit = 11; d->cx = 400; d->cy = 290;
     WORD* p = (WORD*)(d + 1);
     *p++ = 0; *p++ = 0;
     p = put_str(p, L"Controls");
@@ -702,6 +730,7 @@ void controls_window_open(SDL_Window* win) {
     p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 170, 241, 92, 15, ID_CTL_PAD, 0x80, L"Controller button...");
     p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 266, 241, 54, 15, ID_CTL_CLEAR, 0x80, L"Clear");
     p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 8, 266, 100, 15, ID_CTL_DEFAULTS, 0x80, L"Restore defaults");
+    p = put_item(p, SS_LEFTNOWORDWRAP, 114, 269, 218, 9, ID_CTL_STATUS, 0x82, L"");
     p = put_item(p, WS_TABSTOP | BS_DEFPUSHBUTTON, 338, 266, 54, 15, IDOK, 0x80, L"Close");
     g_ctlw = CreateDialogIndirectParamW(GetModuleHandleW(NULL), d, info.info.win.window, ctl_proc, 0);
 }

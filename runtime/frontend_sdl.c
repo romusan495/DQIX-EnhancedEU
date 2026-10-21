@@ -30,8 +30,10 @@
 #include "nds.h"
 #include "frontend.h"
 #include "hdtext.h"
+#include "hdmovie.h"
 #include "gl_render.h"
 #include "menu.h"
+#include "farm.h"
 #include "version.h"
 #include "session.h"
 #include "air.h"
@@ -61,9 +63,10 @@ static SDL_Window* g_win2;                                        /* ...the seco
 static int g_win2_full, g_win2_rect[4];                           /* ...fullscreen; where it was as a window (w = 0: not yet) */
 static int g_wide_pop;                                            /* widescreen: the small screen in its own window (the field alone) */
 static int g_smooth = 0;                                          /* Enhanced: smooth (filtered) textures */
-static int g_smooth2d = 0, g_texup = 0;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
+static int g_smooth2d = 0, g_texup = 0, g_outline = 0;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
 static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
 static int g_hdtext = 1;                                          /* Enhanced: the game's text drawn at full resolution (hdtext.h) */
+static int g_hdmovie = 1;                                         /* Enhanced: the movies from movies/ in HD (hdmovie.h) */
 static char g_hdfont[256] = "georgia.ttf";                        /* ...with this font ("original": the game's letters, smoothed) */
 static const char* const g_fonts[6] = { "original", "georgia.ttf", "pala.ttf", "constan.ttf", "times.ttf", "segoeui.ttf" };   /* MI_FONT0 + i */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
@@ -415,14 +418,18 @@ static void settings_load(void) {
         else if (!strcmp(key, "widescreen_popout")) g_wide_pop = atoi(val) != 0;
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
         else if (!strcmp(key, "smooth_2d")) g_smooth2d = atoi(val) != 0;
+        else if (!strcmp(key, "outlines")) { int v = atoi(val); if (v >= 0 && v <= 2) g_outline = v; }
         else if (!strcmp(key, "upscale_textures")) g_texup = atoi(val) != 0;
         else if (!strcmp(key, "hd_textures")) g_texpack = atoi(val) != 0;
         else if (!strcmp(key, "dump_textures")) g_texdump = atoi(val) != 0;
         else if (!strcmp(key, "hd_text")) g_hdtext = atoi(val) != 0;
+        else if (!strcmp(key, "hd_movies")) g_hdmovie = atoi(val) != 0;
         else if (!strcmp(key, "hd_text_font")) snprintf(g_hdfont, sizeof g_hdfont, "%s", val);
         else if (!strcmp(key, "small_screen_opacity")) { int v = atoi(val); if (v >= 10 && v <= 100) opacity_saved = v; }
         else if (!strcmp(key, "second_window")) { int r[4]; if (sscanf(val, "%d,%d,%d,%d", &r[0], &r[1], &r[2], &r[3]) == 4 && r[2] > 0 && r[3] > 0) memcpy(g_win2_rect, r, sizeof r); }
         else if (!strcmp(key, "second_window_fullscreen")) g_win2_full = atoi(val) != 0;
+        else if (!strcmp(key, "farm_gold_target")) { long v = atol(val); if (v > 0 && v <= 9999999) g_farm_target = (int)v; }
+        else if (!strcmp(key, "farm_fast_forward")) g_farm_fast = atoi(val) != 0;
         else if (!strcmp(key, "walk_any_direction")) g_analog_walk = atoi(val) != 0;   /* (the older analog_walk, off by default then, is ignored) */
         else if (!strcmp(key, "fullscreen")) g_fullscreen = atoi(val) != 0;
         else if (!strcmp(key, "dslite_filter")) g_opt.lcd = atoi(val) != 0;
@@ -473,6 +480,8 @@ static void settings_save(void) {
     fprintf(f, "upscale_textures = %d\n", g_texup);
     fprintf(f, "# enhanced: the 2D screens (menus, maps, sprites) smoothed with xBR: 0 or 1\n");
     fprintf(f, "smooth_2d = %d\n", g_smooth2d);
+    fprintf(f, "# enhanced: characters' outlines: 0 like the DS, 1 thin, 2 none\n");
+    fprintf(f, "outlines = %d\n", g_outline);
     fprintf(f, "# enhanced: HD textures from the textures folder (textures/<name>.png) instead of the game's: 0 or 1\n");
     fprintf(f, "hd_textures = %d\n", g_texpack);
     fprintf(f, "# enhanced: write every texture the game shows to textures/dump/, to make a pack from: 0 or 1\n");
@@ -481,6 +490,8 @@ static void settings_save(void) {
     fprintf(f, "hd_text = %d\n", g_hdtext);
     fprintf(f, "# its font: original (the game's letters, smoothed) or a .ttf file in the fonts folder or Windows' fonts\n");
     fprintf(f, "hd_text_font = %s\n", g_hdfont);
+    fprintf(f, "# enhanced: the movies (opening, dragon...) from the movies folder, upscaled: 0 or 1\n");
+    fprintf(f, "hd_movies = %d\n", g_hdmovie);
     fprintf(f, "# widescreen: the small screen (map, battle commands) in a window of its own: 0 or 1\n");
     fprintf(f, "widescreen_popout = %d\n", g_wide_pop);
     fprintf(f, "# window size: 1 to 8 times the DS screens (F3)\n");
@@ -508,6 +519,9 @@ static void settings_save(void) {
     fprintf(f, "second_window_fullscreen = %d\n", g_win2_full);
     fprintf(f, "# Modern: the left stick walks in any direction, like the stylus (0 or 1)\n");
     fprintf(f, "walk_any_direction = %d\n", g_analog_walk);
+    fprintf(f, "# Modern > Farm gold by itself: stop once the party has this much gold, and fast forward while farming (0 or 1)\n");
+    fprintf(f, "farm_gold_target = %d\n", g_farm_target);
+    fprintf(f, "farm_fast_forward = %d\n", g_farm_fast);
     fprintf(f, "# 0 or 1 (F11)\n");
     fprintf(f, "fullscreen = %d\n", g_fullscreen);
     fprintf(f, "# DS Lite screen filter (F6) and its parts: 0 or 1; backlight: low, medium, high, max\n");
@@ -560,6 +574,7 @@ static void apply_mode(void) {
         g_renderer3d = gl_renderer3d(); g_comp_gl = 1; g_report_capture = gl_read_screens;
     }
     g_hdtext_on = g_hdtext && !g_classic;
+    g_hdmovie_on = g_hdmovie && !g_classic;
 }
 
 /* Audio drives the pacing: the game runs ~100 ms ahead of what is being
@@ -642,11 +657,13 @@ static int try_gl(void) {
     gl_set_smooth(g_smooth);
     if (getenv("DQIX_SMOOTH2D")) g_smooth2d = atoi(getenv("DQIX_SMOOTH2D")) != 0;   /* tests */
     if (getenv("DQIX_TEXUP")) g_texup = atoi(getenv("DQIX_TEXUP")) != 0;
-    gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup);
+    if (getenv("DQIX_OUTLINES")) g_outline = atoi(getenv("DQIX_OUTLINES"));   /* tests */
+    gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup); gl_set_outline(g_outline);
     if (getenv("DQIX_HD_TEXTURES")) g_texpack = atoi(getenv("DQIX_HD_TEXTURES")) != 0;   /* tests */
     if (getenv("DQIX_DUMP_TEXTURES")) g_texdump = atoi(getenv("DQIX_DUMP_TEXTURES")) != 0;
     gl_set_texture_pack(g_texpack); gl_set_texture_dump(g_texdump);
     if (getenv("DQIX_HD_TEXT")) g_hdtext = atoi(getenv("DQIX_HD_TEXT")) != 0;
+    if (getenv("DQIX_HD_MOVIES")) g_hdmovie = atoi(getenv("DQIX_HD_MOVIES")) != 0;   /* tests */
     if (getenv("DQIX_HD_FONT")) snprintf(g_hdfont, sizeof g_hdfont, "%s", getenv("DQIX_HD_FONT"));
     hdtext_set_font(g_hdfont);
     if (!gl_render_init(g_res_auto ? (getenv("DQIX_AUTO_FROM") ? 2 : 4) : g_scale3d)) {
@@ -822,6 +839,7 @@ void frontend_init(int argc, char** argv) {
     if (g_audio) SDL_PauseAudioDevice(g_audio, 0);
     else fprintf(stderr, "no audio: %s\n", SDL_GetError());
     for (int i = 0; i < SDL_NumJoysticks(); i++) if (SDL_IsGameController(i)) { g_pad = SDL_GameControllerOpen(i); break; }
+    controls_pad_detect(g_pad);                                 /* Game > Controls names its buttons (Cross, Circle, L2...) */
     g_perf_freq = SDL_GetPerformanceFrequency();
     g_next_frame = SDL_GetPerformanceCounter();
     g_fps_t0 = g_next_frame;
@@ -1185,6 +1203,9 @@ static void update_title(double fps) {
     }
     if (g_notice[0] && SDL_GetPerformanceCounter() < g_notice_until) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s", g_notice);
     else if (g_paused) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - paused (P to continue)%s", ses);
+    else if (g_farm_on) { int g = farm_gold();
+        if (g >= 0) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - farming gold: %d of %d (Ctrl+G stops)%s", g, g_farm_target, ses);
+        else snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - farming gold (Ctrl+G stops)%s", ses); }
     else snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s%s - %.1f fps%s%s", g_classic ? "Classic" : "Enhanced",
                   g_gl && g_opt.lcd ? " - DS Lite screen" : "", fps, g_fast ? " (fast)" : "", ses);
     SDL_SetWindowTitle(g_win, title);
@@ -1219,11 +1240,13 @@ static void menu_sync(void) {
     menu_check(MI_POPOUT, g_wide_pop && wide); menu_enable(MI_POPOUT, g_gl);
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
+    for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
     menu_check(MI_TEXUP, g_texup); menu_enable(MI_TEXUP, g_gl && !g_classic);
     menu_check(MI_TEXPACK, g_texpack); menu_enable(MI_TEXPACK, g_gl && !g_classic);
     menu_enable(MI_TEXRELOAD, g_gl && !g_classic && g_texpack);
     menu_check(MI_TEXDUMP, g_texdump); menu_enable(MI_TEXDUMP, g_gl && !g_classic);
     menu_check(MI_HDTEXT, g_hdtext); menu_enable(MI_HDTEXT, g_gl && !g_classic);
+    menu_check(MI_HDMOVIE, g_hdmovie); menu_enable(MI_HDMOVIE, g_gl && !g_classic);
     for (int i = 0; i < 6; i++) { menu_check(MI_FONT0 + i, !strcmp(g_hdfont, g_fonts[i])); menu_enable(MI_FONT0 + i, g_gl && !g_classic && g_hdtext); }
     menu_check(MI_LCD, g_opt.lcd); menu_enable(MI_LCD, g_gl);
     int lcd = g_gl && g_opt.lcd;
@@ -1247,6 +1270,7 @@ static void menu_sync(void) {
     menu_check(MI_SWAP, g_swap && !wide); menu_enable(MI_SWAP, !wide);
     for (int i = 0; i < 4; i++) { menu_check(MI_OPACITY1 + i, g_small_opacity == 100 - 25 * i); menu_enable(MI_OPACITY1 + i, g_gl); }
     menu_check(MI_ANALOG, g_analog_walk);
+    menu_check(MI_FARM, g_farm_on); menu_check(MI_FARM_FAST, g_farm_fast); menu_enable(MI_FARM, !session_requested());
     for (int i = 0; i < 5; i++) { menu_check(MI_LANG1 + i, g_fw_language == i + 1); menu_enable(MI_LANG1 + i, rom_is_eur()); }
     for (int i = 0; i < 4; i++) { menu_check(MI_SIZE1 + i, g_scale == i + 1); menu_enable(MI_SIZE1 + i, !g_opt.actual); }
     menu_check(MI_INTEGER, g_opt.integer); menu_enable(MI_INTEGER, !g_opt.actual);
@@ -1267,7 +1291,7 @@ static const char* CONTROLS_TEXT =
     "Touch screen   left mouse button on the bottom screen\n\n"
     "Screens: F2 layout   U single screen (left trigger)   F9 swap (right trigger; widescreen: hold to see the other)\n"
     "Widescreen's small screen: K corner (right stick click)   I size   O opacity (left stick click)\n"
-    "Tab (hold) fast forward   P pause   Ctrl+R reset (controller: hold Start+Select+L+R)   - / = volume\n"
+    "Tab (hold) fast forward   P pause   Ctrl+R reset (controller: hold Start+Select+L+R)   - / = volume   Ctrl+G farm gold\n"
     "F5 Classic / Enhanced   F4 3D resolution   F6 DS Lite screen   F7 DS Lite console   F8 actual size   F3 window size\n"
     "F11 or Alt+Enter fullscreen (mouse at the top: menu bar)   F12 screenshot   F10 bug report   Esc leave fullscreen / quit\n"
     "In fullscreen, double-click outside the touch screen to go back to the window.";
@@ -1784,11 +1808,13 @@ static void do_action(int id) {
     case MI_RES_AUTO: if (g_gl && !g_classic) g_res_auto = 1; break;          /* auto_scale() picks it */
     case MI_SMOOTH: if (g_gl) { g_smooth = !g_smooth; gl_set_smooth(g_smooth); } break;
     case MI_SMOOTH2D: if (g_gl) { g_smooth2d = !g_smooth2d; gl_set_smooth2d(g_smooth2d); } break;
+    case MI_OUTLINE0: case MI_OUTLINE0 + 1: case MI_OUTLINE0 + 2: if (g_gl) { g_outline = id - MI_OUTLINE0; gl_set_outline(g_outline); } break;
     case MI_TEXUP: if (g_gl) { g_texup = !g_texup; gl_set_tex_upscale(g_texup); } break;
     case MI_TEXPACK: if (g_gl) { g_texpack = !g_texpack; gl_set_texture_pack(g_texpack); } break;
     case MI_TEXRELOAD: if (g_gl && g_texpack) gl_reload_texture_pack(); break;
     case MI_TEXDUMP: if (g_gl) { g_texdump = !g_texdump; gl_set_texture_dump(g_texdump); } break;
     case MI_HDTEXT: if (g_gl) { g_hdtext = !g_hdtext; apply_mode(); } break;
+    case MI_HDMOVIE: if (g_gl) { g_hdmovie = !g_hdmovie; if (g_hdmovie) hdmovie_init(); apply_mode(); } break;   /* on: look in movies/ again */
     case MI_FONT0: case MI_FONT0 + 1: case MI_FONT0 + 2: case MI_FONT0 + 3: case MI_FONT0 + 4: case MI_FONT0 + 5:
         snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont);
         break;
@@ -1849,6 +1875,35 @@ static void do_action(int id) {
 #endif
         break;
     case MI_ANALOG: g_analog_walk = !g_analog_walk; break;
+    case MI_FARM:
+        if (g_farm_on) { farm_cancel("You stopped it."); g_farm_stopped = 0; notice("Farming stopped"); break; }
+        if (session_requested()) break;
+        {   const char* why = farm_start();
+            if (why) info_box(SDL_MESSAGEBOX_INFORMATION, "Farm gold by itself", why, g_win);
+            else { g_paused = 0; notice("Farming until the party has %d gold (Ctrl+G or any button stops)", g_farm_target); } }
+        break;
+    case MI_FARM_TARGET: {
+        char prompt[200];
+        snprintf(prompt, sizeof prompt, "Stop farming once the party has this much gold (now %d):", g_farm_target);
+        char* t = g_win ? ask_text(g_win, "Gold target", prompt) : NULL;
+        if (!t) break;
+        long v = 0; for (char* c = t; *c; c++) if (*c >= '0' && *c <= '9' && v < 100000000) v = v * 10 + (*c - '0');   /* "10 000", "10.000 G" */
+        free(t);
+        if (v > 0 && v <= 9999999) { g_farm_target = (int)v; notice("Gold target: %d", g_farm_target); }
+        break;
+    }
+    case MI_FARM_FAST: g_farm_fast = !g_farm_fast; break;
+    case MI_FARM_HELP:
+        info_box(SDL_MESSAGEBOX_INFORMATION, "Farm gold by itself",
+            "Go to a place with monsters, stand on the field with nothing open, and choose Farm here now (or press Ctrl+G).\n\n"
+            "The hero goes for the monsters walking nearby, staying around the place where you started it (or walks around there until one shows up), and fights every battle by pressing A: Fight, "
+            "then each member's first command (Attack), or what their tactics say if you set tactics (Tactics in the battle menu). "
+            "Set tactics such as Show no mercy for the whole party and the battles go by themselves.\n\n"
+            "It stops, and pauses the game, when the party has the gold you asked for (Gold target), or when someone in the party is "
+            "knocked out or low on HP (a wipe-out loses half your gold), when the party leaves the area, when no battle comes for 3 minutes, "
+            "or when the game stays in a menu or conversation too long. Ctrl+G, or any button you press, stops it at once.\n\n"
+            "With Fast forward while farming on, it runs as fast as your PC can.", g_win);
+        break;
     case MI_LANG1: case MI_LANG1 + 1: case MI_LANG1 + 2: case MI_LANG1 + 3: case MI_LANG1 + 4: {
         int lang = id - MI_LANG1 + 1;
         if (lang == g_fw_language) break;
@@ -2014,6 +2069,7 @@ static void handle_events(void) {
             int in2 = g_win2 && e.key.windowID == SDL_GetWindowID(g_win2);   /* typed in the second window */
             if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else if (g_fullscreen) do_action(MI_FULL); else exit(0); break; }
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }
+            if (k == SDL_SCANCODE_G && (e.key.keysym.mod & KMOD_CTRL)) { do_action(MI_FARM); break; }   /* Modern > Farm gold by itself */
             int a = controls_key_action(k, e.key.keysym.mod);
             if (a == CA_FULL && in2) { second_window_fullscreen(); settings_save(); break; }
             if (a >= 0) hotkey(a);
@@ -2061,10 +2117,13 @@ static void handle_events(void) {
             if (e.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED && g_opt.actual) { update_actual(); if (!g_fullscreen) layout_window(); }
             break;
         case SDL_CONTROLLERDEVICEADDED:
-            if (!g_pad) g_pad = SDL_GameControllerOpen(e.cdevice.which);
+            if (!g_pad) { g_pad = SDL_GameControllerOpen(e.cdevice.which); controls_pad_detect(g_pad); }
             break;
         case SDL_CONTROLLERDEVICEREMOVED:
-            if (g_pad && SDL_GameControllerGetJoystick(g_pad) == SDL_JoystickFromInstanceID(e.cdevice.which)) { SDL_GameControllerClose(g_pad); g_pad = NULL; }
+            if (g_pad && SDL_GameControllerGetJoystick(g_pad) == SDL_JoystickFromInstanceID(e.cdevice.which)) { SDL_GameControllerClose(g_pad); g_pad = NULL;
+                for (int i = 0; i < SDL_NumJoysticks() && !g_pad; i++) if (SDL_IsGameController(i)) g_pad = SDL_GameControllerOpen(i);   /* another one still plugged in */
+                controls_pad_detect(g_pad);
+            }
             break;
         }
     }
@@ -2085,7 +2144,7 @@ void frontend_frame(void) {
         const Uint8* ks = SDL_GetKeyboardState(NULL);
         g_fe_keys = key_bits(ks) | pad_bits();
         static int always_fast = -1; if (always_fast < 0) always_fast = getenv("DQIX_FAST") != NULL;   /* tests */
-        g_fast = controls_key_held(CA_FAST, ks) || controls_pad_held(CA_FAST, g_pad) || always_fast || g_turbo;
+        g_fast = controls_key_held(CA_FAST, ks) || controls_pad_held(CA_FAST, g_pad) || always_fast || g_turbo || (g_farm_on && g_farm_fast);
         {   /* the controller's own shortcuts (stick clicks, triggers...): when pressed */
             static uint8_t was[CA_N];
             for (int a = CA_N_DS; a < CA_N; a++) {
@@ -2120,6 +2179,13 @@ void frontend_frame(void) {
         uint64_t tp = SDL_GetPerformanceCounter();
         present();
         pr->present = (float)ticks_ms(SDL_GetPerformanceCounter() - tp);
+        if (g_farm_stopped) {                                 /* Modern > Farm gold: it stopped by itself: pause and say why */
+            g_farm_stopped = 0;
+            g_paused = 1;
+            menu_sync();
+            info_box(SDL_MESSAGEBOX_INFORMATION, "Farm gold by itself", g_farm_why, g_win);
+            g_paused = 0;
+        }
         if (g_paused) {                                       /* Game > Pause: keep the window alive, the game waits */
             update_title(0);
             while (g_paused) { handle_events(); present(); SDL_Delay(15); }

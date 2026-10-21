@@ -46,7 +46,12 @@ uint16_t controls_ds_keys(const Uint8* ks);             /* the DS's buttons held
 uint16_t controls_ds_pad(SDL_GameController* p);        /* ... on the controller */
 
 void controls_key_name(int key, char* out, size_t n);   /* "Ctrl+R", "Left Shift", "-" */
-void controls_pad_name(int pad, char* out, size_t n);   /* "Right face button", "Left trigger" */
+void controls_pad_name(int pad, char* out, size_t n);   /* "Right face button", "Left trigger" ("Circle", "L2" on a PlayStation controller) */
+/* The connected controller, for the names above: call when one is opened or closed. */
+enum { CTL_STYLE_GENERIC, CTL_STYLE_PLAYSTATION, CTL_STYLE_XBOX, CTL_STYLE_NINTENDO };
+extern int g_ctl_pad_style;
+extern char g_ctl_pad_label[96];                        /* "DualSense Wireless Controller", or "" */
+void controls_pad_detect(SDL_GameController* p);
 int controls_key_owner(int key, int* slot);             /* the action that has this key, or -1 */
 int controls_pad_owner(int pad);
 /* Give `action` this key (slot 0/1) or controller button; whoever had it gets

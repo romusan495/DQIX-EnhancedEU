@@ -22,7 +22,10 @@ enum {
     MI_SEND_REPORT = 210,
     MI_LANG1 = 270,                                                     /* English, French, German, Italian, Spanish (+0..4) */
     MI_TEXPACK = 280, MI_TEXDUMP, MI_TEXRELOAD, MI_HDTEXT, MI_SMOOTH2D, MI_TEXUP,
+    MI_FARM = 300, MI_FARM_TARGET, MI_FARM_FAST, MI_FARM_HELP,             /* Modern > Farm gold by itself (farm.c) */
+    MI_OUTLINE0 = 296,                                                  /* outlines: the DS's, thin, none (+0..2) */
     MI_FONT0 = 290,                                                     /* HD text fonts (+0..5, see g_fonts in frontend_sdl.c) */
+    MI_HDMOVIE = 310,                                                   /* HD movies from the movies folder */
 };
 
 /* shell_names: the console colours, in order (MI_SHELLC0 + i) */

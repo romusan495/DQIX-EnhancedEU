@@ -356,15 +356,23 @@ int hdtext_render(int glyph, uint8_t* out, int stride, int* w) {
         int top, base; font_metrics(g->font, &top, &base);
         int hx0, hy0, hx1, hy1;
         if (!stbtt_GetCodepointBox(&g_tt, 'H', &hx0, &hy0, &hx1, &hy1) || hy1 <= 0) hy1 = 1400;
-        float scale = (float)((base - top + 1) * HDT_R) / (float)hy1;
+        static float size = -1;                                 /* capitals a little lower than the game's: PC fonts are wider */
+        if (size < 0) { const char* e = getenv("DQIX_HD_TEXT_SIZE"); size = e ? (float)atof(e) : 0.9f; if (size <= 0) size = 0.9f; }
+        float scale = (float)((base - top + 1) * HDT_R) * size / (float)hy1, sx = scale;
         int bx0, by0, bx1, by1;
-        stbtt_GetCodepointBitmapBox(&g_tt, cp, scale, scale, &bx0, &by0, &bx1, &by1);
+        stbtt_GetCodepointBitmapBox(&g_tt, cp, sx, scale, &bx0, &by0, &bx1, &by1);
+        if (bx1 - bx0 > W) {                                    /* wider than the game's letter (m, w): narrowed to fit, not cut */
+            sx = scale * (float)W / (float)(bx1 - bx0);
+            stbtt_GetCodepointBitmapBox(&g_tt, cp, sx, scale, &bx0, &by0, &bx1, &by1);
+        }
         int bw = bx1 - bx0, bh = by1 - by0;
         if (bw > 0 && bh > 0 && bw <= 400 && bh <= 400) {
             unsigned char* bm = malloc((size_t)bw * (size_t)bh);
-            stbtt_MakeCodepointBitmap(&g_tt, bm, bw, bh, bw, scale, scale, cp);
+            stbtt_MakeCodepointBitmap(&g_tt, bm, bw, bh, bw, sx, scale, cp);
             float cx = (float)(inkx0 + inkx1 + 1) * HDT_R / 2.0f;    /* centred on the game's letter */
             int ox = (int)lroundf(cx - (float)bw / 2.0f), oy = (base + 1) * HDT_R + by0;
+            if (ox + bw > W) ox = W - bw;
+            if (ox < 0) ox = 0;
             for (int v = 0; v < bh; v++)
                 for (int u = 0; u < bw; u++) {
                     int X = ox + u, Y = oy + v;
