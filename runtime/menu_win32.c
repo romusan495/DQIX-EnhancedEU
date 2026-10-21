@@ -164,6 +164,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(modern, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental)");
     item(modern, MI_CORNER, L"Top screen in the &corner (the field as on the DS)");
     item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
+    item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
     sep(modern);
     HMENU farm = sub(modern, L"Farm &gold by itself");
     item(farm, MI_FARM, L"&Farm here now\tCtrl+G");
