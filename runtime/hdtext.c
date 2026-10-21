@@ -168,7 +168,7 @@ void hook_GlyphBlit(Cpu* c, void (*orig)(Cpu*)) {
                     int ink = (rows[y] >> x) & 1;
                     uint32_t* t = &pg[off + (X & 1)];
                     if (ink || !(*t & 0x80000000u) || !HDT_INK(*t))   /* another letter's ink stays */
-                        *t = 0x80000000u | inst << 13 | (uint32_t)x << 8 | (uint32_t)y << 4 | (uint32_t)ink;
+                        *t = HDT_TAG(inst, x, y, ink);
                 }
                 break;
             }
@@ -182,6 +182,12 @@ void hook_GlyphBlit(Cpu* c, void (*orig)(Cpu*)) {
  *   [sp] its width, [sp+4] its height, [sp+8] colour index, [sp+12] font
  * Rows of width / 2 bytes, the left pixel of each byte in the low nibble.
  * The ink pixels get tags (the GPU renderer finds them in the texture). */
+static uint32_t* cell_tag(uint32_t bmp, int bw, int bh, int X, int Y, int create) {   /* pixel (X, Y)'s tag */
+    if (X < 0 || Y < 0 || X >= bw || Y >= bh) return NULL;
+    uint8_t* p = addr_ptr(bmp + (uint32_t)(Y * (bw >> 1) + (X >> 1)));
+    uint32_t off; uint32_t* pg = p ? page_for(p, create, &off) : NULL;
+    return pg ? &pg[off + (X & 1)] : NULL;
+}
 void hook_GlyphCell(Cpu* c, void (*orig)(Cpu*)) {
     int x0 = (int32_t)c->r[0], y0 = (int32_t)c->r[1];
     uint32_t gl = c->r[2], bmp = c->r[3];
@@ -194,11 +200,8 @@ void hook_GlyphCell(Cpu* c, void (*orig)(Cpu*)) {
     if (on && g_hdtext_any)
         for (int y = 0; y < 12; y++)
             for (int x = -1; x < 17; x++) {
-                int X = x0 + x, Y = y0 + y;
-                if (X < 0 || Y < 0 || X >= bw || Y >= bh) continue;
-                uint8_t* p = addr_ptr(bmp + (uint32_t)(Y * (bw >> 1) + (X >> 1)));
-                uint32_t off; uint32_t* pg = p ? page_for(p, 0, &off) : NULL;
-                if (pg) keep[y][x + 1] = pg[off + (X & 1)];
+                uint32_t* t = cell_tag(bmp, bw, bh, x0 + x, y0 + y, 0);
+                if (t) keep[y][x + 1] = *t;
             }
     orig(c);
     if (!on) return;
@@ -208,13 +211,10 @@ void hook_GlyphCell(Cpu* c, void (*orig)(Cpu*)) {
     uint32_t inst = new_inst(gi, color);
     for (int y = 0; y < 12; y++)
         for (int x = -1; x < 17; x++) {
-            int X = x0 + x, Y = y0 + y;
-            if (X < 0 || Y < 0 || X >= bw || Y >= bh) continue;
             int ink = x >= 0 && x < w && ((rows[y] >> x) & 1);
             if (!ink && !keep[y][x + 1]) continue;
-            uint8_t* p = addr_ptr(bmp + (uint32_t)(Y * (bw >> 1) + (X >> 1)));
-            uint32_t off; uint32_t* pg = p ? page_for(p, 1, &off) : NULL;
-            if (pg) pg[off + (X & 1)] = ink ? 0x80000000u | inst << 13 | (uint32_t)x << 8 | (uint32_t)y << 4 | 1u : keep[y][x + 1];
+            uint32_t* t = cell_tag(bmp, bw, bh, x0 + x, y0 + y, 1);
+            if (t) *t = ink ? HDT_TAG(inst, x, y, 1) : keep[y][x + 1];
         }
 }
 
@@ -263,10 +263,11 @@ void hdtext_seen(int eng, uint32_t tag, int x, int y, int ink_shown, uint32_t rg
 }
 
 static uint32_t g_order_base;
-static int by_order(const void* a, const void* b) {          /* drawing order (the ring of letters wraps) */
-    uint32_t x = (((const HdGlyph*)a)->inst - g_order_base) & (INST_N - 1), y = (((const HdGlyph*)b)->inst - g_order_base) & (INST_N - 1);
+static int inst_cmp(uint32_t a, uint32_t b) {                /* drawing order (the ring of letters wraps) */
+    uint32_t x = (a - g_order_base) & (INST_N - 1), y = (b - g_order_base) & (INST_N - 1);
     return x < y ? -1 : x > y;
 }
+static int by_order(const void* a, const void* b) { return inst_cmp(((const HdGlyph*)a)->inst, ((const HdGlyph*)b)->inst); }
 
 int hdtext_glyphs(int eng, const HdGlyph** out) {
     g_order_base = g_inst_next;
@@ -278,10 +279,7 @@ int hdtext_glyphs(int eng, const HdGlyph** out) {
 /* ---------------------------------------------------------------- letters in textures */
 typedef struct { uint32_t inst; int ox, oy; uint8_t rgba[4]; } CellLetter;
 
-static int by_inst(const void* a, const void* b) {            /* drawing order */
-    uint32_t x = (((const CellLetter*)a)->inst - g_order_base) & (INST_N - 1), y = (((const CellLetter*)b)->inst - g_order_base) & (INST_N - 1);
-    return x < y ? -1 : x > y;
-}
+static int by_inst(const void* a, const void* b) { return inst_cmp(((const CellLetter*)a)->inst, ((const CellLetter*)b)->inst); }
 
 int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t* out) {
     if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;

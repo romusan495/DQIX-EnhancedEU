@@ -25,6 +25,7 @@ uint32_t hdtext_tag(uint32_t src2);           /* the tag of a VRAM pixel: src2 =
 #define HDT_LX(t)    (((t) >> 8) & 31)
 #define HDT_LY(t)    (((t) >> 4) & 15)
 #define HDT_INK(t)   ((t) & 1)
+#define HDT_TAG(inst, x, y, ink) (0x80000000u | (uint32_t)(inst) << 13 | (uint32_t)(x) << 8 | (uint32_t)(y) << 4 | (uint32_t)(ink))
 
 /* per frame, from the 2D engines */
 typedef struct { int x, y, w; int font, glyph; uint32_t color; int has_color; uint32_t inst; } HdGlyph;   /* glyph: for hdtext_render */

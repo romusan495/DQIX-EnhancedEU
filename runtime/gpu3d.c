@@ -1676,10 +1676,16 @@ int gpu3d_tex_size(u32 ti, int* w, int* h) {
     return ((ti >> 26) & 7) != 0;
 }
 
-const uint8_t* gpu3d_texels(u32 ti) {
+/* Where a texture's texels are (texture address space) and how many bytes. */
+static u32 tex_span(u32 ti, u32* len) {
     int w, h; gpu3d_tex_size(ti, &w, &h);
     static const u32 bits[8] = { 0, 8, 2, 4, 8, 2, 8, 16 };
-    u32 base = (ti & 0xFFFF) * 8, n = (u32)(w * h) * bits[(ti >> 26) & 7] / 8;
+    *len = (u32)(w * h) * bits[(ti >> 26) & 7] / 8;
+    return (ti & 0xFFFF) * 8;
+}
+
+const uint8_t* gpu3d_texels(u32 ti) {
+    u32 n, base = tex_span(ti, &n);
     uint8_t* p = g_tex_slot[(base >> 17) & 3];
     return p && (base & 0x1FFFF) + n <= 0x20000 ? p + (base & 0x1FFFF) : NULL;
 }
@@ -1722,8 +1728,8 @@ u64 gpu3d_texture_hash(u32 ti, u32 pl) {
     int fmt = (ti >> 26) & 7;
     u32 base = (ti & 0xFFFF) * 8, n = (u32)(w * h);
     u64 hs = 0xCBF29CE484222325ull ^ ((u64)(ti & 0x3FF0FFFFu) << 16) ^ pl;
-    static const u32 bits[8] = { 0, 8, 2, 4, 8, 2, 8, 16 };
-    hs = hash_range(hs, base, n * bits[fmt] / 8, 0);
+    u32 len; tex_span(ti, &len);
+    hs = hash_range(hs, base, len, 0);
     u32 pb = pl * 16;
     switch (fmt) {
     case 1: hs = hash_range(hs, pb, 64, 1); break;

@@ -899,8 +899,6 @@ void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); }
 int gl_reload_texture_pack(void) { pack_unload(); texcache_redo(); if (g_pack_on) pack_load_list(); return g_pack_n; }
 
 static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
-    static uint32_t font_gen; static int text_on;
-    if (font_gen != hdtext_font_gen() || text_on != g_hdtext_on) { font_gen = hdtext_font_gen(); text_on = g_hdtext_on; texcache_redo(); }   /* letters in textures: redrawn */
     TexEntry* e = tex_lookup(ti, pl);
     gpu3d_tex_size(ti, w, h);
     e->used = g_frameno;
@@ -911,40 +909,34 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
             double t0 = perf_ms();
             e->hash = hs; e->w = *w; e->h = *h; e->hd = 0;
             gpu3d_decode_texture(ti, pl, g_decode);
-            int cell = 0;
-            if (g_hdtext_on && ((ti >> 26) & 7) == 3) {                 /* letters drawn into it: again at full resolution (hdtext.c) */
-                if (!g_upbuf) g_upbuf = malloc((size_t)512 * 512 * 16);
-                cell = hdtext_texture(gpu3d_texels(ti), *w, *h, g_decode, g_upbuf);
+            if (!g_upbuf) g_upbuf = malloc((size_t)512 * 512 * 16);
+            int f = 0;                                                  /* > 0: g_upbuf holds it at f x */
+            e->upd = 0;
+            if (g_hdtext_on && ((ti >> 26) & 7) == 3 && hdtext_texture(gpu3d_texels(ti), *w, *h, g_decode, g_upbuf))
+                f = HDT_R;                                              /* letters drawn into it: again at full resolution (hdtext.c) */
+            else {
+                if (g_pack_on || g_dump_on) {
+                    if (g_pack_on) pack_load_list();
+                    uint64_t key = tex_key(g_decode, *w, *h);
+                    if (g_dump_on) dump_texture(key, g_decode, *w, *h);
+                    if (g_pack_on && g_pack_n) e->hd = pack_texture(key);
+                }
+                if (!e->hd && g_texup && *w * *h <= 256 * 256) {   /* upscaled: 4x (2x for the big ones) */
+                    f = *w * *h <= 128 * 128 ? 4 : 2;
+                    bleed(g_decode, *w, *h);
+                    xbr_upscale(g_decode, *w, *h, f, g_upbuf);
+                }
             }
-            if (cell) {
+            if (f) {
                 if (!e->up) p_glGenTextures(1, &e->up);
                 p_glBindTexture(GL_TEXTURE_2D, e->up);
-                p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w * HDT_R, *h * HDT_R, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_upbuf);
+                p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w * f, *h * f, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_upbuf);
                 p_glGenerateMipmap(GL_TEXTURE_2D);
                 e->upd = 1;
-            } else if (g_pack_on || g_dump_on) {
-                if (g_pack_on) pack_load_list();
-                uint64_t key = tex_key(g_decode, *w, *h);
-                if (g_dump_on) dump_texture(key, g_decode, *w, *h);
-                if (g_pack_on && g_pack_n) e->hd = pack_texture(key);
-            }
-            if (!cell) {
-                e->upd = 0;
-                if (!e->hd && g_texup && *w * *h <= 256 * 256) {   /* upscaled: 4x (2x for the big ones) */
-                    int f = *w * *h <= 128 * 128 ? 4 : 2;
-                    bleed(g_decode, *w, *h);
-                    if (!g_upbuf) g_upbuf = malloc((size_t)512 * 512 * 16);
-                    xbr_upscale(g_decode, *w, *h, f, g_upbuf);
-                    if (!e->up) p_glGenTextures(1, &e->up);
-                    p_glBindTexture(GL_TEXTURE_2D, e->up);
-                    p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w * f, *h * f, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_upbuf);
-                    p_glGenerateMipmap(GL_TEXTURE_2D);
-                    e->upd = 1;
-                } else if (!e->hd) {
-                    if (g_smooth) bleed(g_decode, *w, *h);
-                    p_glBindTexture(GL_TEXTURE_2D, e->tex);
-                    p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w, *h, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_decode);
-                }
+            } else if (!e->hd) {
+                if (g_smooth) bleed(g_decode, *w, *h);
+                p_glBindTexture(GL_TEXTURE_2D, e->tex);
+                p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w, *h, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_decode);
             }
             g_gl_stats.uploads++; g_gl_stats.upload_texels += *w * *h; g_gl_stats.upload_ms += perf_ms() - t0;
         }
@@ -1136,6 +1128,8 @@ static void gl_render(const Frame3D* f) {
 }
 static void gl_render_(const Frame3D* f) {
     g_frameno++;
+    {   static uint32_t font_gen; static int text_on;                   /* letters in textures (hdtext_texture): drawn again */
+        if (font_gen != hdtext_font_gen() || text_on != g_hdtext_on) { font_gen = hdtext_font_gen(); text_on = g_hdtext_on; texcache_redo(); } }
     {   /* tests: DQIX_GL_PROBE="f,x,y": on the first 3D frame from frame f, list the polygons over DS pixel x,y */
         static int pn = -2, px, py; const char* e;
         if (pn == -2) { pn = -1; if ((e = getenv("DQIX_GL_PROBE"))) sscanf(e, "%d,%d,%d", &pn, &px, &py); }
