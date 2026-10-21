@@ -9,7 +9,10 @@
  *   after, so there are no seams where it tiles;
  * - see-through texels get their solid neighbours' colour first, so no dark
  *   fringes come in from the edges;
- * - alpha is upscaled as its own grey picture; on/off alpha stays on/off.
+ * - alpha is upscaled as its own grey picture; on/off alpha stays on/off;
+ * - Real-ESRGAN alone smooths away the drawing's grain (hair strands, eye
+ *   pixels): its colours are mixed half and half with a sharp (Lanczos)
+ *   enlargement of the original, which keeps the detail.
  * What happened goes to textures/hd-auto.log. */
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -20,6 +23,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
+#include <math.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
@@ -104,6 +108,42 @@ static unsigned char* padded(const unsigned char* px, int w, int h, int p, int a
     return o;
 }
 
+/* the colours enlarged SCALE times with a Lanczos-3 filter, wrapping like the texture (3 channels) */
+static float lanczos3(float x) {
+    if (x < 0) x = -x;
+    if (x < 1e-6f) return 1.0f;
+    if (x >= 3.0f) return 0.0f;
+    const float pi = 3.14159265f;
+    return 3.0f * sinf(pi * x) * sinf(pi * x / 3.0f) / (pi * pi * x * x);
+}
+static unsigned char* lanczos_up(const unsigned char* px, int w, int h) {
+    int W = w * SCALE, H = h * SCALE;
+    float* row = malloc(sizeof(float) * (size_t)W * h * 3);
+    for (int y = 0; y < h; y++)                                  /* across */
+        for (int X = 0; X < W; X++) {
+            float c = (X + 0.5f) / SCALE - 0.5f, s[3] = { 0, 0, 0 }, ws = 0;
+            for (int k = (int)floorf(c) - 2; k <= (int)floorf(c) + 3; k++) {
+                float f = lanczos3(c - (float)k); int sx = ((k % w) + w) % w;
+                for (int ch = 0; ch < 3; ch++) s[ch] += f * px[(y * w + sx) * 4 + ch];
+                ws += f;
+            }
+            for (int ch = 0; ch < 3; ch++) row[((size_t)y * W + X) * 3 + ch] = s[ch] / ws;
+        }
+    unsigned char* o = malloc((size_t)W * H * 3);
+    for (int Y = 0; Y < H; Y++)                                  /* down */
+        for (int X = 0; X < W; X++) {
+            float c = (Y + 0.5f) / SCALE - 0.5f, s[3] = { 0, 0, 0 }, ws = 0;
+            for (int k = (int)floorf(c) - 2; k <= (int)floorf(c) + 3; k++) {
+                float f = lanczos3(c - (float)k); int sy = ((k % h) + h) % h;
+                for (int ch = 0; ch < 3; ch++) s[ch] += f * row[((size_t)sy * W + X) * 3 + ch];
+                ws += f;
+            }
+            for (int ch = 0; ch < 3; ch++) { float v = s[ch] / ws + 0.5f; o[((size_t)Y * W + X) * 3 + ch] = (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v); }
+        }
+    free(row);
+    return o;
+}
+
 static int run_upscaler(const char* tool, const char* in, const char* out) {
     char cmd[2400];
     const char* over = getenv("TEXHD_UPSCALER");                 /* tests: another upscaler, "<cmd> <in> <out>" */
@@ -181,19 +221,22 @@ static int upscale_new(const char* game) {
         for (int k = 0; k < w * h; k++) { int a = px[k * 4 + 3]; if (a != 255) solid = 0; if (a != 0 && a != 255) binary = 0; }
         if (!solid) { snprintf(p, sizeof p, "%s" SEP "%s", out_a, work[i]); ab = stbi_load(p, &W, &H, &c2, 3); }
         int ow = w * SCALE, oh = h * SCALE;
+        unsigned char* sharp;                                    /* the original's grain, mixed in below */
+        { unsigned char* bl = malloc((size_t)w * h * 4); memcpy(bl, px, (size_t)w * h * 4); bleed(bl, w, h); sharp = lanczos_up(bl, w, h); free(bl); }
         unsigned char* o = malloc((size_t)ow * oh * 4);
         for (int y = 0; y < oh; y++)
             for (int x = 0; x < ow; x++) {
                 const unsigned char* s = big + ((y + pd * SCALE) * W + x + pd * SCALE) * 3;
                 unsigned char* d = o + (y * ow + x) * 4;
-                d[0] = s[0]; d[1] = s[1]; d[2] = s[2];
+                const unsigned char* g = sharp + ((size_t)y * ow + x) * 3;
+                for (int ch = 0; ch < 3; ch++) d[ch] = (unsigned char)((s[ch] + g[ch] + 1) / 2);
                 if (solid) d[3] = 255;
                 else if (ab) { const unsigned char* q = ab + ((y + pd * SCALE) * W + x + pd * SCALE) * 3; int a = (q[0] + q[1] + q[2] + 1) / 3; d[3] = binary ? (a > 127 ? 255 : 0) : (unsigned char)a; }
                 else d[3] = px[((y / SCALE) * w + x / SCALE) * 4 + 3];      /* no upscaled alpha: the original's, blocky */
             }
         snprintf(p, sizeof p, "%s" SEP "%s", hd, work[i]);
         if (stbi_write_png(p, ow, oh, 4, o, ow * 4)) made++;
-        free(o); stbi_image_free(px); stbi_image_free(big); stbi_image_free(ab);
+        free(o); free(sharp); stbi_image_free(px); stbi_image_free(big); stbi_image_free(ab);
     }
     rmtree_files(in_c, work, todo); rmtree_files(out_c, work, todo); rmtree_files(in_a, alist, na); rmtree_files(out_a, alist, na);
 #ifdef _WIN32
