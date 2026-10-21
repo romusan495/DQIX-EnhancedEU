@@ -5,19 +5,24 @@ the code. Two folders on the play PC use it:
 
 | Folder | What it is |
 |---|---|
-| `J:\DQIX-Enhanced-repo` | Development clone. Make branches, edit, build and test here. |
+| `J:\DQIX-Enhanced-repo` | Development clone, kept on `main`. Worktrees are created from it. |
+| `J:\DQIX-wt\<role>-<topic>` | One worktree per feature branch: edit, build and test here. |
 | `J:\DQIX-Enhanced` | The folder the game is played from (`game\dqix.exe`, saves, HD textures, movies). Also a git checkout of `main`, but only updated from `main`, never edited by hand. |
 
 ## Workflow
 
-1. Start from an up-to-date `main` in the development clone:
+1. The development clone stays on `main`. Each feature gets its own worktree,
+   so sessions working at the same time never switch each other's branch:
    ```
-   git checkout main
-   git pull --ff-only
-   git checkout -b <feature-name>
+   git -C J:\DQIX-Enhanced-repo fetch origin
+   git -C J:\DQIX-Enhanced-repo worktree add J:\DQIX-wt\<role>-<topic> -b <role>/<topic> origin/main
+   copy J:\DQIX-Enhanced-repo\rom\last-rom.txt J:\DQIX-wt\<role>-<topic>\rom\
    ```
-2. Edit, then build (see below) and test with `game\dqix.exe` in the clone.
-3. Commit on the branch, push it, open a pull request to `main` and merge it once it builds.
+   Roles and branch prefixes (`graph/`, `langues/`, `dev/`, `integ/`, `orga/`)
+   are described in `CLAUDE.md` and `docs/roles/`.
+2. Edit, then build (see below) and test with `game\dqix.exe` in the worktree.
+3. Commit on the branch, push it and open a pull request to `main`. It is
+   reviewed, then merged once it builds and Romuald agrees.
 4. Update the play folder from `main`:
    ```
    cd /d J:\DQIX-Enhanced
