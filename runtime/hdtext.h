@@ -33,6 +33,11 @@ void hdtext_seen(int eng, uint32_t tag, int x, int y, int ink_shown, uint32_t rg
 extern uint8_t g_hdtext_mask[2][256 * 192];   /* 255 where a letter's box shows */
 int hdtext_glyphs(int eng, const HdGlyph** out);                    /* this frame's letters, in drawing order */
 
+/* letters drawn into a texture (GlyphCell): a 4-bit texture, w x h, at p
+ * (rows of w / 2 bytes); rgba: it decoded. out (w * HDT_R x h * HDT_R RGBA)
+ * gets its letters at full resolution, in the colours they show; 0: no letters */
+int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t* out);
+
 /* the letters at high resolution: R pixels per DS pixel, 12 rows */
 #define HDT_R 8
 void hdtext_set_font(const char* name);       /* "original", or a .ttf file (fonts/, the system's fonts) */

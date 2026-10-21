@@ -94,10 +94,11 @@ MINGW*|MSYS*)
 esac
 
 echo "== Putting the game folder together"
-mkdir -p game/data game/skins
+mkdir -p game/data game/skins game/fonts
 rm -rf game/data/code && cp -r build/extract game/data/code     # the overlays (the game checks which is loaded)
 if ! cmp -s "$ROM" game/data/dqix.nds; then cp "$ROM" game/data/dqix.nds; fi
 cp skins/*.png skins/*.txt game/skins/ 2>/dev/null || true
+cp fonts/*.ttf fonts/*.txt game/fonts/ 2>/dev/null || true             # the HD text's fonts (Graphics > Text font)
 # optional files: the built-in Wi-Fi server's downloads and DQVC schedule
 for src in extras/wfc wfc; do
     for g in "$src"/*/; do

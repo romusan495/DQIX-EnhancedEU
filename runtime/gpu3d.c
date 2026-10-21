@@ -1676,6 +1676,14 @@ int gpu3d_tex_size(u32 ti, int* w, int* h) {
     return ((ti >> 26) & 7) != 0;
 }
 
+const uint8_t* gpu3d_texels(u32 ti) {
+    int w, h; gpu3d_tex_size(ti, &w, &h);
+    static const u32 bits[8] = { 0, 8, 2, 4, 8, 2, 8, 16 };
+    u32 base = (ti & 0xFFFF) * 8, n = (u32)(w * h) * bits[(ti >> 26) & 7] / 8;
+    uint8_t* p = g_tex_slot[(base >> 17) & 3];
+    return p && (base & 0x1FFFF) + n <= 0x20000 ? p + (base & 0x1FFFF) : NULL;
+}
+
 void gpu3d_decode_texture(u32 ti, u32 pl, uint8_t* rgba) {
     int w, h; gpu3d_tex_size(ti, &w, &h);
     u32 tp = ti & ~(0xFu << 16);                                    /* no repeat/flip: texels are inside anyway */

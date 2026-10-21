@@ -100,6 +100,37 @@ uint32_t hdtext_tag(uint32_t src2) {
 }
 
 /* ---------------------------------------------------------------- the hooks (hooks.txt) */
+/* The letter at gl (as GlyphBlit's r1, below) in that font, remembered; -1 if it can't be read. */
+static int read_glyph(uint32_t gl, int font, int* w, uint16_t rows[12]) {
+    *w = (int8_t)mem_read8(gl + 4);
+    if (*w <= 0 || *w > 16) return -1;
+    uint32_t fo = mem_read32(0x02107834u + 4u * (uint32_t)font);
+    if ((fo >> 24) != 2) return -1;
+    uint32_t stride = mem_read16(fo + 4) >> 3, bm = mem_read32(fo + 12);
+    uint32_t xo = mem_read16(gl + 6);
+    for (int y = 0; y < 12; y++) {
+        rows[y] = 0;
+        for (int x = 0; x < *w; x++) {
+            uint32_t bit = xo + (uint32_t)x;
+            if (mem_read8(bm + (uint32_t)y * stride + (bit >> 3)) & (0x80 >> (bit & 7))) rows[y] |= (uint16_t)(1 << x);
+        }
+    }
+    char str[16]; uint32_t sp = mem_read32(gl); int len = mem_read8(gl + 5) & 63;
+    if (len > 15) len = 15;
+    for (int i = 0; i < len; i++) str[i] = (char)mem_read8(sp + (uint32_t)i);
+    str[len] = 0;
+    return glyph_find((uint32_t)font << 24 | xo << 8 | (uint32_t)*w, font, *w, rows, str);
+}
+
+/* One more letter drawn (an instance of glyph gi, in that colour index). */
+static uint32_t new_inst(int gi, uint8_t color) {
+    if (!g_inst) g_inst = calloc(INST_N, sizeof *g_inst);
+    uint32_t inst = g_inst_next;
+    g_inst_next = (g_inst_next + 1) & (INST_N - 1); if (!g_inst_next) g_inst_next = 1;
+    g_inst[inst].glyph = (uint16_t)gi; g_inst[inst].color = color; g_inst[inst].used = 1;
+    return inst;
+}
+
 /* func_0205b36c (USA): draws one letter into a text window's tile buffer.
  *   r0 the window's buffer: +0 the tiles, +4 its rectangles (12 bytes each:
  *      +0 offset of their tiles, +4 x, +6 y, +8 width, +10 height), +8 how many
@@ -114,30 +145,10 @@ void hook_GlyphBlit(Cpu* c, void (*orig)(Cpu*)) {
     uint8_t color = mem_read8(c->r[13]) & 15, font = mem_read8(c->r[13] + 4);
     orig(c);
     if (!g_hdtext_on) return;
-    if (!g_inst) g_inst = calloc(INST_N, sizeof *g_inst);
-    int w = (int8_t)mem_read8(gl + 4);
-    if (w <= 0 || w > 16) return;
-    uint32_t fo = mem_read32(0x02107834u + 4u * font);
-    if ((fo >> 24) != 2) return;
-    uint32_t stride = mem_read16(fo + 4) >> 3, bm = mem_read32(fo + 12);
-    uint32_t xo = mem_read16(gl + 6);
-    uint16_t rows[12];
-    for (int y = 0; y < 12; y++) {
-        rows[y] = 0;
-        for (int x = 0; x < w; x++) {
-            uint32_t bit = xo + (uint32_t)x;
-            if (mem_read8(bm + (uint32_t)y * stride + (bit >> 3)) & (0x80 >> (bit & 7))) rows[y] |= (uint16_t)(1 << x);
-        }
-    }
-    char str[16]; uint32_t sp = mem_read32(gl); int len = mem_read8(gl + 5) & 63;
-    if (len > 15) len = 15;
-    for (int i = 0; i < len; i++) str[i] = (char)mem_read8(sp + (uint32_t)i);
-    str[len] = 0;
-    int gi = glyph_find((uint32_t)font << 24 | xo << 8 | (uint32_t)w, font, w, rows, str);
+    int w; uint16_t rows[12];
+    int gi = read_glyph(gl, font, &w, rows);
     if (gi < 0) return;
-    uint32_t inst = g_inst_next;
-    g_inst_next = (g_inst_next + 1) & (INST_N - 1); if (!g_inst_next) g_inst_next = 1;
-    g_inst[inst].glyph = (uint16_t)gi; g_inst[inst].color = color; g_inst[inst].used = 1;
+    uint32_t inst = new_inst(gi, color);
 
     uint32_t tiles = mem_read32(win), rects = mem_read32(win + 4);
     int nrect = mem_read8(win + 8);
@@ -161,6 +172,49 @@ void hook_GlyphBlit(Cpu* c, void (*orig)(Cpu*)) {
                 }
                 break;
             }
+        }
+}
+
+/* func_02045864 (USA): draws one letter into a small 4-bit bitmap, a texture
+ * of its own (the dialogue windows' letters are 16x16 textures on the 3D
+ * screen; func_020459b8 draws each once, or again for a shadow or outline).
+ *   r0, r1 where (pixels); r2 the letter (as GlyphBlit's); r3 the bitmap
+ *   [sp] its width, [sp+4] its height, [sp+8] colour index, [sp+12] font
+ * Rows of width / 2 bytes, the left pixel of each byte in the low nibble.
+ * The ink pixels get tags (the GPU renderer finds them in the texture). */
+void hook_GlyphCell(Cpu* c, void (*orig)(Cpu*)) {
+    int x0 = (int32_t)c->r[0], y0 = (int32_t)c->r[1];
+    uint32_t gl = c->r[2], bmp = c->r[3];
+    int bw = (int32_t)mem_read32(c->r[13]), bh = (int32_t)mem_read32(c->r[13] + 4);
+    uint8_t color = mem_read8(c->r[13] + 8) & 15, font = mem_read8(c->r[13] + 12);
+    int on = g_hdtext_on && gl && bmp && bw > 0 && bw <= 256 && bh > 0 && bh <= 256;
+    /* each byte written loses both its pixels' tags: the other pixel's (an
+     * earlier copy of the letter, for the outline) is put back after */
+    uint32_t keep[12][18] = { { 0 } };
+    if (on && g_hdtext_any)
+        for (int y = 0; y < 12; y++)
+            for (int x = -1; x < 17; x++) {
+                int X = x0 + x, Y = y0 + y;
+                if (X < 0 || Y < 0 || X >= bw || Y >= bh) continue;
+                uint8_t* p = addr_ptr(bmp + (uint32_t)(Y * (bw >> 1) + (X >> 1)));
+                uint32_t off; uint32_t* pg = p ? page_for(p, 0, &off) : NULL;
+                if (pg) keep[y][x + 1] = pg[off + (X & 1)];
+            }
+    orig(c);
+    if (!on) return;
+    int w; uint16_t rows[12];
+    int gi = read_glyph(gl, font, &w, rows);
+    if (gi < 0) return;
+    uint32_t inst = new_inst(gi, color);
+    for (int y = 0; y < 12; y++)
+        for (int x = -1; x < 17; x++) {
+            int X = x0 + x, Y = y0 + y;
+            if (X < 0 || Y < 0 || X >= bw || Y >= bh) continue;
+            int ink = x >= 0 && x < w && ((rows[y] >> x) & 1);
+            if (!ink && !keep[y][x + 1]) continue;
+            uint8_t* p = addr_ptr(bmp + (uint32_t)(Y * (bw >> 1) + (X >> 1)));
+            uint32_t off; uint32_t* pg = p ? page_for(p, 1, &off) : NULL;
+            if (pg) pg[off + (X & 1)] = ink ? 0x80000000u | inst << 13 | (uint32_t)x << 8 | (uint32_t)y << 4 | 1u : keep[y][x + 1];
         }
 }
 
@@ -219,6 +273,57 @@ int hdtext_glyphs(int eng, const HdGlyph** out) {
     qsort(g_shown[eng], (size_t)g_nshown[eng], sizeof(HdGlyph), by_order);
     *out = g_shown[eng];
     return g_nshown[eng];
+}
+
+/* ---------------------------------------------------------------- letters in textures */
+typedef struct { uint32_t inst; int ox, oy; uint8_t rgba[4]; } CellLetter;
+
+static int by_inst(const void* a, const void* b) {            /* drawing order */
+    uint32_t x = (((const CellLetter*)a)->inst - g_order_base) & (INST_N - 1), y = (((const CellLetter*)b)->inst - g_order_base) & (INST_N - 1);
+    return x < y ? -1 : x > y;
+}
+
+int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t* out) {
+    if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;
+    CellLetter let[16]; int n = 0;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            uint32_t off; uint32_t* pg = page_for(p + (y * w + x) / 2, 0, &off);
+            if (!pg) { x |= 1; continue; }
+            uint32_t t = pg[off + (x & 1)];
+            if (!(t & 0x80000000u) || !HDT_INK(t) || !g_inst[HDT_INST(t)].used) continue;
+            uint32_t inst = HDT_INST(t);
+            int ox = x - (int)HDT_LX(t), oy = y - (int)HDT_LY(t), k = 0;
+            while (k < n && !(let[k].inst == inst && let[k].ox == ox && let[k].oy == oy)) k++;
+            if (k < n) continue;
+            if (n == 16) return 0;
+            let[n].inst = inst; let[n].ox = ox; let[n].oy = oy;
+            memcpy(let[n].rgba, rgba + (y * w + x) * 4, 4);       /* its ink shows here: its colour */
+            n++;
+        }
+    if (!n) return 0;
+    g_order_base = g_inst_next;
+    qsort(let, (size_t)n, sizeof *let, by_inst);
+    int W = w * HDT_R, H = h * HDT_R;
+    memset(out, 0, (size_t)W * H * 4);
+    static uint8_t cov[16 * HDT_R * 12 * HDT_R];
+    for (int k = 0; k < n; k++) {
+        int gw, glyph = g_inst[let[k].inst].glyph;
+        if (!hdtext_render(glyph, cov, 16 * HDT_R, &gw)) continue;
+        const uint8_t* c = let[k].rgba;
+        for (int v = 0; v < 12 * HDT_R; v++)
+            for (int u = 0; u < gw * HDT_R; u++) {
+                int X = let[k].ox * HDT_R + u, Y = let[k].oy * HDT_R + v;
+                if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+                float a = cov[v * 16 * HDT_R + u] / 255.0f * (c[3] / 255.0f);
+                if (a <= 0) continue;
+                uint8_t* o = out + ((size_t)Y * W + X) * 4;
+                float oa = o[3] / 255.0f, na = a + oa * (1 - a);
+                for (int ch = 0; ch < 3; ch++) o[ch] = (uint8_t)lroundf((c[ch] * a + o[ch] * oa * (1 - a)) / na);
+                o[3] = (uint8_t)lroundf(na * 255.0f);
+            }
+    }
+    return 1;
 }
 
 /* ---------------------------------------------------------------- the font */
@@ -342,6 +447,25 @@ static void render_original(const Glyph* g, uint8_t* out, int stride) {
         }
 }
 
+/* Strokes made heavier (each pixel the most of its neighbours within 3/8 of
+ * a DS pixel), as heavy as the dialogue windows' letters look on the DS. */
+static void thicken(uint8_t* px, int stride, int W, int H) {
+    static uint8_t src[16 * HDT_R * 12 * HDT_R];
+    for (int v = 0; v < H; v++) memcpy(src + v * W, px + v * stride, (size_t)W);
+    const int r = HDT_R * 3 / 8;
+    for (int v = 0; v < H; v++)
+        for (int u = 0; u < W; u++) {
+            int m = 0;
+            for (int dv = -r; dv <= r; dv++)
+                for (int du = -r; du <= r; du++) {
+                    int x = u + du, y = v + dv;
+                    if (x < 0 || y < 0 || x >= W || y >= H || du * du + dv * dv > r * r) continue;
+                    if (src[y * W + x] > m) m = src[y * W + x];
+                }
+            px[v * stride + u] = (uint8_t)m;
+        }
+}
+
 int hdtext_render(int glyph, uint8_t* out, int stride, int* w) {
     if (glyph < 0 || glyph >= g_nglyphs) return 0;
     const Glyph* g = &g_glyphs[glyph];
@@ -381,9 +505,11 @@ int hdtext_render(int glyph, uint8_t* out, int stride, int* w) {
                     if (c > out[Y * stride + X]) out[Y * stride + X] = c;
                 }
             free(bm);
+            thicken(out, stride, W, H);
             return 1;
         }
     }
     render_original(g, out, stride);
+    thicken(out, stride, W, H);
     return 1;
 }

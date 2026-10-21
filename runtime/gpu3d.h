@@ -48,6 +48,7 @@ extern int g_wide_cull;
 int  gpu3d_tex_size(uint32_t teximg, int* w, int* h);          /* 0 if no texture (format 0) */
 void gpu3d_decode_texture(uint32_t teximg, uint32_t pltt, uint8_t* rgba);   /* w*h RGBA8 */
 uint64_t gpu3d_texture_hash(uint32_t teximg, uint32_t pltt);   /* changes when its data/palette change */
+const uint8_t* gpu3d_texels(uint32_t teximg);                /* its texels in VRAM (NULL if they cross a slot) */
 
 /* Software renderer output (tests): one line, 6-bit colour | 5-bit alpha << 24. */
 const uint32_t* gpu3d_soft_line(int line);
