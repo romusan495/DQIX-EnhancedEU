@@ -207,11 +207,10 @@ void hook_GlyphCell(Cpu* c, void (*orig)(Cpu*)) {
     if (!on) return;
     int w; uint16_t rows[12];
     int gi = read_glyph(gl, font, &w, rows);
-    if (gi < 0) return;
-    uint32_t inst = new_inst(gi, color);
+    uint32_t inst = gi < 0 ? 0 : new_inst(gi, color);
     for (int y = 0; y < 12; y++)
         for (int x = -1; x < 17; x++) {
-            int ink = x >= 0 && x < w && ((rows[y] >> x) & 1);
+            int ink = inst && x >= 0 && x < w && ((rows[y] >> x) & 1);
             if (!ink && !keep[y][x + 1]) continue;
             uint32_t* t = cell_tag(bmp, bw, bh, x0 + x, y0 + y, 1);
             if (t) *t = ink ? HDT_TAG(inst, x, y, 1) : keep[y][x + 1];
@@ -281,20 +280,34 @@ typedef struct { uint32_t inst; int ox, oy; uint8_t rgba[4]; } CellLetter;
 
 static int by_inst(const void* a, const void* b) { return inst_cmp(((const CellLetter*)a)->inst, ((const CellLetter*)b)->inst); }
 
+uint32_t hdtext_texture_key(const uint8_t* p, int w, int h) {
+    if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;
+    uint32_t off, k = 0;
+    if (!page_for(p, 0, &off)) return 0;
+    for (int i = 0; i < w * h; i++) {
+        uint32_t* pg = page_for(p + i / 2, 0, &off);
+        uint32_t t = pg ? pg[off + (i & 1)] : 0;
+        if (t & 0x80000000u) k = (k ^ g_inst[HDT_INST(t)].glyph ^ (t & 0x1FFF)) * 16777619u;
+    }
+    return k;
+}
+
 int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t* out) {
     if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;
-    CellLetter let[16]; int n = 0;
+    CellLetter let[64]; int n = 0;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             uint32_t off; uint32_t* pg = page_for(p + (y * w + x) / 2, 0, &off);
-            if (!pg) { x |= 1; continue; }
-            uint32_t t = pg[off + (x & 1)];
-            if (!(t & 0x80000000u) || !HDT_INK(t) || !g_inst[HDT_INST(t)].used) continue;
+            uint32_t t = pg ? pg[off + (x & 1)] : 0;
+            if (!(t & 0x80000000u) || !HDT_INK(t) || !g_inst[HDT_INST(t)].used) {
+                if (rgba[(y * w + x) * 4 + 3]) return 0;          /* something else is drawn there too: left as it is */
+                continue;
+            }
             uint32_t inst = HDT_INST(t);
             int ox = x - (int)HDT_LX(t), oy = y - (int)HDT_LY(t), k = 0;
             while (k < n && !(let[k].inst == inst && let[k].ox == ox && let[k].oy == oy)) k++;
             if (k < n) continue;
-            if (n == 16) return 0;
+            if (n == 64) return 0;
             let[n].inst = inst; let[n].ox = ox; let[n].oy = oy;
             memcpy(let[n].rgba, rgba + (y * w + x) * 4, 4);       /* its ink shows here: its colour */
             n++;

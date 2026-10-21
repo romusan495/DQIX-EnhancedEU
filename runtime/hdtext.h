@@ -38,6 +38,7 @@ int hdtext_glyphs(int eng, const HdGlyph** out);                    /* this fram
  * (rows of w / 2 bytes); rgba: it decoded. out (w * HDT_R x h * HDT_R RGBA)
  * gets its letters at full resolution, in the colours they show; 0: no letters */
 int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t* out);
+uint32_t hdtext_texture_key(const uint8_t* p, int w, int h);       /* which letters it holds (0: none) */
 
 /* the letters at high resolution: R pixels per DS pixel, 12 rows */
 #define HDT_R 8

@@ -80,7 +80,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(fnt, MI_FONT0 + 6, L"&Lora");
     item(fnt, MI_FONT0 + 7, L"C&rimson Pro");
     item(fnt, MI_FONT0 + 8, L"&Alegreya");
-    item(fnt, MI_FONT0 + 9, L"Spec&tral");
+    item(fnt, MI_FONT0 + 9, L"Spectral");
     item(fnt, MI_FONT0 + 10, L"&EB Garamond");
     item(fnt, MI_FONT0 + 11, L"P&hilosopher");
     item(fnt, MI_FONT0 + 12, L"&Marcellus");

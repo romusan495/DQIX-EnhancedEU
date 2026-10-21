@@ -905,6 +905,7 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
     if (e->checked != g_frameno) {
         e->checked = g_frameno;
         uint64_t hs = gpu3d_texture_hash(ti, pl);
+        if (g_hdtext_on && ((ti >> 26) & 7) == 3) hs ^= hdtext_texture_key(gpu3d_texels(ti), *w, *h);   /* same pixels, other letters (l, I) */
         if (hs != e->hash || e->w != *w || e->h != *h) {
             double t0 = perf_ms();
             e->hash = hs; e->w = *w; e->h = *h; e->hd = 0;
