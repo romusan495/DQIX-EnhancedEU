@@ -23,6 +23,7 @@
 #include "gl_render.h"
 #include "hdtext.h"
 #include "hdmovie.h"
+#include "hdsprite.h"
 
 /* ---------------------------------------------------------------- GL functions */
 #define GL_FUNCS(X) \
@@ -737,7 +738,8 @@ static void xbr_upscale(const uint8_t* src, int w, int h, int f, uint8_t* dst) {
  * wherever the game puts it in VRAM). textures/<name>.png (in any folder
  * under textures/) is drawn instead, at its own size, filtered and mipmapped.
  * "Dump textures" writes every new one to textures/dump/<name>.png, the
- * starting point for making a pack. */
+ * starting point for making a pack. Sprites (2D, hdsprite.h) are named the
+ * same way from their picture; their dumps go to textures/dump-2d/. */
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_STATIC
 #include "stb_image_write.h"
@@ -809,7 +811,7 @@ static void pack_add_file(const char* dir, const char* name) {  /* <16 hex digit
     t->path = malloc(len); snprintf(t->path, len, "%s/%s", dir, name);
 }
 
-static void pack_scan(const char* dir, int depth) {             /* every folder under textures/ except dump/ */
+static void pack_scan(const char* dir, int depth) {             /* every folder under textures/ except dump/ and dump-2d/ */
     if (depth > 8) return;
 #ifdef _WIN32
     char pat[1024]; snprintf(pat, sizeof pat, "%s/*", dir);
@@ -818,7 +820,7 @@ static void pack_scan(const char* dir, int depth) {             /* every folder 
     do {
         if (fd.name[0] == '.') continue;
         if (fd.attrib & _A_SUBDIR) {
-            if (depth == 0 && !strcmp(fd.name, "dump")) continue;
+            if (depth == 0 && (!strcmp(fd.name, "dump") || !strcmp(fd.name, "dump-2d"))) continue;
             char sub[1024]; snprintf(sub, sizeof sub, "%s/%s", dir, fd.name); pack_scan(sub, depth + 1);
         } else pack_add_file(dir, fd.name);
     } while (_findnext(h, &fd) == 0);
@@ -831,16 +833,19 @@ static void pack_scan(const char* dir, int depth) {             /* every folder 
         if (e->d_name[0] == '.') continue;
         char sub[1024]; snprintf(sub, sizeof sub, "%s/%s", dir, e->d_name);
         struct stat st;
-        if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode)) { if (!(depth == 0 && !strcmp(e->d_name, "dump"))) pack_scan(sub, depth + 1); }
+        if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode)) { if (!(depth == 0 && (!strcmp(e->d_name, "dump") || !strcmp(e->d_name, "dump-2d")))) pack_scan(sub, depth + 1); }
         else pack_add_file(dir, e->d_name);
     }
     closedir(d);
 #endif
 }
 
+static void hdsprite_update(void) { g_hdsprite_on = g_dump_on || (g_pack_on && (!g_pack_loaded || g_pack_n)); }   /* (not loaded yet: the first check loads it) */
+
 static void pack_unload(void) {
     for (int i = 0; i < g_pack_cap; i++) { if (g_pack[i].tex) p_glDeleteTextures(1, &g_pack[i].tex); free(g_pack[i].path); }
     free(g_pack); g_pack = NULL; g_pack_n = g_pack_cap = g_pack_live = 0; g_pack_loaded = 0;
+    hdsprite_update();
 }
 
 static void pack_load_list(void) {
@@ -848,6 +853,7 @@ static void pack_load_list(void) {
     g_pack_loaded = 1;
     pack_scan(PACK_DIR, 0);
     if (g_pack_n) fprintf(stderr, "HD textures: %d in %s/\n", g_pack_n, PACK_DIR);
+    hdsprite_update();
 }
 
 /* The HD texture for this picture, loaded into the GPU the first time (0 if none). */
@@ -878,17 +884,28 @@ static GLuint pack_texture(uint64_t key) {
 }
 
 static void textures_hd_after(void);
-static void dump_texture(uint64_t key, const uint8_t* rgba, int w, int h) {
+static void dump_texture_to(const char* sub, uint64_t key, const uint8_t* rgba, int w, int h) {
     for (int i = 0; i < g_dumped_n; i++) if (g_dumped[i] == key) return;   /* (few thousand at most) */
     if (g_dumped_n == g_dumped_cap) { g_dumped_cap = g_dumped_cap ? g_dumped_cap * 2 : 1024; g_dumped = realloc(g_dumped, sizeof *g_dumped * (size_t)g_dumped_cap); }
     g_dumped[g_dumped_n++] = key;
-    char path[64]; snprintf(path, sizeof path, PACK_DIR "/dump/%016llx.png", (unsigned long long)key);
+    char dir[64], path[96];
+    snprintf(dir, sizeof dir, PACK_DIR "/%s", sub);
+    snprintf(path, sizeof path, "%s/%016llx.png", dir, (unsigned long long)key);
     FILE* f = fopen(path, "rb");
     if (f) { fclose(f); return; }                              /* dumped in an earlier run */
-    mkdir_one(PACK_DIR); mkdir_one(PACK_DIR "/dump");
+    mkdir_one(PACK_DIR); mkdir_one(dir);
     stbi_write_png(path, w, h, 4, rgba, w * 4);
     static int any;
-    if (!any++) atexit(textures_hd_after);
+    if (!any++ && !strcmp(sub, "dump")) atexit(textures_hd_after);
+}
+static void dump_texture(uint64_t key, const uint8_t* rgba, int w, int h) { dump_texture_to("dump", key, rgba, w, h); }
+
+static int hdsprite_check(const uint8_t* rgba, int w, int h, uint64_t* key) {
+    *key = tex_key(rgba, w, h);
+    if (g_dump_on) dump_texture_to("dump-2d", *key, rgba, w, h);
+    if (!g_pack_on) return 0;
+    pack_load_list();
+    return pack_find(*key, 0) != NULL;
 }
 
 /* New textures were dumped: when the game closes, textures-hd.exe (next to the
@@ -902,11 +919,11 @@ static void textures_hd_after(void) {
 
 static void texcache_redo(void) { for (int i = 0; i < TEXCACHE; i++) g_texcache[i].w = 0; }   /* every texture decodes again */
 
-void gl_set_texture_pack(int on) { g_pack_on = on != 0; if (!g_pack_on) pack_unload(); texcache_redo(); }
+void gl_set_texture_pack(int on) { g_pack_on = on != 0; if (!g_pack_on) pack_unload(); texcache_redo(); hdsprite_update(); }
 void gl_set_smooth2d(int on) { g_smooth2d = on != 0; }
 void gl_set_outline(int mode) { g_outline = mode >= 0 && mode <= 2 ? mode : 0; }
 void gl_set_tex_upscale(int on) { on = on != 0; if (on != g_texup) { g_texup = on; texcache_redo(); } }
-void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); }
+void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); hdsprite_update(); }
 int gl_reload_texture_pack(void) { pack_unload(); texcache_redo(); if (g_pack_on) pack_load_list(); return g_pack_n; }
 
 /* A piece of the dialogue window's frame: 4-bit greys, 8 x 8 to 8 x 16 (the
@@ -1047,6 +1064,7 @@ int gl_render_init(int scale) {
     prog_text = program(VS_TEXT, FS_TEXT, 2);
     prog_movie = program(VS_QUAD, FS_MOVIE, 0);
     if (!prog_poly || !prog_post || !prog_comp || !prog_copy || !prog_screen || !prog_ghost) return 0;
+    g_hdsprite_check = hdsprite_check; hdsprite_update();
     p_glGenVertexArrays(1, &vao_poly); p_glBindVertexArray(vao_poly);
     p_glGenBuffers(1, &vbo_poly); p_glBindBuffer(GL_ARRAY_BUFFER, vbo_poly);
     GLsizei stride = VTX_FLOATS * sizeof(float);
@@ -1557,6 +1575,35 @@ static void draw_text(int eng, int top, float W, float wside) {
 static GLuint movie_tex[2], movie_mask[2];
 static int movie_w[2], movie_h[2];
 
+/* HD sprites (hdsprite.h): each HD picture over its sprite's place on this
+ * screen (DS pixels, the screen's columns after the widescreen sides) */
+static void draw_sprites(int eng, int top, float W, float wside) {
+    p_glUseProgram(prog_copy);
+    p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
+    GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
+    p_glActiveTexture(GL_TEXTURE0); p_glBindSampler(0, 0);
+    p_glBindVertexArray(vao_quad);
+    p_glEnable(GL_BLEND);
+    p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    for (int i = 0; i < g_hdsprite_n[eng]; i++) {
+        const HdSprite* sp = &g_hdsprites[eng][i];
+        GLuint t = pack_texture(sp->key);
+        if (!t) continue;
+        p_glBindTexture(GL_TEXTURE_2D, t);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        p_glUniform4f(loc_rect, -1.0f + 2.0f * ((float)sp->x + wside) / W, (top ? 1.0f : 0.0f) - (float)(sp->y + sp->h) / 192.0f,
+                      2.0f * (float)sp->w / W, (float)sp->h / 192.0f);
+        p_glUniform4f(loc_uv, sp->hflip ? 1.0f : 0.0f, sp->vflip ? 0.0f : 1.0f, sp->hflip ? -1.0f : 1.0f, sp->vflip ? 1.0f : -1.0f);   /* (the picture's first row at the top) */
+        p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+    p_glDisable(GL_BLEND);
+    p_glUseProgram(prog_comp);
+}
+
 /* Over the screen just drawn (bound: final_fbo, prog_comp, u_rect set), the
  * HD frame of the movie it shows, if any (r: the screen's rectangle, NDC). */
 static void draw_movie(int eng, const float* r) {
@@ -1637,6 +1684,7 @@ void gl_compose(int a_on_top, int lcd_on) {
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
         if (g_hdmovie_on && !wide) { const float r[4] = { -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f }; draw_movie(eng, r); }
         if (g_hdtext_on) draw_text(eng, top, W, (float)g_wside);
+        if (g_hdsprite_n[eng]) draw_sprites(eng, top, W, (float)g_wside);
     }
     p_glActiveTexture(GL_TEXTURE0);
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
