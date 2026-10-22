@@ -615,13 +615,14 @@ static int g_ready;
 const int* g_gl_scale = &g_scale;
 
 /* ---------------------------------------------------------------- textures */
-typedef struct { uint32_t ti, pl; uint64_t hash; GLuint tex, hd, up; int w, h, upd; uint64_t checked, used; int live; } TexEntry;   /* hd: the pack's texture drawn instead; up: upscaled (upd: in use) */
+typedef struct { uint32_t ti, pl; uint64_t hash; GLuint tex, hd, up; int w, h, upd; uint64_t checked, used; int live, frame; } TexEntry;   /* hd: the pack's texture drawn instead; up: upscaled (upd: in use); frame: a piece of a window's frame (win_frame_tile) */
 #define TEXCACHE 4096
 static TexEntry g_texcache[TEXCACHE];
 static int g_smooth;                                           /* smooth textures (bilinear filtering) */
 static int g_smooth2d;                                         /* smooth 2D (FS_COMP's smooth2d) */
 static int g_outline;                                          /* 0 the DS's outlines, 1 thin and soft, 2 none */
 static int g_texup;                                            /* upscale textures (xbr_upscale) */
+extern int g_winstyle;                                         /* window style (gpu2d.c) */
 static uint64_t g_frameno;
 static uint8_t* g_decode;
 
@@ -899,6 +900,21 @@ void gl_set_tex_upscale(int on) { on = on != 0; if (on != g_texup) { g_texup = o
 void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); }
 int gl_reload_texture_pack(void) { pack_unload(); texcache_redo(); if (g_pack_on) pack_load_list(); return g_pack_n; }
 
+/* A piece of the dialogue window's frame: an 8-texel strip of 4-bit greys
+ * (the letters beside it are 16 x 16, the speech bubbles' tails cream). */
+static int win_frame_tile(const uint8_t* rgba, int w, int h) {
+    if (w != 8 && h != 8) return 0;
+    int any = 0;
+    for (int i = 0; i < w * h; i++) {
+        const uint8_t* q = rgba + i * 4;
+        if (!q[3]) continue;
+        if (q[0] != q[1] || q[1] != q[2]) return 0;
+        any = 1;
+    }
+    return any;
+}
+
+static int g_tex_frame;                                        /* texture_for's last texture: TexEntry.frame */
 static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
     TexEntry* e = tex_lookup(ti, pl);
     gpu3d_tex_size(ti, w, h);
@@ -911,6 +927,7 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
             double t0 = perf_ms();
             e->hash = hs; e->w = *w; e->h = *h; e->hd = 0;
             gpu3d_decode_texture(ti, pl, g_decode);
+            e->frame = ((ti >> 26) & 7) == 3 && win_frame_tile(g_decode, *w, *h);
             if (!g_upbuf) g_upbuf = malloc((size_t)512 * 512 * 16);
             int f = 0;                                                  /* > 0: g_upbuf holds it at f x */
             e->upd = 0;
@@ -944,6 +961,7 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
         }
     }
     *hd = e->hd != 0 || e->upd;
+    g_tex_frame = e->frame;
     return e->hd ? e->hd : e->upd ? e->up : e->tex;
 }
 
@@ -1196,6 +1214,15 @@ static void gl_render_(const Frame3D* f) {
             }
         }
         b.count = nv - b.first;
+        if (g_winstyle && !wire && ((p->attr >> 4) & 3) == 0) {     /* minimal windows (gpu2d.c): the dialogue window, drawn in 3D in front of all */
+            int front = 1, black = 1;
+            for (int k = 0; k < p->n; k++) { if (p->v[k].zn > 1e-4f) front = 0; if (p->v[k].r + p->v[k].g + p->v[k].b > 0.0f) black = 0; }
+            float* o = g_verts + (size_t)b.first * VTX_FLOATS;
+            if (front && !textured && black && b.translucent)       /* its panel: fainter */
+                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);
+            else if (front && textured && fmt == 3 && g_tex_frame)  /* its frame: a thin grey edge */
+                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) { o[4] *= 0.4f; o[5] *= 0.4f; o[6] *= 0.4f; }
+        }
         if (nb > 0) {
             Batch* l = &g_batches[nb - 1];
             if (l->tex == b.tex && l->sampler == b.sampler && l->translucent == b.translucent && l->depth_write == b.depth_write &&

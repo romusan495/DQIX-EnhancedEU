@@ -71,9 +71,19 @@ static inline uint16_t ext16(const uint8_t* p, uint32_t idx) { uint16_t v = 0; i
 
 /* ---------------------------------------------------------------- line buffers */
 #define PX_OPAQUE 0x10000u
-typedef struct { uint32_t col[256]; uint32_t src[256]; uint32_t tag[256]; int tags; } BgLine;   /* raw 16-bit colour | PX_OPAQUE; src: where it came from (VRAM byte * 2 + high nibble); tag: HD text (hdtext.h) */
+typedef struct { uint32_t col[256]; uint32_t src[256]; uint32_t tag[256]; int tags; uint8_t win[256]; int wins; } BgLine;   /* raw 16-bit colour | PX_OPAQUE; src: where it came from (VRAM byte * 2 + high nibble); tag: HD text (hdtext.h); win: WIN_* (window styles) */
 /* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite */
 typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; } ObjLine;
+
+/* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
+ * panel blended over the 3D (colour 1) under a white frame shaded in greys
+ * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
+int g_winstyle;                                                     /* 0 like the DS, 1 minimal: no frame, a fainter panel */
+enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE };
+static int win_palette(Engine* e, uint32_t palbase) {
+    return (pal16(e->pal + (palbase + 2) * 2) & 0x7FFF) == 0x2108 && (pal16(e->pal + (palbase + 4) * 2) & 0x7FFF) == 0x4210
+        && (pal16(e->pal + (palbase + 8) * 2) & 0x7FFF) == 0x6B5A && (pal16(e->pal + (palbase + 10) * 2) & 0x7FFF) == 0x7FFF;
+}
 
 static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     uint32_t disp = R32(e, 0);
@@ -94,6 +104,9 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     uint32_t ty = yy >> 3;
     int hd = g_hdtext_on && g_hdtext_any && g_comp_gl && !c256;   /* the letters are 4-bit */
     out->tags = 0;
+    int ws = g_winstyle && g_comp_gl && !c256;
+    uint32_t winpal = 0, winchecked = 0;                            /* palettes (bits) that are the windows' */
+    out->wins = 0;
     for (int x = 0; x < 256;) {
         uint32_t xx = (x + hofs) & (w - 1);
         uint32_t tx = xx >> 3;
@@ -114,6 +127,14 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
             else idx = (row[px >> 1] >> ((px & 1) * 4)) & 15;
             out->src[x] = c256 ? (charbase + tile * 64 + py * 8 + px) * 2 : (charbase + tile * 32 + py * 4 + (px >> 1)) * 2 + (px & 1);
             if (hd) { uint32_t t = row ? hdtext_tag(out->src[x]) : 0; out->tag[x] = t; out->tags |= t != 0; }
+            if (ws) {
+                uint32_t b = 1u << (ent >> 12);
+                if (!(winchecked & b)) { winchecked |= b; if (win_palette(e, palbase)) winpal |= b; }
+                int k = 0;
+                if ((winpal & b) && !(hd && out->tag[x]))           /* (not a letter's shading) */
+                    k = idx == 1 ? WIN_PANEL : idx == 10 ? WIN_EDGE : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                out->win[x] = (uint8_t)k; out->wins |= k;
+            }
             if (!idx) { out->col[x] = 0; continue; }
             uint16_t col;
             if (c256) col = ext ? ext16(ext, (ent >> 12) * 256 + idx) : pal16(e->pal + idx * 2);
@@ -146,6 +167,7 @@ static void render_affine_bg(Engine* e, int eng, int bg, int kind, BgLine* out) 
     if (kind == 2 && !bitmap && (disp & 0x40000000)) ext = ext_bg_pal(eng, bg);
     uint32_t bmbase = e->bgvram + ((cnt >> 8) & 31) * 0x4000;
     out->tags = 0;
+    out->wins = 0;
     for (int x = 0; x < 256; x++, rx += pa, ry += pc) {
         int32_t tx = rx >> 8, ty = ry >> 8;
         if (wrap) { tx &= (int32_t)w - 1; ty &= (int32_t)h - 1; }
@@ -502,6 +524,23 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         else render_affine_bg(e, eng, bg, kind, &bgl[bg]);
         if (mos) bg_mosaic_x(&bgl[bg], R16(e, 0x4C) & 15);
     }
+    /* minimal windows: the frame left out; where its white line was, the panel
+     * a little lighter (a thin edge) */
+    int winl = 0;
+    for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].wins && !(bg == 0 && bg_3d)) winl = 1;
+    if (winl) {
+        uint8_t edge[256] = { 0 };
+        for (int bg = 0; bg < 4; bg++) {
+            BgLine* l = &bgl[bg];
+            if (!bg_on[bg] || !l->wins || (bg == 0 && bg_3d)) continue;
+            for (int x = 0; x < 256; x++) if (l->win[x] >= WIN_EDGE) { edge[x] |= l->win[x] == WIN_EDGE && (l->col[x] & PX_OPAQUE); l->col[x] = 0; }
+        }
+        for (int bg = 0; bg < 4; bg++) {
+            BgLine* l = &bgl[bg];
+            if (!bg_on[bg] || !l->wins || (bg == 0 && bg_3d)) continue;
+            for (int x = 0; x < 256; x++) if (edge[x] && l->win[x] == WIN_PANEL && (l->col[x] & PX_OPAQUE)) l->col[x] = 0x5294 | PX_OPAQUE;
+        }
+    }
     int obj_on = (disp >> 12) & 1;
     if (obj_on) { render_objs(e, eng, y, &objl); obj_mosaic_x(&objl, (R16(e, 0x4C) >> 8) & 15); }
     { static int lg = -1; if (lg < 0) lg = getenv("DQIX_MOSAICLOG") != NULL;
@@ -553,6 +592,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     if (g_hdtext_on && dst && g_comp_gl) for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].tags && !(bg == 0 && bg_3d)) hdl = 1;
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
+        int pan1 = 0;                                               /* v1 is a window's panel (minimal: fainter) */
         uint8_t wm = winmask[x];
         int skipL = -1;
         if (hdl) {
@@ -612,7 +652,10 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 }
             }
             v3 = v2; v2 = v1; v1 = v;
+            pan1 = winl && L < 4 && !(L == 0 && bg_3d) && bgl[L].win[x] == WIN_PANEL;
         }
+        uint32_t ea = eva, eb = evb;
+        if (pan1) { ea = eva * 3 / 4; eb = evb + (eva - ea); if (eb > 16) eb = 16; }
         if (g_pixsrc_on && (x == g_pixsrc[2] || g_pixsrc[2] < 0) && y == g_pixsrc[3] && eng == g_pixsrc[1] && g_frame == (uint64_t)g_pixsrc[0]) {
             int L = -1;
             for (int k = norder - 1; k >= 0 && L < 0; k--) {
@@ -626,7 +669,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                     vp ? (long)(vp - vram_bank(0)) : -1L);
         }
         int fx = (wm & 0x20) != 0;
-        if (!dst) { line6[x] = color_composite(v1, v2, bldcnt, fx, eva, evb, evy); continue; }
+        if (!dst) { line6[x] = color_composite(v1, v2, bldcnt, fx, ea, eb, evy); continue; }
         if (gl3d && (v1 >> 24) == MARK3D) {                         /* 3D on top */
             uint32_t f2 = v2 >> 24;
             uint32_t t2 = (f2 & 0x80) ? 0x1000 : (f2 & 0x40) ? 0x0100 : (f2 << 8);
@@ -643,7 +686,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             int sec = (bldcnt >> 8) & 1;
             uint32_t layer = (f1 & 0x80) ? 0x10 : f1;
             if (sec && ((f1 & 0x80) || (fx && (bldcnt & layer) && ((bldcnt >> 6) & 3) == 1))) {
-                uint32_t a = eva, b = evb;
+                uint32_t a = ea, b = eb;
                 if ((f1 & 0xC0) == 0xC0) { a = f1 & 0x1F; b = 16 - a; }
                 line6[x] = v1 & 0x3F3F3F;
                 dst[x] = to_rgb6(v1);
@@ -653,7 +696,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             }
             v2 = v3;                                                /* no blending with it: treat what is below as the partner */
         }
-        line6[x] = color_composite(v1, v2, bldcnt, fx, eva, evb, evy);
+        line6[x] = color_composite(v1, v2, bldcnt, fx, ea, eb, evy);
         dst[x] = to_rgb6(master_bright(line6[x], mb));
     }
     #undef MARK3D
