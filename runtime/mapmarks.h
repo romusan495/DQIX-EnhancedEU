@@ -1,10 +1,11 @@
-/* Modern: markers on the map (the top screen) for the chests, pots and
- * barrels of the place the party is in (mapmarks.c). */
+/* Modern: markers on the map (the top screen) for the chests, pots,
+ * barrels, bookshelves and quest givers of the place the party is in
+ * (mapmarks.c). */
 #pragma once
 #include <stdint.h>
 
 extern int g_mapmarks;             /* show them */
-extern int g_mapmarks_opened;      /* ...also the ones already emptied (greyed) */
+extern int g_mapmarks_opened;      /* ...also the ones already emptied or done (greyed) */
 
 #define MAPMARKS_R 3               /* overlay pixels per DS pixel */
 #define MAPMARKS_W (256 * MAPMARKS_R)

@@ -1,7 +1,8 @@
 /* Modern: markers on the map (Modern > Map markers). The top screen's map
  * gets a mark for every chest, pot, barrel and bookshelf of the place the
- * party is in (chests grey once emptied), and a badge on every building
- * whose rooms hold some; the mouse over one tells what is in it.
+ * party is in (chests grey once emptied) and a bubble over everyone with a
+ * quest to give, and a badge on every building whose rooms hold some; the
+ * mouse over one tells what is in it.
  *
  * Everything comes from the game itself:
  *  - data/scenario/treasure.nsarc (NARC): one file per place (C01.bin for
@@ -29,6 +30,12 @@
  *  - data/pack_lv5/minimap.gp2: <place>.bmmp per map picture: tag 0x66 its
  *    picture's name, 0x6b the places drawn in its units, 0x6c a door (x, z,
  *    then the places behind it: the building's rooms).
+ *  - quests: data/scenario/questidtbl.bin (tag 0x68: the quest, its number
+ *    in the game), questorder3.bin (tag 0x66: the quest, the place and the
+ *    person giving it), questmsg.gp2 (per language, tag 0x67: the number,
+ *    the name, the short description), <C01>.npc (NARC, <C01>place.bin:
+ *    where each person stands, see load_givers()); their state is a nibble
+ *    per quest at 0x02108B10 (func_0206e130/func_0206e174).
  *
  * Read only: the game never sees any of it. */
 #include <stdio.h>
@@ -456,9 +463,72 @@ static const Book* find_book(uint16_t place, int idx) {
     return NULL;
 }
 
+/* ---------------------------------------------------------------- the quests */
+#define QUESTS      0xCC            /* the game's limit (func_0206e130) */
+#define QUEST_STATE 0x108B10        /* a nibble per quest: see quest_state() */
+typedef struct { uint16_t place, npc; uint8_t num; char name[64], desc[240]; } Quest;   /* num: as the game shows it, 0 none */
+static Quest g_quest[QUESTS]; static int g_quests_read, g_quests_lang = -1;
+
+/* 0 not offered yet (or not downloaded), 1 offered, 2 under way, 3 done. */
+static int quest_state(int q) {
+    if (q < 0 || q >= QUESTS) return 0;
+    int nib = (g_main_ram[(QUEST_STATE + (q >> 1)) & (MAIN_RAM_SIZE - 1)] >> (q & 1 ? 4 : 0)) & 15;
+    return nib & 8 ? 0 : nib & 3;                                /* 8: a quest from the Wi-Fi shop not downloaded */
+}
+
+static void load_quests(void) {
+    if (g_quests_read) return;
+    g_quests_read = 1;
+    uint32_t n = 0;
+    const uint8_t* b = rom_file("data/scenario/questidtbl.bin", &n);     /* tag 0x68: the quest, its number in the game */
+    Rec r;
+    if (b && n >= 8) {
+        uint32_t end = le32(b + 4), p = 8;
+        if (end > n) end = n;
+        while (rec_next(b, end, &p, &r))
+            if (r.tag == 0x68 && r.n >= 2 && r.v[0] < QUESTS && r.v[1] < 255) g_quest[r.v[0]].num = (uint8_t)r.v[1];
+    }
+    b = rom_file("data/scenario/questorder3.bin", &n);              /* tag 0x66: the quest, the giver's place and person */
+    if (b && n >= 8) {
+        uint32_t end = le32(b + 4), p = 8;
+        if (end > n) end = n;
+        while (rec_next(b, end, &p, &r))
+            if (r.tag == 0x66 && r.n >= 3 && r.v[0] < QUESTS) { g_quest[r.v[0]].place = (uint16_t)r.v[1]; g_quest[r.v[0]].npc = (uint16_t)r.v[2]; }
+    }
+}
+
+static void load_quest_texts(int lang) {
+    if (lang == g_quests_lang) return;
+    g_quests_lang = lang;
+    for (int q = 0; q < QUESTS; q++) g_quest[q].name[0] = g_quest[q].desc[0] = 0;
+    uint32_t n = 0, sz = 0;
+    const uint8_t* pack = rom_file("data/scenario/questmsg.gp2", &n);
+    char fname[32]; snprintf(fname, sizeof fname, "questmsg_%s.bin", LANG_SUFFIX[lang >= 1 && lang <= 5 ? lang - 1 : 0]);
+    uint8_t* b = gpc_file(pack, n, fname, &sz);
+    if (!b) b = gpc_file(pack, n, "questmsg_en.bin", &sz);
+    if (!b || sz < 16) { free(b); return; }
+    uint32_t end = le32(b + 4), p = 16;
+    if (end > sz) end = sz;
+    Rec r;
+    while (rec_next(b, end, &p, &r)) {                           /* tag 0x67: the number, the name, the short description... */
+        if (r.tag != 0x67 || r.n < 3 || r.v[0] == 0) continue;
+        for (int q = 0; q < QUESTS; q++) {
+            if (g_quest[q].num != r.v[0]) continue;
+            for (int k = 1; k <= 2; k++) {
+                if (r.type[k] != 0 || r.v[k] >= sz - end) continue;
+                const char* s = (const char*)b + end + r.v[k];
+                char raw[600]; snprintf(raw, sizeof raw, "%.*s", (int)slen(s, sz - end - r.v[k]), s);
+                if (k == 1) clean_name(raw, g_quest[q].name, sizeof g_quest[q].name);
+                else clean_name(raw, g_quest[q].desc, sizeof g_quest[q].desc);
+            }
+        }
+    }
+    free(b);
+}
+
 /* ---------------------------------------------------------------- what each place holds */
-enum { K_CHEST, K_GOLD, K_BLUE, K_POT, K_BARREL, K_UNKNOWN, K_SHELF };
-typedef struct { float x, z; int kind, flag, idx; uint16_t what; } Spot;   /* flag: a container's; idx: a shelf's number */
+enum { K_CHEST, K_GOLD, K_BLUE, K_POT, K_BARREL, K_UNKNOWN, K_SHELF, K_QUEST };
+typedef struct { float x, z; int kind, flag, idx; uint16_t what; } Spot;   /* flag: a container's; idx: a shelf's number, a quest */
 typedef struct { int loaded, n; Spot* s; } Held;
 static Held* g_held;                                             /* per place (g_places' order), read when first needed */
 
@@ -513,13 +583,56 @@ static void load_shelves(Held* h, const Place* pl) {
     free(b);
 }
 
+/* Where a quest's giver stands: data/scenario/<C01>.npc (or F.npc for the
+ * fields), <C01>place.bin: a record holding (place, person, x, y, z), the
+ * person's own (tag 3) first; else the quest's own scenes (tag 0xE: quest,
+ * ?, ?, place, person, x, y, z) at that place. */
+static void load_givers(Held* h, const Place* pl) {
+    char path[48], pfx[4];
+    uint32_t n = 0, sz = 0;
+    const uint8_t* d = NULL;
+    snprintf(pfx, sizeof pfx, "%.3s", pl->code);
+    for (int len = 3; len >= 1 && !d; len -= 2) {
+        pfx[len] = 0;
+        snprintf(path, sizeof path, "data/scenario/%s.npc", pfx);
+        d = rom_file(path, &n);
+    }
+    const uint8_t* b = narc_file(d, n, "*place.bin", &sz);
+    if (!b || sz < 16) return;
+    uint32_t end = le32(b + 4);
+    if (end > sz) end = sz;
+    for (int q = 0; q < QUESTS; q++) {
+        if (!g_quest[q].num || g_quest[q].place != pl->num) continue;
+        Spot x = { 0, 0, K_QUEST, -1, q, 0 };
+        int best = 0;                                            /* 3: the person's own place, 2: another, 1: a scene */
+        uint32_t p = 16;
+        Rec r;
+        while (best < 3 && rec_next(b, end, &p, &r)) {
+            for (int i = 0; i + 4 < r.n; i++) {
+                if (r.type[i] != 1 || r.type[i + 1] != 1 || r.type[i + 2] != 2 || r.type[i + 4] != 2) continue;
+                int mine = r.v[i] == pl->num && r.v[i + 1] == g_quest[q].npc;
+                int score = mine ? (r.tag == 3 ? 3 : 2) : r.tag == 0xE && i == 3 && r.v[0] == (uint32_t)q && r.v[i] == pl->num ? 1 : 0;
+                if (score > best) { best = score; x.x = rec_float(&r, i + 2); x.z = rec_float(&r, i + 4); }
+                break;
+            }
+        }
+        if (best && isfinite(x.x) && isfinite(x.z)) add_spot(h, &x);
+    }
+}
+
 static const Held* held(int pi) {
     if (pi < 0 || pi >= g_nplaces) return NULL;
     if (!g_held && !(g_held = calloc((size_t)g_nplaces, sizeof(Held)))) return NULL;
     Held* h = &g_held[pi];
-    if (!h->loaded) { h->loaded = 1; load_treasure(h, &g_places[pi]); load_shelves(h, &g_places[pi]); }
+    if (!h->loaded) { h->loaded = 1; load_treasure(h, &g_places[pi]); load_shelves(h, &g_places[pi]); load_givers(h, &g_places[pi]); }
     return h;
 }
+
+/* Already dealt with: a container emptied, a quest done (a shelf never). */
+static int spot_done(const Spot* b) { return b->kind == K_QUEST ? quest_state(b->idx) == 3 : b->kind != K_SHELF && flag_set(b->flag); }
+/* Shown at all: a quest once the game offers it. */
+static int spot_shown(const Spot* b) { return b->kind != K_QUEST || quest_state(b->idx) > 0; }
+static int same_spot(const Spot* a, const Spot* b) { return fabsf(a->x - b->x) < 0.5f && fabsf(a->z - b->z) < 0.5f; }
 
 /* ---------------------------------------------------------------- the map pictures */
 typedef struct { float x, z; int n; int* rooms; } Door;          /* rooms: places (indices) behind it */
@@ -594,7 +707,7 @@ typedef struct {
     float sx, sy;
     int door;                       /* -1: a spot of this place (spot), else a building's door on the picture */
     int spot, opened;               /* a spot: which, emptied */
-    int closed, emptied, shelves, recipes;   /* a door: what its rooms hold */
+    int closed, emptied, shelves, recipes, quests;   /* a door: what its rooms hold */
 } Mark;
 #define MAX_MARKS 256
 static Mark g_mark[MAX_MARKS]; static int g_nmark;
@@ -606,7 +719,7 @@ void mapmarks_hover(float x, float y) { g_hx = x; g_hy = y; }
 static int is_box(int kind) { return kind == K_CHEST || kind == K_GOLD || kind == K_BLUE || kind == K_UNKNOWN; }
 
 static const char* kind_name(int kind) {
-    static const char* const t[7][5] = {
+    static const char* const t[8][5] = {
         { "Treasure chest", "Coffre", "Schatztruhe", "Forziere", "Cofre" },
         { "Treasure chest", "Coffre", "Schatztruhe", "Forziere", "Cofre" },
         { "Blue chest", "Coffre bleu", "Blaue Truhe", "Forziere blu", "Cofre azul" },
@@ -614,6 +727,7 @@ static const char* kind_name(int kind) {
         { "Barrel", "Tonneau", "Fass", "Barile", "Barril" },
         { "Treasure chest", "Coffre", "Schatztruhe", "Forziere", "Cofre" },
         { "Bookshelf", "Biblioth\xC3\xA8que", "B\xC3\xBC" "cherregal", "Libreria", "Estanter\xC3\xAD" "a" },
+        { "Quest", "Qu\xC3\xAA" "te", "Auftrag", "Missione", "Misi\xC3\xB3n" },
     };
     return t[kind][lang_index()];
 }
@@ -637,6 +751,15 @@ static const char* status(const Spot* b, int opened) {
     return (is_box(b->kind) ? (opened ? open_chest : closed_chest) : (opened ? searched : not_searched))[lang_index()];
 }
 
+static const char* quest_status(int state) {
+    static const char* const t[3][5] = {
+        { "Not taken yet", "Pas encore accept\xC3\xA9" "e", "Noch nicht angenommen", "Non ancora accettata", "A\xC3\xBA" "n sin aceptar" },
+        { "In progress", "En cours", "In Arbeit", "In corso", "En curso" },
+        { "Completed", "Termin\xC3\xA9" "e", "Erledigt", "Completata", "Completada" },
+    };
+    return t[state < 1 ? 0 : state > 3 ? 2 : state - 1][lang_index()];
+}
+
 static const char* teaches(void) {
     static const char* const t[5] = { "Teaches alchemy recipes", "Apprend des recettes d'alchimie", "Lehrt Alchemie-Rezepte", "Insegna ricette alchemiche", "Ense\xC3\xB1" "a recetas de alquimia" };
     return t[lang_index()];
@@ -644,7 +767,7 @@ static const char* teaches(void) {
 
 /* ---------------------------------------------------------------- drawing (premultiplied RGBA) */
 static uint8_t g_img[MAPMARKS_W * MAPMARKS_H * 4];
-#define TXT_H 360
+#define TXT_H 440
 static uint32_t g_txt[MAPMARKS_W * TXT_H];                       /* the tooltip's text, drawn alone */
 
 static void blend(int x, int y, uint32_t rgb, float a) {
@@ -682,25 +805,48 @@ static void glyph_book(float cx, float cy, float R, uint32_t cover, float a) {  
     rbox(cx - 0.1f * R, cy - 0.8f * R, 1.0f * R, 0.3f * R, 0, 0xF2C94C, a);   /* the title */
 }
 
+/* A speech bubble (like the game's over the giver's head): "!" offered, "..." under way, a tick done. */
+static void glyph_quest(float cx, float cy, float R, int state, float a) {
+    uint32_t fill = state == 1 ? 0xF2C94C : state == 2 ? 0x4AA3E8 : 0x9A9A9A;
+    for (int k = 0; k < 2; k++) {                                /* the edge, then the inside */
+        float e = k ? 1.5f : 0;
+        uint32_t c = k ? fill : EDGE;
+        rbox(cx, cy - 0.4f * R, 3.0f * R - e, 2.4f * R - e, 1.2f * R - e, c, a);
+        for (int i = 0; i < 3; i++)                              /* the tail, down to the left */
+            rbox(cx - 1.2f * R - 0.45f * R * (float)i, cy + 2.0f * R + 0.45f * R * (float)i, 0.9f * R - 0.25f * R * (float)i - e * 0.5f, 0.45f * R - e * 0.3f, 0, c, a);
+    }
+    if (state == 1) {
+        rbox(cx, cy - 1.0f * R, 0.42f * R, 1.1f * R, 0.3f * R, EDGE, a);
+        rbox(cx, cy + 1.0f * R, 0.45f * R, 0.45f * R, 0.45f * R, EDGE, a);
+    } else if (state == 2) {
+        for (int i = -1; i <= 1; i++) rbox(cx + 1.3f * R * (float)i, cy - 0.4f * R, 0.45f * R, 0.45f * R, 0.45f * R, EDGE, a);
+    } else {
+        rbox(cx - 0.8f * R, cy - 0.1f * R, 0.35f * R, 0.8f * R, 0.2f * R, EDGE, a);
+        rbox(cx + 0.4f * R, cy - 0.6f * R, 0.35f * R, 1.4f * R, 0.2f * R, EDGE, a);
+    }
+}
+
 static uint32_t book_color(int recipes, int dull) { return dull ? 0x9A9A9A : recipes ? 0x8E55D8 : 0x2F9A5E; }
 
 static void draw_mark(const Mark* m, int hover) {
     float R = MAPMARKS_R * 1.4f, cx = m->sx * MAPMARKS_R, cy = m->sy * MAPMARKS_R;
     if (m->door >= 0) {                                          /* a building: its contents on a dark badge */
-        int box = m->closed || m->emptied, two = box && m->shelves;
-        float k = 0.75f, hw = (two ? 6.6f : 3.8f) * R, hh = 3.4f * R;
+        int box = m->closed || m->emptied, n = (box > 0) + (m->shelves > 0) + (m->quests > 0);
+        float k = 0.75f, step = 5.6f * R, hw = (1.0f + 2.8f * (float)n) * R, hh = 3.4f * R;
         if (hover) rbox(cx, cy, hw + 0.8f * R, hh + 0.8f * R, 1.8f * R, 0xFFFFFF, 0.95f);
         rbox(cx, cy, hw, hh, 1.4f * R, 0xFFF8E0, 0.9f);
         rbox(cx, cy, hw - 2, hh - 2, 1.4f * R - 2, 0x3A2A1A, 0.92f);
-        float x = two ? cx - 2.8f * R : cx;
-        if (box) glyph_chest(x, cy, R * k, m->closed ? 0xD0402E : 0x8A8A8A, m->closed ? 0xF2C94C : 0xB0B0B0, 1);
-        if (m->shelves) glyph_book(two ? cx + 2.8f * R : cx, cy, R * k, book_color(m->recipes > 0, 0), 1);
+        float x = cx - step * (float)(n - 1) / 2;
+        if (m->quests) { glyph_quest(x, cy, R * k, m->opened, 1); x += step; }
+        if (box) { glyph_chest(x, cy, R * k, m->closed ? 0xD0402E : 0x8A8A8A, m->closed ? 0xF2C94C : 0xB0B0B0, 1); x += step; }
+        if (m->shelves) glyph_book(x, cy, R * k, book_color(m->recipes > 0, 0), 1);
         return;
     }
     const Spot* b = &held(g_here)->s[m->spot];
     float a = m->opened ? 0.6f : 1.0f;
     const Book* bk = b->kind == K_SHELF ? find_book(g_places[g_here].num, b->idx) : NULL;
     if (b->kind == K_SHELF && (!bk || bk->dull)) a = 0.75f;
+    if (b->kind == K_QUEST) a = m->opened == 3 ? 0.6f : 1.0f;     /* opened: the quests' state there */
     /* a light halo: seen on the map's sand as on its grass */
     if (hover) rbox(cx, cy, 4.6f * R, 4.0f * R, 2.0f * R, 0xFFFFFF, 0.95f);
     else rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);
@@ -719,6 +865,9 @@ static void draw_mark(const Mark* m, int hover) {
     case K_SHELF:
         glyph_book(cx, cy, R, book_color(bk && bk->recipes, !bk || bk->dull), a);
         break;
+    case K_QUEST:
+        glyph_quest(cx, cy, R, m->opened, a);
+        break;
     default:
         glyph_chest(cx, cy, R, m->opened ? 0x8A8A8A : b->kind == K_BLUE ? 0x3C78E0 : 0xD0402E, m->opened ? 0xB0B0B0 : 0xF2C94C, a);
         break;
@@ -727,21 +876,69 @@ static void draw_mark(const Mark* m, int hover) {
 
 /* ---------------------------------------------------------------- the tooltip */
 typedef struct { char s[140]; uint32_t c; } Line;
-#define MAX_LINES 12
+#define MAX_LINES 16
 static Line g_line[MAX_LINES]; static int g_nline;
 #define C_TEXT 0xFFFFFF
 #define C_TODO 0x8EE28E
 #define C_DONE 0xA8A8A8
 #define C_RECIPE 0xC9A6FF
 #define C_HEAD 0xF2C94C
+#define C_QUEST 0x8CC8F2
 
 static void add_line(uint32_t c, const char* s) {
     if (g_nline < MAX_LINES) { snprintf(g_line[g_nline].s, sizeof g_line[0].s, "%s", s); g_line[g_nline++].c = c; }
 }
 
+/* Text cut at the spaces into lines of about cols letters, at most max lines. */
+static void add_wrapped(uint32_t c, const char* s, int cols, int max) {
+    while (*s && max-- > 0) {
+        int letters = 0; size_t cut = 0, i = 0;
+        for (; s[i] && letters < cols; i++) {
+            if (((unsigned char)s[i] & 0xC0) != 0x80) letters++;   /* not inside a UTF-8 letter */
+            if (s[i] == ' ') cut = i;
+        }
+        if (!s[i] || !cut) cut = i;
+        char line[140];
+        if (max == 0 && s[cut]) snprintf(line, sizeof line, "%.*s...", (int)cut, s);
+        else snprintf(line, sizeof line, "%.*s", (int)cut, s);
+        add_line(c, line);
+        s += cut;
+        while (*s == ' ') s++;
+    }
+}
+
+static void quest_title(int q, char* out, size_t cap) {
+    static const char* const number[5] = { "Quest #%d", "Qu\xC3\xAA" "te n\xC2\xB0%d", "Auftrag Nr. %d", "Missione n. %d", "Misi\xC3\xB3n n.\xC2\xBA %d" };
+    char head[40]; snprintf(head, sizeof head, number[lang_index()], g_quest[q].num);
+    snprintf(out, cap, "%s: %s", head, g_quest[q].name[0] ? g_quest[q].name : "?");
+}
+
+static uint32_t quest_color(int state) { return state == 1 ? C_TODO : state == 2 ? C_QUEST : C_DONE; }
+
 /* One spot's line(s); short: one line, for a building's list. */
 static void spot_lines(int pi, const Spot* b, int opened, int is_short) {
     char what[100], line[140];
+    if (b->kind == K_QUEST) {
+        if (is_short) {
+            int st = quest_state(b->idx);
+            quest_title(b->idx, what, sizeof what);
+            snprintf(line, sizeof line, "%s (%s)", what, quest_status(st));
+            add_line(quest_color(st), line);
+            return;
+        }
+        const Held* h = held(pi);                                /* everyone's quests asked there */
+        for (int i = 0; h && i < h->n; i++) {
+            const Spot* o = &h->s[i];
+            int st = o->kind == K_QUEST && same_spot(o, b) ? quest_state(o->idx) : 0;
+            if (!st || (st == 3 && !g_mapmarks_opened)) continue;
+            if (g_nline) add_line(C_TEXT, "");
+            quest_title(o->idx, line, sizeof line);
+            add_line(st == 3 ? C_DONE : C_HEAD, line);
+            if (st != 3 && g_quest[o->idx].desc[0]) add_wrapped(C_TEXT, g_quest[o->idx].desc, 52, 3);
+            add_line(quest_color(st), quest_status(st));
+        }
+        return;
+    }
     if (b->kind == K_SHELF) {
         const Book* bk = find_book(g_places[pi].num, b->idx);
         if (is_short) {
@@ -762,8 +959,9 @@ static void spot_lines(int pi, const Spot* b, int opened, int is_short) {
     add_line(opened ? C_DONE : C_TODO, status(b, opened));
 }
 
-/* A building: what its rooms hold, the best first (chests, books, then pots
- * and barrels, then what was already taken), the same ones counted once. */
+/* A building: what its rooms hold, the best first (quests, chests, books,
+ * then pots and barrels, then what was already taken or done), the same
+ * ones counted once. */
 static void door_lines(const Mark* m) {
     static const char* const inside[5] = { "Inside", "\xC3\x80 l'int\xC3\xA9rieur", "Drinnen", "All'interno", "Dentro" };
     static const char* const more[5] = { "+%d more", "+%d de plus", "+%d weitere", "+%d altri", "+%d m\xC3\xA1s" };
@@ -780,21 +978,22 @@ static void door_lines(const Mark* m) {
             const Spot* b = &h->s[i];
             /* the same room in its other versions (the inn grows as guests
              * come): the same chest (its flag) or shelf (where it stands) */
-            int dup = 0;
+            int dup = !spot_shown(b);
             for (int k = 0; k < nseen && !dup; k++)
-                dup = seen[k]->kind == b->kind && (b->kind == K_SHELF ? fabsf(seen[k]->x - b->x) < 0.5f && fabsf(seen[k]->z - b->z) < 0.5f
-                                                                     : seen[k]->flag == b->flag);
+                dup = seen[k]->kind == b->kind && (b->kind == K_SHELF ? same_spot(seen[k], b)
+                                                   : b->kind == K_QUEST ? seen[k]->idx == b->idx : seen[k]->flag == b->flag);
             if (dup) continue;
             if (nseen < MAX_SEEN) seen[nseen++] = b;
-            int opened = b->kind != K_SHELF && flag_set(b->flag), rank;
-            if (b->kind == K_SHELF) {
+            int opened = spot_done(b), rank;
+            if (b->kind == K_QUEST && !opened) rank = 0;
+            else if (b->kind == K_SHELF) {
                 const Book* bk = find_book(g_places[d->rooms[r]].num, b->idx);
                 if (!bk || bk->dull) continue;
-                rank = 1;
+                rank = 2;
             } else if (opened) {
                 if (!g_mapmarks_opened) continue;
-                rank = 3;
-            } else rank = b->kind == K_CHEST || b->kind == K_GOLD ? 0 : 2;
+                rank = 4;
+            } else rank = b->kind == K_CHEST || b->kind == K_GOLD ? 1 : 3;
             g_nline = 0;
             spot_lines(d->rooms[r], b, opened, 1);
             int k;
@@ -806,7 +1005,7 @@ static void door_lines(const Mark* m) {
     }
     g_nline = 0;
     add_line(C_HEAD, inside[lang_index()]);
-    for (int rank = 0; rank < 4; rank++)
+    for (int rank = 0; rank < 5; rank++)
         for (int k = 0; k < nitem; k++) {
             if (item[k].rank != rank) continue;
             if (g_nline >= MAX_LINES - 1) { extra += item[k].n; continue; }
@@ -860,6 +1059,10 @@ int mapmarks_update(const uint8_t** rgba) {
     int ok = g_mapmarks && rd32(FIELD_PTR) != 0;
     uint32_t mp = rd32(MINIMAP_PTR);
     if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
+    /* the map is the top screen's BG1: off when a page covers it (the quest log...) */
+    uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000, bright = IO16(top + 0x6C);
+    if (ok && !(IO32(top) & 0x200)) ok = 0;
+    if (ok && (bright >> 14) == 2 && (bright & 0x1F) >= 16) ok = 0;   /* faded to black */
     if (ok && !loaded) {
         loaded = 1;
         load_places();
@@ -878,6 +1081,8 @@ int mapmarks_update(const uint8_t** rgba) {
             g_pic = pic_for(pi, shown);
             load_names(g_fw_language);
             load_books(g_fw_language);
+            load_quests();
+            load_quest_texts(g_fw_language);
             /* this place's own spots: when the picture is drawn in its units
              * (not a house's: it shows the town around it) */
             const Place* pl = &g_places[pi];
@@ -885,14 +1090,23 @@ int mapmarks_update(const uint8_t** rgba) {
             const Held* h = own ? held(pi) : NULL;
             for (int i = 0; h && i < h->n; i++) {
                 const Spot* b = &h->s[i];
-                Mark m = { b->x * scale - cx + 128, b->z * scale - cy + 96, -1, i, b->kind != K_SHELF && flag_set(b->flag), 0, 0, 0, 0 };
-                if (!on_screen(m.sx, m.sy) || (m.opened && !g_mapmarks_opened)) continue;
+                Mark m = { b->x * scale - cx + 128, b->z * scale - cy + 96, -1, i, spot_done(b), 0, 0, 0, 0, 0 };
+                if (!on_screen(m.sx, m.sy) || !spot_shown(b) || (m.opened && !g_mapmarks_opened)) continue;
+                if (b->kind == K_QUEST) {                            /* one bubble per person: offered first, then under way */
+                    int st = quest_state(b->idx), k;
+                    m.opened = st;
+                    for (k = 0; k < g_nmark; k++) {
+                        const Spot* o = g_mark[k].door < 0 ? &h->s[g_mark[k].spot] : NULL;
+                        if (o && o->kind == K_QUEST && same_spot(o, b)) break;
+                    }
+                    if (k < g_nmark) { if (st < g_mark[k].opened) g_mark[k].opened = st; continue; }
+                }
                 add_mark(&m);
             }
             /* the buildings: a badge on the door if their rooms hold anything */
             for (int d = 0; g_pic && d < g_pic->ndoor; d++) {
                 const Door* door = &g_pic->door[d];
-                Mark m = { door->x * scale - cx + 128, door->z * scale - cy + 96, d, -1, 0, 0, 0, 0, 0 };
+                Mark m = { door->x * scale - cx + 128, door->z * scale - cy + 96, d, -1, 0, 0, 0, 0, 0, 0 };
                 if (!on_screen(m.sx, m.sy)) continue;
                 for (int r = 0; r < door->n; r++) {
                     if (own && door->rooms[r] == pi) continue;       /* already shown */
@@ -902,12 +1116,15 @@ int mapmarks_update(const uint8_t** rgba) {
                         if (b->kind == K_SHELF) {
                             const Book* bk = find_book(g_places[door->rooms[r]].num, b->idx);
                             if (bk && !bk->dull) { m.shelves++; m.recipes += bk->recipes; }
+                        } else if (b->kind == K_QUEST) {
+                            int st = quest_state(b->idx);
+                            if (st == 1 || st == 2) { m.quests++; if (!m.opened || st < m.opened) m.opened = st; }   /* a door's opened: its best quest state */
                         } else if (flag_set(b->flag)) m.emptied++;
                         else m.closed++;
                     }
                 }
                 if (!g_mapmarks_opened) m.emptied = 0;
-                if (m.closed || m.emptied || m.shelves) add_mark(&m);
+                if (m.closed || m.emptied || m.shelves || m.quests) add_mark(&m);
             }
         }
     }
@@ -922,8 +1139,8 @@ int mapmarks_update(const uint8_t** rgba) {
     uint32_t key = 2166136261u;
     for (int i = 0; i < g_nmark; i++) {
         const Mark* m = &g_mark[i];
-        int v[8] = { (int)lroundf(m->sx * MAPMARKS_R), (int)lroundf(m->sy * MAPMARKS_R), m->door, m->spot, m->opened, m->closed, m->emptied, m->shelves };
-        for (int k = 0; k < 8; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
+        int v[9] = { (int)lroundf(m->sx * MAPMARKS_R), (int)lroundf(m->sy * MAPMARKS_R), m->door, m->spot, m->opened, m->closed, m->emptied, m->shelves, m->quests };
+        for (int k = 0; k < 9; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
     }
     key = (key ^ (uint32_t)(g_hover + 2)) * 16777619u;
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;
