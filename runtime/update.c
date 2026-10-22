@@ -4,14 +4,16 @@
 #include <string.h>
 #include "update.h"
 
-/* "v27" -> 27, 9999; "v27-nightly9" -> 27, 9 */
+/* "v27" -> 27, 0, 9999; "v31.2" -> 31, 2, 9999; "v27-nightly9" -> 27, 0, 9 */
 static long long version_key(const char* v) {
-    int major = 0, nightly = 9999;
+    int major = 0, minor = 0, nightly = 9999;
     if (!v || (v[0] != 'v' && v[0] != 'V')) return -1;
-    major = atoi(v + 1);
+    char* e;
+    major = (int)strtol(v + 1, &e, 10);
+    if (*e == '.') minor = atoi(e + 1);
     const char* n = strstr(v, "nightly");
     if (n) nightly = atoi(n + 7);
-    return (long long)major * 100000 + nightly;
+    return ((long long)major * 1000 + minor) * 100000 + nightly;
 }
 int update_newer(const char* a, const char* b) { return version_key(a) > version_key(b); }
 

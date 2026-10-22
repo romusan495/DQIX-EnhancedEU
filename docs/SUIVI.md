@@ -20,6 +20,7 @@ jour : 2026-10-21.
 | Wi-Fi / DQVC avec la ROM EU | Dev | à créer | — | à faire (non testé) | — | Tester avec la ROM EU |
 | BUILD : « cmp: commande introuvable » (`tools/build-game.sh:99`) | Intégration | à créer | — | à faire | — | Installer `diffutils` dans MSYS2 ou éviter `cmp` ; le build réussit quand même |
 | `tests/gpu3d/t3d.c` ne compile plus (`gpu3d_init` non déclaré) | Dev | à créer | — | à faire | — | Mettre le test à jour avec l'API actuelle de `gpu3d.c` |
+| Releases GitHub hebdomadaires (v31.1, v31.2...) | Intégration | [Intégration] Releases hebdomadaires | `claude/project-thread-on5r0q` (touche `runtime/update.c/.h`, `version.h` : fichiers Dev, accord du coordinateur) | en revue | — | Fusion, puis tag `v31.1` + branche `stable` + release, avec l'accord de Romuald |
 | Réorganisation Claude Code | Intégration | [Orga] Réorganisation | `orga/claude-config` | en cours | — | Revue, accord pour pousser |
 
 ## Décisions
@@ -28,6 +29,7 @@ jour : 2026-10-21.
 |---|---|---|
 | 2026-10-21 | Le dépôt `romusan495/DQIX-EnhancedEU` est la seule source ; le dossier de jeu ne change que par `git pull --ff-only` + BUILD.bat. | Des éditions directes dans le dossier de jeu ne revenaient pas au dépôt. |
 | 2026-10-21 | Méthode 5 (IA + original mélangés) pour toutes les textures HD. | Choix de Romuald après comparaison. |
+| 2026-10-22 | Release GitHub hebdomadaire : sources seules (jamais ROM, exe ni données du jeu), préparée par une tâche Claude, publiée après le feu vert de Romuald. | Choix de Romuald ; seul son PC peut vérifier le build. |
 | 2026-10-21 | 5 rôles, un thread par fonctionnalité, un worktree par thread de dev. | Plan de réorganisation validé. |
 
 ## Idées (non planifiées)

@@ -1,9 +1,11 @@
 # Where the project stands
 
-> **This fork (romusan495/DQIX-EnhancedEU)** has no tags and no `stable`
-> branch: the names below come from the upstream project. Here v31 stable is
-> commit `9e0666a` ("v31: stable"), and `main` carries the EU ROM support and
-> the later features. Current work: `docs/SUIVI.md`.
+> **This fork (romusan495/DQIX-EnhancedEU)** makes its own weekly releases,
+> v31.1, v31.2... (procedure: `docs/roles/integration.md`): tag `v31.N`,
+> branch `stable` moved to it, notes in `release-notes/`. Help > Check for
+> updates reads this repository (`runtime/update.h`). The names below the
+> line come from the upstream project; here upstream v31 is commit `9e0666a`.
+> Current work: `docs/SUIVI.md`.
 
 Git tag `v31` (and `bookmark-2026-10-19c`) marks the current stable version.
 The ones before: `v30`, `v29`, `v28`, `v27`, `v26`. To go back: `git checkout v30`.
