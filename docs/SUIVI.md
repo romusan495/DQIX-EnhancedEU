@@ -40,6 +40,7 @@ jour : 2026-10-22.
 | `runtime/frontend_sdl.c` | `graph/combat-disposition` (pas encore poussée) | Disposition du HUD de combat, fenêtres d'expérience et de montée de niveau |
 | `runtime/gl_render.c`, `runtime/gpu2d.c` | `graph/contour-blanc` (pas encore poussée) | Style Minimal : contour blanc conservé |
 | `runtime/frontend_sdl.c` | future `dev/widescreen-classic` (locale) | Bug d'affichage widescreen en mode Classic. Attention : `graph/combat-disposition` touche aussi ce fichier |
+| `runtime/frontend_sdl.c`, `runtime/gpu2d.c`, bientôt `runtime/menu_win32.c` | `claude/project-thread-7yvhih` (réglages par défaut, locale) | Valeurs initiales, `settings_load/save`, `settings_version` ; `g_winstyle = 1` par défaut. Conflits probables avec `dev/widescreen-classic` et les branches `graph/` : fusionner l'une après l'autre en résolvant les conflits |
 
 ## Décisions
 
