@@ -81,6 +81,7 @@ typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_
  * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
 int g_winstyle;                                                     /* 0 like the DS, 1 minimal: no frame, a fainter panel */
 int g_win_outline;                                                  /* minimal: the commands screen's windows keep their white line (frontend_sdl.c: the experience and level-up windows) */
+int g_dlg_outline;                                                  /* ...and the 3D screen's (frontend_sdl.c: in battles, the text box) */
 enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX };
 static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
@@ -170,7 +171,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 }
                 int k = 0;
                 if (winpal & b)                                     /* (the panel even inside a letter's box, not its shading) */
-                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? (eng == 1 && g_win_outline ? 0 : WIN_EDGE) : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? ((eng == 1 ? g_win_outline : g_dlg_outline) ? 0 : WIN_EDGE) : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
                 else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
