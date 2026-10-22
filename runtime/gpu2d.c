@@ -79,7 +79,7 @@ typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
  * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
 int g_winstyle;                                                     /* 0 like the DS, 1 minimal: no frame, a fainter panel */
-enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX };
+enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX, WIN_TINT };
 static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
     return palc(e, palbase, 2) == 0x2108 && palc(e, palbase, 4) == 0x4210 && palc(e, palbase, 8) == 0x6B5A && palc(e, palbase, 10) == 0x7FFF;
@@ -89,8 +89,8 @@ static int win_palette(Engine* e, uint32_t palbase) {
  * dark boxes (3) for the name, HP/MP and orders; colours 6-8 differ per
  * member. Beside the cards, a gradient (a palette of rising colours); the
  * commands' letters are on the windows' panel colour (1) of another palette. In the
- * battle HUD (gl_render.c) the minimal style leaves out the backdrop and the
- * frames and shows the boxes as see-through panels. */
+ * battle HUD (gl_render.c) the minimal style leaves out the frames and shows
+ * the backdrop (in the member's colour) and the boxes see-through. */
 static int card_palette(Engine* e, uint32_t palbase) {
     return palc(e, palbase, 3) == 0x18C6 && palc(e, palbase, 4) == 0x294A && palc(e, palbase, 11) == 0x2529
         && palc(e, palbase, 12) == 0x314A && palc(e, palbase, 13) == 0x396B && palc(e, palbase, 14) == 0x7FFF && palc(e, palbase, 15) == 0x7FFF;
@@ -157,7 +157,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 int k = 0;
                 if (winpal & b)                                     /* (the panel even inside a letter's box, not its shading) */
                     k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? WIN_EDGE : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
-                else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
+                else if (cardpal & b) k = idx == 3 ? WIN_BOX : idx == 9 ? WIN_TINT : (idx == 4 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
                 out->win[x] = (uint8_t)k; out->wins |= k;
@@ -726,8 +726,9 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         line6[x] = color_composite(v1, v2, bldcnt, fx, ea, eb, evy);
         dst[x] = to_rgb6(master_bright(line6[x], mb));
         /* minimal, the commands screen: in the top byte, how the battle HUD
-         * shows the pixel (gl_render.c): 1 left out, 2 a see-through panel */
-        if (win1 >= WIN_CLEAR || (win1 == WIN_PANEL && eng == 1)) dst[x] |= (win1 == WIN_CLEAR ? 1u : 2u) << 24;
+         * shows the pixel (gl_render.c): 1 left out, 2 a see-through panel,
+         * 3 see-through in its own colour (a card's backdrop) */
+        if (win1 >= WIN_CLEAR || (win1 == WIN_PANEL && eng == 1)) dst[x] |= (win1 == WIN_CLEAR ? 1u : win1 == WIN_TINT ? 3u : 2u) << 24;
     }
     #undef MARK3D
 }

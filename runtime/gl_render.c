@@ -265,8 +265,9 @@ static const char* FS_COMP =
     "  vec3 col = texelFetch(u_col, p2, 0).rgb;\n"
     "  vec2 fr = fract(vec2(dsx, uv.y * 192.0)) - 0.5;\n"
     "  if (u_has3d == 0) {\n"
-    /* (premultiplied: black, so the HUD's pieces are see-through there) */
+    /* (premultiplied: the HUD's pieces are see-through there) */
     "    int k = u_cut != 0 ? int(texelFetch(u_col, p2, 0).a * 255.0 + 0.5) : 0;\n"
+    "    if (k == 3) { o_color = vec4(col * 0.6, 0.6); return; }\n"
     "    if (k != 0) { o_color = vec4(0.0, 0.0, 0.0, k == 1 ? 0.0 : 0.55); return; }\n"
     "    o_color = vec4(u_s2d > 0.0 && !side ? smooth2d(p2, fr) : col, 1.0); return;\n"
     "  }\n"
