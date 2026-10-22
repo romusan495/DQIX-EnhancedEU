@@ -900,10 +900,10 @@ void gl_set_tex_upscale(int on) { on = on != 0; if (on != g_texup) { g_texup = o
 void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); }
 int gl_reload_texture_pack(void) { pack_unload(); texcache_redo(); if (g_pack_on) pack_load_list(); return g_pack_n; }
 
-/* A piece of the dialogue window's frame: an 8-texel strip of 4-bit greys
- * (the letters beside it are 16 x 16, the speech bubbles' tails cream). */
+/* A piece of the dialogue window's frame: 4-bit greys, 8 x 8 to 8 x 16 (the
+ * letters beside it are 16 x 16, the speech bubbles' tails cream). */
 static int win_frame_tile(const uint8_t* rgba, int w, int h) {
-    if (w != 8 && h != 8) return 0;
+    if ((w != 8 && h != 8) || w > 16 || h > 16) return 0;
     int any = 0;
     for (int i = 0; i < w * h; i++) {
         const uint8_t* q = rgba + i * 4;
@@ -1216,7 +1216,13 @@ static void gl_render_(const Frame3D* f) {
         b.count = nv - b.first;
         if (g_winstyle && !wire && ((p->attr >> 4) & 3) == 0) {     /* minimal windows (gpu2d.c): the dialogue window, drawn in 3D in front of all */
             int front = 1, black = 1;
-            for (int k = 0; k < p->n; k++) { if (p->v[k].zn > 1e-4f) front = 0; if (p->v[k].r + p->v[k].g + p->v[k].b > 0.0f) black = 0; }
+            float y0 = 192.0f, y1 = 0.0f;
+            for (int k = 0; k < p->n; k++) {
+                if (p->v[k].zn > 1e-4f) front = 0;
+                if (p->v[k].r + p->v[k].g + p->v[k].b > 0.0f) black = 0;
+                y0 = fminf(y0, p->v[k].y); y1 = fmaxf(y1, p->v[k].y);
+            }
+            if (y1 - y0 > 144.0f) black = 0;                        /* (not a fade over the whole screen) */
             float* o = g_verts + (size_t)b.first * VTX_FLOATS;
             if (front && !textured && black && b.translucent)       /* its panel: fainter */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);

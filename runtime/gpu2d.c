@@ -316,7 +316,7 @@ static void obj_mosaic_x(ObjLine* o, int mosw) {
 /* BG X mosaic: each block repeats its first pixel. */
 static void bg_mosaic_x(BgLine* l, int mosw) {
     if (!mosw) return;
-    for (int x = 0; x < 256; x++) l->col[x] = l->col[x - x % (mosw + 1)];
+    for (int x = 0; x < 256; x++) { l->col[x] = l->col[x - x % (mosw + 1)]; l->win[x] = l->win[x - x % (mosw + 1)]; }
 }
 
 /* ---------------------------------------------------------------- composition */
@@ -526,18 +526,16 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     }
     /* minimal windows: the frame left out; where its white line was, the panel
      * a little lighter (a thin edge) */
-    int winl = 0;
-    for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].wins && !(bg == 0 && bg_3d)) winl = 1;
+    int winl = 0;                                                   /* (bits) the layers with window pixels on this line */
+    for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].wins && !(bg == 0 && bg_3d)) winl |= 1 << bg;
     if (winl) {
         uint8_t edge[256] = { 0 };
-        for (int bg = 0; bg < 4; bg++) {
+        for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
             BgLine* l = &bgl[bg];
-            if (!bg_on[bg] || !l->wins || (bg == 0 && bg_3d)) continue;
             for (int x = 0; x < 256; x++) if (l->win[x] >= WIN_EDGE) { edge[x] |= l->win[x] == WIN_EDGE && (l->col[x] & PX_OPAQUE); l->col[x] = 0; }
         }
-        for (int bg = 0; bg < 4; bg++) {
+        for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
             BgLine* l = &bgl[bg];
-            if (!bg_on[bg] || !l->wins || (bg == 0 && bg_3d)) continue;
             for (int x = 0; x < 256; x++) if (edge[x] && l->win[x] == WIN_PANEL && (l->col[x] & PX_OPAQUE)) l->col[x] = 0x5294 | PX_OPAQUE;
         }
     }
@@ -652,7 +650,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 }
             }
             v3 = v2; v2 = v1; v1 = v;
-            pan1 = winl && L < 4 && !(L == 0 && bg_3d) && bgl[L].win[x] == WIN_PANEL;
+            pan1 = L < 4 && (winl & (1 << L)) && bgl[L].win[x] == WIN_PANEL;
         }
         uint32_t ea = eva, eb = evb;
         if (pan1) { ea = eva * 3 / 4; eb = evb + (eva - ea); if (eb > 16) eb = 16; }
