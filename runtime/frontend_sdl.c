@@ -81,6 +81,7 @@ static int g_peek;                                                /* widescreen:
 static int g_single;                                              /* one screen only (the bottom one, or the top one swapped) */
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
+static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
 static float g_small_alpha = 1.0f;                                /* ...as shown now (solid while the mouse is on it) */
@@ -283,28 +284,34 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             if (second) { v->cw = 256; v->ch = 192; big[0] = big[1] = big[2] = big[3] = 0; small[0] = small[1] = 0; small[2] = 256; small[3] = 192; }
             else small[0] = small[1] = small[2] = small[3] = 0;
         }
-        if (which == 0 && g_hud_n > 0 && !g_peek && !(g_small_hide && !pop)) {
-            /* Battle HUD: the commands screen cut into its panels, over the 3D.
-             * The party's panels in a row along the top; the one whose turn it
-             * is (the tall panel, with the commands) bigger in the bottom left.
+        if (which == 0 && (g_hud_n > 0 || g_hud_win[2]) && !g_peek && !(g_small_hide && !pop)) {
+            /* Battle HUD: the commands screen cut into its panels, over the 3D,
+             * stacked in the bottom left at half size: the one whose turn it
+             * is (the tall panel, with the commands) on top, the others below
+             * it in the party's order.
              * The map window keeps the last map (gl_hold() in present_gl). */
             if (second) {
                 if (pop) { v->held = 1; v->bot[0] = v->bot[1] = v->bot[2] = v->bot[3] = 0; v->top[0] = v->top[1] = 0; v->top[2] = 256; v->top[3] = 192; v->topx[0] = (float)side; v->topx[1] = 256; v->front = 0; }
             } else {
                 small[0] = small[1] = small[2] = small[3] = 0;
-                int nrow = 0;
-                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50;
-                float slot = (v->cw - 4) / (float)(nrow > 4 ? nrow : 4), k = fminf((slot - 2) / 244.0f, 0.5f);
-                float x = (v->cw - slot * (float)nrow) / 2;               /* the row centred */
-                for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
-                    float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]), *q = v->piece[v->npiece++];
-                    q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
-                    if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
-                    else {                                                /* at most half the picture's height */
-                        float kb = fminf(0.62f, 90.0f / h);
-                        q[2] = 244 * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
-                    }
+                if (g_hud_win[2]) {                                   /* a window alone: big, at the top in the middle */
+                    float* q = v->piece[v->npiece++], w = (float)g_hud_win[2], h = (float)g_hud_win[3], kw = fminf(1.0f, fminf(200.0f / w, 110.0f / h));
+                    q[4] = 1; q[5] = (float)g_hud_win[0]; q[6] = (float)g_hud_win[1]; q[7] = w; q[8] = h;
+                    q[2] = w * kw; q[3] = h * kw; q[0] = (v->cw - q[2]) / 2; q[1] = 6;
                 }
+                const float k = 0.5f, gap = 2;
+                float total = 0;
+                for (int i = 0; i < g_hud_n; i++) total += (float)(g_hud_band[i][1] - g_hud_band[i][0]) * k + gap;
+                float y = 192 - total;
+                for (int pass = 0; pass < 2; pass++)              /* the tall one first */
+                    for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
+                        float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]);
+                        if ((h >= 50) == pass) continue;
+                        float* q = v->piece[v->npiece++];
+                        q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
+                        q[0] = 4; q[1] = y; q[2] = 244 * k; q[3] = h * k;
+                        y += q[3] + gap;
+                    }
             }
         }
     } else if (two || single) {
@@ -1143,7 +1150,7 @@ static void wide_update(int a_on_top) {
  * holds the commands. Anything else there (no such lines) keeps the usual
  * small screen. In the field, keep the map for the map window. */
 static void hud_update(int a_on_top) {
-    g_hud_n = 0;
+    g_hud_n = 0; g_hud_win[2] = 0;
     if (!g_gl || !g_hud || !g_wide || g_side_by_side || (g_two && !g_single)) return;
     int side = 0, which = gl_wide_shown(&side);
     if (which == 1 && g_wide_pop) {                               /* the field: the map the window keeps during battles */
@@ -1160,7 +1167,16 @@ static void hud_update(int a_on_top) {
         for (int x = 10; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
         sep[y] = n > 200; nsep += sep[y];
     }
-    if (nsep < 1) return;
+    if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
+        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles */
+        for (int y = 0; y < 192; y++)
+            for (int x = 0; x < 256; x++)
+                if ((px[y * 256 + x] & 0xFFFFFF) == 0x303030) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 - x0 < 100 || y1 - y0 < 40 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
+        x0 = x0 < 3 ? 0 : x0 - 3; y0 = y0 < 3 ? 0 : y0 - 3; x1 = x1 > 252 ? 255 : x1 + 3; y1 = y1 > 188 ? 191 : y1 + 3;   /* its frame */
+        g_hud_win[0] = x0; g_hud_win[1] = y0; g_hud_win[2] = x1 - x0 + 1; g_hud_win[3] = y1 - y0 + 1;
+        return;
+    }
     int n = 0, tall = 0;
     for (int y = 0; y < 192;) {
         if (sep[y]) { y++; continue; }
@@ -1234,7 +1250,7 @@ static void present_gl(void) {
     }
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
     hud_update((pow >> 15) & 1);                                 /* (before composing: the minimal style cuts the cards out for it) */
-    gl_set_hud_cut(g_winstyle && g_hud_n > 0);
+    gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
     gl_dump_hook();
