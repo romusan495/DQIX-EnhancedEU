@@ -95,7 +95,9 @@ static SDL_GLContext g_glctx;
 static int g_scale3d = 2;
 extern void (*g_report_capture)(uint32_t out[2][256 * 192]);
 extern void (*g_report_perf)(FILE* f);
+extern void (*g_report_window)(const char* path);
 static void perf_write(FILE* f);
+static void report_window(const char* path);
 static int g_classic = 1;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
 extern int g_comp_gl;
 extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
@@ -823,6 +825,7 @@ void frontend_init(int argc, char** argv) {
     (void)argc; (void)argv;
     SDL_SetMainReady();
     g_report_perf = perf_write;
+    g_report_window = report_window;
     g_headless = getenv("DQIX_NOWINDOW") != NULL;
     if (getenv("DQIX_HIDDEN")) { g_hidden = g_headless = 1; return; }
     g_analog_walk = 1;                                          /* Modern: walking with the stick is on unless turned off */
@@ -1104,6 +1107,29 @@ static void window_shot_hook(int w, int h, int second) {
     char path[64]; snprintf(path, sizeof path, second ? "win%06llu_2.ppm" : "win%06llu.ppm", (unsigned long long)g_frame);
     FILE* f = fopen(path, "wb");
     if (f) { fprintf(f, "P6\n%d %d\n255\n", w, h); fwrite(rgb, 1, (size_t)w * h * 3, f); fclose(f); }
+    free(rgb);
+}
+
+/* Bug reports: the whole window as shown (the layout, the console photo...),
+ * drawn again from the last picture and read back; halved until it is at most
+ * 1600 wide so the report stays small. */
+void report_write_bmp_rgb(const char* path, const uint8_t* rgb, int w, int h);
+static void report_window(const char* path) {
+    if (!g_gl || !g_win || g_headless) return;
+    int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
+    if (w <= 0 || h <= 0) return;
+    GlPresent v; canvas_layout(&v, w, h); v.again = 1;          /* (again: the motion blur as it is) */
+    gl_present(&v);
+    uint8_t* rgb = gl_read_window(w, h);
+    while (w > 1600 && rgb) {                                     /* average 2x2 blocks */
+        int nw = w / 2, nh = h / 2;
+        for (int y = 0; y < nh; y++) for (int x = 0; x < nw; x++) for (int c = 0; c < 3; c++) {
+            const uint8_t* q = rgb + ((size_t)(2 * y) * w + 2 * x) * 3 + c;
+            rgb[((size_t)y * nw + x) * 3 + c] = (uint8_t)((q[0] + q[3] + q[(size_t)w * 3] + q[(size_t)w * 3 + 3] + 2) / 4);
+        }
+        w = nw; h = nh;
+    }
+    if (rgb) report_write_bmp_rgb(path, rgb, w, h);
     free(rgb);
 }
 
@@ -1605,11 +1631,11 @@ static void report_send(const char* dir, const char* description) {
         "Your browser opens a new bug report on the project's GitHub page, already filled in, and the report's folder opens "
         "with one file in it to drag into that page. Then press Submit. You need a free GitHub account.\n\n"
         "Everything on GitHub is public: anyone can see the report and download its file. The file contains:\n"
-        "  - a screenshot of the game\n"
+        "  - a screenshot of the game, and a picture of the whole game window\n"
         "  - every button you pressed since the game started\n"
         "  - your save file (your characters' names and progress), at the start and now, if ticked below\n"
         "  - your description\n"
-        "  - the game's version, log and settings: your graphics card, the Wi-Fi settings and the console's made-up ID; "
+        "  - the game's version, log and settings (settings.ini and controls.ini): your graphics card, the Wi-Fi settings and the console's made-up ID; "
         "after playing with friends also their names and the host's internet address\n"
         "  - timing measurements\n\n"
         "Nothing is sent until you press Submit on GitHub.";

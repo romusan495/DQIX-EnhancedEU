@@ -5,8 +5,10 @@
  *   input.txt       every button / touch since launch (DQIX_INPUT_FILE syntax)
  *   boot.sav        the save file as it was at launch (absent if there was none)
  *   now.sav         the save file at the time of the report
- *   info.txt        frame, clock start, reason, build, how to replay
- *   log.txt         the last log lines */
+ *   info.txt        frame, clock start, reason, build, ROM, how to replay
+ *   log.txt         the last log lines
+ *   window.bmp      the whole window as shown (the layout, at most 1600 wide)
+ *   settings.ini, controls.ini   the player's options, as they were */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,6 +64,40 @@ static void write_bmp(const char* path) {
     fclose(f);
 }
 
+/* A top-down RGB picture as a .bmp (the frontend's window picture) */
+void report_write_bmp_rgb(const char* path, const uint8_t* rgb, int w, int h) {
+    FILE* f = fopen(path, "wb");
+    if (!f) return;
+    int row = (w * 3 + 3) & ~3;
+    uint32_t img = (uint32_t)row * (uint32_t)h, size = 54 + img;
+    uint8_t hdr[54] = { 'B', 'M' };
+    memcpy(hdr + 2, &size, 4);
+    uint32_t off = 54, dib = 40; int32_t ww = w, hh = h; uint16_t planes = 1, bpp = 24;
+    memcpy(hdr + 10, &off, 4); memcpy(hdr + 14, &dib, 4); memcpy(hdr + 18, &ww, 4); memcpy(hdr + 22, &hh, 4);
+    memcpy(hdr + 26, &planes, 2); memcpy(hdr + 28, &bpp, 2); memcpy(hdr + 34, &img, 4);
+    fwrite(hdr, 1, 54, f);
+    uint8_t* line = calloc(1, (size_t)row);
+    for (int y = h - 1; y >= 0 && line; y--) {               /* bottom-up, BGR */
+        const uint8_t* src = rgb + (size_t)y * w * 3;
+        for (int x = 0; x < w; x++) { line[x * 3] = src[x * 3 + 2]; line[x * 3 + 1] = src[x * 3 + 1]; line[x * 3 + 2] = src[x * 3]; }
+        fwrite(line, 1, (size_t)row, f);
+    }
+    free(line);
+    fclose(f);
+}
+
+/* a file next to the game (settings.ini...) copied into the report, if there is one */
+static void copy_in(const char* dir, const char* name) {
+    FILE* in = fopen(name, "rb");
+    if (!in) return;
+    char path[600]; snprintf(path, sizeof path, "%s/%s", dir, name);
+    FILE* out = fopen(path, "wb");
+    char buf[4096]; size_t n;
+    while (out && (n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, out);
+    if (out) fclose(out);
+    fclose(in);
+}
+
 static FILE* open_in(const char* dir, const char* name, const char* mode) {
     char path[600];
     snprintf(path, sizeof path, "%s/%s", dir, name);
@@ -69,6 +105,7 @@ static FILE* open_in(const char* dir, const char* name, const char* mode) {
 }
 
 void (*g_report_perf)(FILE* f);                         /* frontend: recent frame timings */
+void (*g_report_window)(const char* path);              /* frontend: the whole window as shown (window.bmp) */
 
 char g_report_last_dir[300];                            /* the folder of the newest report */
 
@@ -85,6 +122,9 @@ void report_write(const char* reason) {
     char path[600];
     snprintf(path, sizeof path, "%s/screenshot.bmp", dir);
     write_bmp(path);
+    if (g_report_window) { snprintf(path, sizeof path, "%s/window.bmp", dir); g_report_window(path); }
+    copy_in(dir, "settings.ini");
+    copy_in(dir, "controls.ini");
     FILE* f;
     if ((f = open_in(dir, "input.txt", "w"))) { input_write_recording(f); fclose(f); }
     int had_boot_save = 0;
@@ -100,6 +140,8 @@ void report_write(const char* reason) {
         fprintf(f, "boot_save: %s\n", had_boot_save ? "yes" : "no (new game)");
         fprintf(f, "version: %s (%s)\n", DQIX_VERSION, DQIX_VERSION_DATE);
         fprintf(f, "built: %s %s\n", __DATE__, __TIME__);
+        fprintf(f, "rom: %.4s (%s)\n", g_rom && g_rom_size >= 16 ? (const char*)g_rom + 12 : "????",
+                rom_is_eur() ? "Europe" : g_rom && g_rom_size >= 16 && g_rom[15] == 'E' ? "USA" : "other");
         fprintf(f, "wireless: %s%s%s\n", g_wireless.online ? "connected, DNS " : "off", g_wireless.online ? g_wireless.dns : "",
                 g_wireless.mac_set ? "" : " (default MAC)");
         if (g_wireless.mac_set) fprintf(f, "mac: %02x:%02x:%02x:%02x:%02x:%02x\n", g_wireless.mac[0], g_wireless.mac[1],
@@ -136,8 +178,8 @@ static void w16(FILE* f, unsigned v) { fputc((int)(v & 0xFF), f); fputc((int)((v
 static void w32(FILE* f, uint32_t v) { w16(f, v & 0xFFFF); w16(f, v >> 16); }
 
 int report_zip(const char* dir, int with_saves, char* out, size_t outn) {
-    static const char* names[] = { "description.txt", "info.txt", "screenshot.bmp", "input.txt", "log.txt", "perf.txt",
-                                   "wireless.bin", "boot.sav", "now.sav" };
+    static const char* names[] = { "description.txt", "info.txt", "screenshot.bmp", "window.bmp", "settings.ini", "controls.ini",
+                                   "input.txt", "log.txt", "perf.txt", "wireless.bin", "boot.sav", "now.sav" };
     const char* base = strrchr(dir, '/'); base = base ? base + 1 : dir;
     snprintf(out, outn, "%s.zip", dir);
     FILE* z = fopen(out, "wb");
