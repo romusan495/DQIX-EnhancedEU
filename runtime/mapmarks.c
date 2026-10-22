@@ -1,6 +1,7 @@
 /* Modern: markers on the map (Modern > Map markers). The top screen's map
- * gets a mark for every chest, pot and barrel of the place the party is in,
- * grey once emptied; the mouse over one tells what is in it.
+ * gets a mark for every chest, pot, barrel and bookshelf of the place the
+ * party is in (chests grey once emptied), and a badge on every building
+ * whose rooms hold some; the mouse over one tells what is in it.
  *
  * Everything comes from the game itself:
  *  - data/scenario/treasure.nsarc (NARC): one file per place (C01.bin for
@@ -19,6 +20,15 @@
  *    (x * scale - cx + 128, z * scale - cy + 96) on the top screen.
  *  - the progress flags (bits at 0x021088D0, func_0206dfc0): a chest's at
  *    0x212 + its flag, a pot's, barrel's or blue chest's at 0x79E + its flag.
+ *  - data/map/<place>.ambl (NARC): the .bmbl inside (DS LZ) lists what can
+ *    be looked at: tag 0x73 (kind, x, y, z...) then 0x74; kind 8 is a
+ *    bookshelf, 0x74's first word its number in the place.
+ *  - data/scenario/htana?.gp2: per language, tag 0x66 per bookshelf: place,
+ *    number, teaches recipes (1), recipe book, then the texts (the second
+ *    one when it teaches recipes) with the book's title between quotes.
+ *  - data/pack_lv5/minimap.gp2: <place>.bmmp per map picture: tag 0x66 its
+ *    picture's name, 0x6b the places drawn in its units, 0x6c a door (x, z,
+ *    then the places behind it: the building's rooms).
  *
  * Read only: the game never sees any of it. */
 #include <stdio.h>
@@ -48,6 +58,11 @@ static int flag_set(int n) { return n >= 0 && (g_main_ram[(FLAGS + (n >> 3)) & (
 static uint32_t le32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint16_t le16(const uint8_t* p) { return (uint16_t)(p[0] | p[1] << 8); }
 static size_t slen(const char* s, size_t max) { size_t n = 0; while (n < max && s[n]) n++; return n; }
+static int up(int c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+static int same_name(const uint8_t* a, const char* b, size_t n) {   /* ignoring case: a few files are named in lower case */
+    for (size_t i = 0; i < n; i++) if (up(a[i]) != up((uint8_t)b[i])) return 0;
+    return 1;
+}
 
 /* A file of the cartridge's file system, by its path ("data/map/maplist9.bin"). */
 static const uint8_t* rom_file(const char* path, uint32_t* size) {
@@ -63,7 +78,7 @@ static const uint8_t* rom_file(const char* path, uint32_t* size) {
         while (p < g_rom_size && g_rom[p]) {
             int n = g_rom[p] & 0x7F, sub = g_rom[p] & 0x80;
             if (p + 1 + n + (sub ? 2 : 0) > g_rom_size) return NULL;
-            int match = (size_t)n == len && !memcmp(g_rom + p + 1, path, len);
+            int match = (size_t)n == len && same_name(g_rom + p + 1, path, len);
             if (sub) {
                 if (match && slash) { dir = le16(g_rom + p + 1 + n) & 0xFFF; found = 1; break; }
                 p += 1 + n + 2;
@@ -83,7 +98,7 @@ static const uint8_t* rom_file(const char* path, uint32_t* size) {
     }
 }
 
-/* A file in a NARC archive, by name. */
+/* A file in a NARC archive, by name ("*.ext": the first one ending so). */
 static const uint8_t* narc_file(const uint8_t* d, uint32_t n, const char* name, uint32_t* size) {
     if (!d || n < 16 || memcmp(d, "NARC", 4)) return NULL;
     uint32_t p = le16(d + 12), btaf = 0, btnf = 0, gmif = 0;
@@ -99,7 +114,9 @@ static const uint8_t* narc_file(const uint8_t* d, uint32_t n, const char* name, 
     uint32_t count = le32(d + btaf + 8), q = btnf + 8 + le32(d + btnf + 8), size_name = (uint32_t)strlen(name);
     for (uint32_t i = 0; i < count && q < n && d[q] && d[q] < 0x80; i++) {
         uint32_t len = d[q];
-        if (len == size_name && q + 1 + len <= n && !memcmp(d + q + 1, name, len)) {
+        int match = name[0] == '*' ? len >= size_name - 1 && q + 1 + len <= n && !memcmp(d + q + 1 + len - (size_name - 1), name + 1, size_name - 1)
+                                   : len == size_name && q + 1 + len <= n && !memcmp(d + q + 1, name, len);
+        if (match) {
             if (btaf + 12 + i * 8 + 8 > n) return NULL;
             uint32_t a = le32(d + btaf + 12 + i * 8), b = le32(d + btaf + 16 + i * 8);
             if (b < a || gmif + 8 + b > n) return NULL;
@@ -109,6 +126,37 @@ static const uint8_t* narc_file(const uint8_t* d, uint32_t n, const char* name, 
         q += 1 + len;
     }
     return NULL;
+}
+
+/* The DS BIOS's LZ77 from d + p into out (size bytes); 0 if it doesn't make sense. */
+static int lz(const uint8_t* d, uint32_t n, uint32_t p, uint8_t* out, uint32_t size) {
+    uint32_t o = 0;
+    while (o < size) {
+        if (p >= n) return 0;
+        uint8_t f = d[p++];
+        for (int b = 0; b < 8 && o < size; b++) {
+            if (f & (0x80 >> b)) {
+                if (p + 2 > n) return 0;
+                uint32_t x = (uint32_t)d[p] << 8 | d[p + 1], len = (x >> 12) + 3, dist = (x & 0xFFF) + 1; p += 2;
+                if (dist > o) return 0;
+                while (len-- && o < size) { out[o] = out[o - dist]; o++; }
+            } else {
+                if (p >= n) return 0;
+                out[o++] = d[p++];
+            }
+        }
+    }
+    return 1;
+}
+
+/* A file packed the DS way (0x10, then the size in 24 bits, then LZ77). New buffer (caller frees). */
+static uint8_t* ds_unpack(const uint8_t* d, uint32_t n, uint32_t* out_n) {
+    if (n < 4 || d[0] != 0x10) return NULL;
+    uint32_t size = d[1] | d[2] << 8 | (uint32_t)d[3] << 16;
+    uint8_t* out = malloc(size ? size : 1);
+    if (out && !lz(d, n, 4, out, size)) { free(out); out = NULL; }
+    if (out) *out_n = size;
+    return out;
 }
 
 /* Level-5's compression: a u32 (size << 3 | method) then the data. Methods:
@@ -126,21 +174,8 @@ static uint8_t* l5_unpack(const uint8_t* d, uint32_t n, uint32_t* out_n) {
         memcpy(out, d + p, size); o = size;
         break;
     case 1:
-        while (o < size) {
-            if (p >= n) goto bad;
-            uint8_t f = d[p++];
-            for (int b = 0; b < 8 && o < size; b++) {
-                if (f & (0x80 >> b)) {
-                    if (p + 2 > n) goto bad;
-                    uint32_t x = (uint32_t)d[p] << 8 | d[p + 1], len = (x >> 12) + 3, dist = (x & 0xFFF) + 1; p += 2;
-                    if (dist > o) goto bad;
-                    while (len-- && o < size) { out[o] = out[o - dist]; o++; }
-                } else {
-                    if (p >= n) goto bad;
-                    out[o++] = d[p++];
-                }
-            }
-        }
+        if (!lz(d, n, p, out, size)) goto bad;
+        o = size;
         break;
     case 2: case 3: {
         int bits = (h & 7) == 2 ? 4 : 8;
@@ -198,43 +233,66 @@ static uint32_t crc32_of(const char* s) {
     return ~c;
 }
 
-/* A file in a GPC2 archive (Level-5's packs), unpacked (caller frees).
- * Header: at +8 the names' offset / 4, at +10 the data's / 4; at +0x14 the
- * list (packed): per file the CRC-32 of its name, its data's offset / 4 (low
- * 24 bits), a size. */
-static uint8_t* gpc_file(const uint8_t* d, uint32_t n, const char* name, uint32_t* size) {
-    if (!d || n < 0x18 || memcmp(d, "GPC2", 4)) return NULL;
-    uint32_t data = (uint32_t)le16(d + 10) * 4, ln = 0, want = crc32_of(name);
-    uint8_t* list = l5_unpack(d + 0x14, n - 0x14, &ln), *out = NULL;
-    if (!list) return NULL;
-    for (uint32_t i = 0; i + 12 <= ln; i += 12)
-        if (le32(list + i) == want) {
-            uint32_t at = data + (le32(list + i + 4) & 0xFFFFFF) * 4;
-            if (at < n) out = l5_unpack(d + at, n - at, size);
-            break;
+/* A GPC2 archive (Level-5's packs). Header: at +8 the names' offset / 4, at
+ * +10 the data's / 4; at +0x14 the list (packed): per file the CRC-32 of its
+ * name, its data's offset / 4 (low 24 bits), a size. */
+typedef struct { const uint8_t* d; uint32_t n, data, ln; uint8_t* list; } Gpc;
+
+static int gpc_open(Gpc* g, const uint8_t* d, uint32_t n) {
+    memset(g, 0, sizeof *g);
+    if (!d || n < 0x18 || memcmp(d, "GPC2", 4)) return 0;
+    g->d = d; g->n = n; g->data = (uint32_t)le16(d + 10) * 4;
+    g->list = l5_unpack(d + 0x14, n - 0x14, &g->ln);
+    return g->list != NULL;
+}
+static void gpc_close(Gpc* g) { free(g->list); g->list = NULL; }
+
+/* A file in it, unpacked (caller frees). */
+static uint8_t* gpc_get(const Gpc* g, const char* name, uint32_t* size) {
+    uint32_t want = crc32_of(name);
+    for (uint32_t i = 0; g->list && i + 12 <= g->ln; i += 12)
+        if (le32(g->list + i) == want) {
+            uint32_t at = g->data + (le32(g->list + i + 4) & 0xFFFFFF) * 4;
+            return at < g->n ? l5_unpack(g->d + at, g->n - at, size) : NULL;
         }
-    free(list);
+    return NULL;
+}
+
+/* Its files' names, one after the other, each ended by a 0 (caller frees). */
+static uint8_t* gpc_names(const Gpc* g, uint32_t* size) {
+    uint32_t at = (uint32_t)le16(g->d + 8) * 4;
+    return at < g->n ? l5_unpack(g->d + at, g->n - at, size) : NULL;
+}
+
+static uint8_t* gpc_file(const uint8_t* d, uint32_t n, const char* name, uint32_t* size) {
+    Gpc g;
+    if (!gpc_open(&g, d, n)) return NULL;
+    uint8_t* out = gpc_get(&g, name, size);
+    gpc_close(&g);
     return out;
 }
 
 /* ---------------------------------------------------------------- the script format */
-typedef struct { int tag, n; uint8_t type[24]; uint32_t v[24]; } Rec;
+#define REC_MAX 64
+typedef struct { int tag, n; uint8_t type[REC_MAX]; uint32_t v[REC_MAX]; } Rec;   /* n: the words kept (at most REC_MAX) */
 
 /* The next record from *p (stops at `end` or the 0xFFFF end mark). */
 static int rec_next(const uint8_t* b, uint32_t end, uint32_t* p, Rec* r) {
     if (*p + 4 > end) return 0;
-    r->tag = le16(b + *p); r->n = b[*p + 2];
-    if (r->tag == 0xFFFF || r->n > 24) return 0;
-    uint32_t types = (uint32_t)(r->n + 3) / 4, q = *p + ((3 + types + 3) & ~3u);
-    if (*p + 3 + types > end || q + 4u * (uint32_t)r->n > end) return 0;
+    int count = b[*p + 2];
+    r->tag = le16(b + *p); r->n = count < REC_MAX ? count : REC_MAX;
+    if (r->tag == 0xFFFF) return 0;
+    uint32_t types = (uint32_t)(count + 3) / 4, q = *p + ((3 + types + 3) & ~3u);
+    if (*p + 3 + types > end || q + 4u * (uint32_t)count > end) return 0;
     for (int i = 0; i < r->n; i++) {
         r->type[i] = (b[*p + 3 + i / 4] >> (2 * (i % 4))) & 3;     /* 0 a string, 1 a number, 2 a float */
         r->v[i] = le32(b + q + 4u * (uint32_t)i);
     }
-    *p = q + 4u * (uint32_t)r->n;
+    *p = q + 4u * (uint32_t)count;
     return 1;
 }
 static float rec_float(const Rec* r, int i) { float f; memcpy(&f, &r->v[i], 4); return f; }
+
 
 /* ---------------------------------------------------------------- the places */
 typedef struct { uint16_t num; char code[12], map[12]; } Place;
@@ -250,36 +308,37 @@ static void load_places(void) {
     Rec r;
     while (rec_next(b, end, &p, &r)) {
         if (r.tag != 0x67 || r.n < 12 || r.type[4] != 0 || r.type[11] != 0) continue;
+        uint32_t c = end + r.v[4], m = end + r.v[11];
+        if (r.v[4] >= 0xFFFF || r.v[11] >= 0xFFFF || c >= n || m >= n) continue;
         Place* np = realloc(g_places, sizeof(Place) * (size_t)(g_nplaces + 1));
         if (!np) return;
         g_places = np;
-        Place* pl = &g_places[g_nplaces];
+        Place* pl = &g_places[g_nplaces++];
         memset(pl, 0, sizeof *pl);
         pl->num = (uint16_t)r.v[0];
-        uint32_t c = end + r.v[4], m = end + r.v[11];
-        if (r.v[4] >= 0xFFFF || r.v[11] >= 0xFFFF || c >= n || m >= n) continue;
         snprintf(pl->code, sizeof pl->code, "%.*s", (int)slen((const char*)b + c, n - c), (const char*)b + c);
         snprintf(pl->map, sizeof pl->map, "%.*s", (int)slen((const char*)b + m, n - m), (const char*)b + m);
-        g_nplaces++;
     }
 }
 
-static const Place* place(uint16_t num) {
-    for (int i = 0; i < g_nplaces; i++) if (g_places[i].num == num) return &g_places[i];
-    return NULL;
+static int place_index(uint32_t num) {
+    for (int i = 0; i < g_nplaces; i++) if (g_places[i].num == num) return i;
+    return -1;
 }
 
-/* ---------------------------------------------------------------- the items' names */
+/* ---------------------------------------------------------------- the game's texts */
 typedef struct { uint16_t key; char name[48]; } Name;
 static Name* g_names; static int g_nnames, g_names_lang = -1;
+static const char* const LANG_SUFFIX[5] = { "en", "fr", "de", "it", "es" };
+static int lang_index(void) { return g_fw_language >= 1 && g_fw_language <= 5 ? g_fw_language - 1 : 0; }
 
-/* The game's letters (<'e>, <1>...) as UTF-8; [notes for the grammar] left out. */
+/* The game's letters (<'e>, <1>...) as UTF-8; [notes for the grammar] and other <codes> left out. */
 static void clean_name(const char* s, char* out, size_t cap) {
     static const struct { const char* esc; const char* utf8; } k[] = {
         { "<'e>", "\xC3\xA9" }, { "<'E>", "\xC3\x89" }, { "<`e>", "\xC3\xA8" }, { "<^e>", "\xC3\xAA" }, { "<:e>", "\xC3\xAB" },
-        { "<'a>", "\xC3\xA1" }, { "<'A>", "\xC3\x81" }, { "<`a>", "\xC3\xA0" }, { "<^a>", "\xC3\xA2" }, { "<:a>", "\xC3\xA4" }, { "<:A>", "\xC3\x84" },
+        { "<'a>", "\xC3\xA1" }, { "<'A>", "\xC3\x81" }, { "<`a>", "\xC3\xA0" }, { "<`A>", "\xC3\x80" }, { "<^a>", "\xC3\xA2" }, { "<:a>", "\xC3\xA4" }, { "<:A>", "\xC3\x84" },
         { "<'i>", "\xC3\xAD" }, { "<^i>", "\xC3\xAE" }, { "<:i>", "\xC3\xAF" }, { "<'o>", "\xC3\xB3" }, { "<'O>", "\xC3\x93" },
-        { "<^o>", "\xC3\xB4" }, { "<:o>", "\xC3\xB6" }, { "<'u>", "\xC3\xBA" }, { "<`u>", "\xC3\xB9" }, { "<^u>", "\xC3\xBB" },
+        { "<^o>", "\xC3\xB4" }, { "<:o>", "\xC3\xB6" }, { "<:O>", "\xC3\x96" }, { "<'u>", "\xC3\xBA" }, { "<`u>", "\xC3\xB9" }, { "<^u>", "\xC3\xBB" },
         { "<:u>", "\xC3\xBC" }, { "<:U>", "\xC3\x9C" }, { "<,c>", "\xC3\xA7" }, { "<~n>", "\xC3\xB1" }, { "<ss>", "\xC3\x9F" },
         { "<oe>", "\xC5\x93" }, { "<1>", "'" }, { "<66>", "\"" }, { "<99>", "\"" }, { "<6>", "\"" }, { "<9>", "\"" }, { "<,>", "," },
     };
@@ -298,14 +357,13 @@ static void clean_name(const char* s, char* out, size_t cap) {
 }
 
 static void load_names(int lang) {
-    static const char* const suffix[5] = { "en", "fr", "de", "it", "es" };
     if (lang == g_names_lang) return;
     g_names_lang = lang;
     free(g_names); g_names = NULL; g_nnames = 0;
     uint32_t n = 0, sz = 0;
     const uint8_t* pack = rom_file("data/prm/itemname.gp2", &n);
     char fname[40];
-    snprintf(fname, sizeof fname, "itemname_%s.nat", suffix[lang >= 1 && lang <= 5 ? lang - 1 : 0]);
+    snprintf(fname, sizeof fname, "itemname_%s.nat", LANG_SUFFIX[lang >= 1 && lang <= 5 ? lang - 1 : 0]);
     uint8_t* b = gpc_file(pack, n, fname, &sz);
     if (!b) b = gpc_file(pack, n, "itemname_en.nat", &sz);
     if (!b) b = gpc_file(pack, n, "itemname.nat", &sz);
@@ -329,14 +387,88 @@ static const char* item_name(uint16_t key) {
     return NULL;
 }
 
-/* ---------------------------------------------------------------- this place's containers */
-enum { K_CHEST, K_GOLD, K_BLUE, K_POT, K_BARREL, K_UNKNOWN };
-typedef struct { float x, z; int kind, flag; uint16_t what; } Box;
-static Box g_box[160]; static int g_nbox; static int g_box_place = -1;
+/* ---------------------------------------------------------------- the books */
+typedef struct { uint16_t place; int16_t idx; uint8_t recipes, dull; char title[96]; } Book;
+static Book* g_books; static int g_nbooks, g_books_lang = -1;
 
-static void load_boxes(const Place* pl) {
-    g_nbox = 0;
-    if (!pl) return;
+/* A shelf's text -> the book's title (between the language's quotes), or
+ * else its first sentence ("There's a letter sandwiched between two books"). */
+static void book_title(const char* s, char* out, size_t cap) {
+    static const char* const opening[3] = { "<6>", "<66>", "<DE99>" }, *const closing[3] = { "<9>", "<99>", "<DE66>" };
+    const char* a = NULL, *e = NULL; size_t al = 0;
+    for (int i = 0; i < 3; i++) { const char* f = strstr(s, opening[i]); if (f && (!a || f < a)) { a = f; al = strlen(opening[i]); } }
+    if (a) for (int i = 0; i < 3; i++) { const char* f = strstr(a + al, closing[i]); if (f && (!e || f < e)) e = f; }
+    char raw[200];
+    if (a && e) snprintf(raw, sizeof raw, "%.*s", (int)(e - a - (ptrdiff_t)al), a + al);
+    else {
+        size_t n = 0;
+        while (s[n] && n < sizeof raw - 1 && s[n] != '.' && s[n] != '!' && strncmp(s + n, "<PAGE>", 6)) n++;
+        snprintf(raw, sizeof raw, "%.*s", (int)n, s);
+    }
+    clean_name(raw, out, cap);
+}
+
+static void load_books(int lang) {
+    if (lang == g_books_lang) return;
+    g_books_lang = lang;
+    free(g_books); g_books = NULL; g_nbooks = 0;
+    const char* suffix = LANG_SUFFIX[lang >= 1 && lang <= 5 ? lang - 1 : 0];
+    for (const char* L = "CDHMRSX"; *L; L++) {
+        char path[48], fname[32];
+        snprintf(path, sizeof path, "data/scenario/htana%c.gp2", *L);
+        snprintf(fname, sizeof fname, "htana%c_%s.bin", *L, suffix);
+        uint32_t n = 0, sz = 0;
+        const uint8_t* pack = rom_file(path, &n);
+        uint8_t* b = gpc_file(pack, n, fname, &sz);
+        if (!b || sz < 16) { free(b); continue; }
+        uint32_t end = le32(b + 4), p = 16, first = (uint32_t)g_nbooks;
+        if (end > sz) end = sz;
+        Rec r;
+        uint32_t* offs = NULL;
+        while (rec_next(b, end, &p, &r)) {
+            if (r.tag != 0x66 || r.n < 6) continue;
+            uint32_t off = r.v[2] == 1 ? r.v[5] : r.v[4];             /* teaching recipes: the second text */
+            Book* nb = realloc(g_books, sizeof(Book) * (size_t)(g_nbooks + 1));
+            uint32_t* no = realloc(offs, sizeof(uint32_t) * (size_t)(g_nbooks - first + 1));
+            if (!nb || !no) { if (nb) g_books = nb; if (no) offs = no; break; }
+            g_books = nb; offs = no;
+            Book* bk = &g_books[g_nbooks];
+            memset(bk, 0, sizeof *bk);
+            bk->place = (uint16_t)r.v[0]; bk->idx = (int16_t)r.v[1]; bk->recipes = r.v[2] == 1;
+            if (off < sz - end) book_title((const char*)b + end + off, bk->title, sizeof bk->title);
+            offs[g_nbooks - first] = off;
+            g_nbooks++;
+        }
+        /* the text most of them share is "nothing of interest here" (whatever the language) */
+        uint32_t dull = 0xFFFFFFFF; int most = 0, count = g_nbooks - (int)first;
+        for (int i = 0; i < count; i++) {
+            int c = 0;
+            for (int j = 0; j < count; j++) c += offs[j] == offs[i];
+            if (c > most) { most = c; dull = offs[i]; }
+        }
+        for (int i = 0; i < count; i++) g_books[first + i].dull = (offs[i] == dull && !g_books[first + i].recipes) || offs[i] >= sz - end;
+        free(offs); free(b);
+    }
+}
+
+static const Book* find_book(uint16_t place, int idx) {
+    for (int i = 0; i < g_nbooks; i++) if (g_books[i].place == place && g_books[i].idx == idx) return &g_books[i];
+    return NULL;
+}
+
+/* ---------------------------------------------------------------- what each place holds */
+enum { K_CHEST, K_GOLD, K_BLUE, K_POT, K_BARREL, K_UNKNOWN, K_SHELF };
+typedef struct { float x, z; int kind, flag, idx; uint16_t what; } Spot;   /* flag: a container's; idx: a shelf's number */
+typedef struct { int loaded, n; Spot* s; } Held;
+static Held* g_held;                                             /* per place (g_places' order), read when first needed */
+
+static void add_spot(Held* h, const Spot* s) {
+    Spot* ns = realloc(h->s, sizeof(Spot) * (size_t)(h->n + 1));
+    if (!ns) return;
+    h->s = ns; h->s[h->n++] = *s;
+}
+
+static void load_treasure(Held* h, const Place* pl) {
     char name[20]; snprintf(name, sizeof name, "%s.bin", pl->code);
     uint32_t n = 0;
     const uint8_t* b = narc_file(g_tbox, g_tbox_n, name, &n);
@@ -344,49 +476,150 @@ static void load_boxes(const Place* pl) {
     uint32_t end = le32(b + 4), p = 8;
     if (end > n) end = n;
     Rec r;
-    while (rec_next(b, end, &p, &r) && g_nbox < (int)(sizeof g_box / sizeof g_box[0])) {
+    while (rec_next(b, end, &p, &r)) {
         if (r.tag != 0x67 || r.n < 5 || r.type[2] != 2 || r.type[4] != 2) continue;   /* the ones with a place on the map */
-        Box* x = &g_box[g_nbox];
-        uint32_t kind = r.v[1];
-        x->what = (uint16_t)r.v[0]; x->flag = (int)(r.v[0] >> 16);
-        x->x = rec_float(&r, 2); x->z = rec_float(&r, 4);
-        if (!isfinite(x->x) || !isfinite(x->z)) continue;
-        switch (kind) {
-        case 0x08: case 0x09: x->kind = K_CHEST; break;
-        case 0x04: x->kind = K_GOLD; break;
-        case 0x40: x->kind = K_BLUE; break;
-        case 0x10: x->kind = K_POT; break;
-        case 0x20: x->kind = K_BARREL; break;
-        default: x->kind = K_UNKNOWN; break;
+        Spot x = { rec_float(&r, 2), rec_float(&r, 4), K_UNKNOWN, (int)(r.v[0] >> 16), -1, (uint16_t)r.v[0] };
+        if (!isfinite(x.x) || !isfinite(x.z)) continue;
+        switch (r.v[1]) {
+        case 0x08: case 0x09: x.kind = K_CHEST; break;
+        case 0x04: x.kind = K_GOLD; break;
+        case 0x40: x.kind = K_BLUE; break;
+        case 0x10: x.kind = K_POT; break;
+        case 0x20: x.kind = K_BARREL; break;
         }
-        x->flag += x->kind == K_CHEST || x->kind == K_GOLD || x->kind == K_UNKNOWN ? FLAG_CHEST : FLAG_OTHER;
-        g_nbox++;
+        x.flag += x.kind == K_CHEST || x.kind == K_GOLD || x.kind == K_UNKNOWN ? FLAG_CHEST : FLAG_OTHER;
+        add_spot(h, &x);
     }
 }
 
+static void load_shelves(Held* h, const Place* pl) {
+    char path[48]; snprintf(path, sizeof path, "data/map/%s.ambl", pl->code);
+    uint32_t n = 0, sz = 0;
+    const uint8_t* ambl = rom_file(path, &n), *packed = narc_file(ambl, n, "*.bmbl", &sz);
+    uint8_t* b = packed ? ds_unpack(packed, sz, &sz) : NULL;
+    if (!b || sz < 8) { free(b); return; }
+    uint32_t end = le32(b + 4), p = 8;
+    if (end > sz) end = sz;
+    Rec r;
+    Spot shelf; int pending = 0;
+    while (rec_next(b, end, &p, &r)) {
+        if (pending) { if (r.tag == 0x74 && r.n >= 1) shelf.idx = (int)r.v[0]; add_spot(h, &shelf); pending = 0; }
+        if (r.tag == 0x73 && r.n >= 4 && r.v[0] == 8 && r.type[1] == 2 && r.type[3] == 2) {   /* something to look at: 8 a bookshelf */
+            shelf = (Spot){ rec_float(&r, 1), rec_float(&r, 3), K_SHELF, -1, -1, 0 };
+            pending = isfinite(shelf.x) && isfinite(shelf.z);
+        }
+    }
+    if (pending) add_spot(h, &shelf);
+    free(b);
+}
+
+static const Held* held(int pi) {
+    if (pi < 0 || pi >= g_nplaces) return NULL;
+    if (!g_held && !(g_held = calloc((size_t)g_nplaces, sizeof(Held)))) return NULL;
+    Held* h = &g_held[pi];
+    if (!h->loaded) { h->loaded = 1; load_treasure(h, &g_places[pi]); load_shelves(h, &g_places[pi]); }
+    return h;
+}
+
+/* ---------------------------------------------------------------- the map pictures */
+typedef struct { float x, z; int n; int* rooms; } Door;          /* rooms: places (indices) behind it */
+typedef struct { char name[12]; int nsame, ndoor; int* same; Door* door; } Pic;
+static Pic* g_pics; static int g_npics;
+
+static int in_list(const int* l, int n, int v) { for (int i = 0; i < n; i++) if (l[i] == v) return 1; return 0; }
+
+static void add_int(int** l, int* n, int v) {
+    if (v < 0) return;
+    int* nl = realloc(*l, sizeof(int) * (size_t)(*n + 1));
+    if (nl) { *l = nl; (*l)[(*n)++] = v; }
+}
+
+static void load_pics(void) {
+    uint32_t n = 0, nn = 0;
+    const uint8_t* pack = rom_file("data/pack_lv5/minimap.gp2", &n);
+    Gpc g;
+    if (!gpc_open(&g, pack, n)) return;
+    uint8_t* names = gpc_names(&g, &nn);
+    for (uint32_t q = 0; names && q < nn; q += (uint32_t)slen((const char*)names + q, nn - q) + 1) {
+        char nm[40]; snprintf(nm, sizeof nm, "%.*s", (int)slen((const char*)names + q, nn - q), (const char*)names + q);
+        size_t l = strlen(nm);
+        if (l < 6 || strcmp(nm + l - 5, ".bmmp")) continue;
+        uint32_t sz = 0;
+        uint8_t* b = gpc_get(&g, nm, &sz);
+        if (!b || sz < 8) { free(b); continue; }
+        Pic* np = realloc(g_pics, sizeof(Pic) * (size_t)(g_npics + 1));
+        if (!np) { free(b); break; }
+        g_pics = np;
+        Pic* pic = &g_pics[g_npics++];
+        memset(pic, 0, sizeof *pic);
+        uint32_t end = le32(b + 4), p = 8;
+        if (end > sz) end = sz;
+        Rec r;
+        while (rec_next(b, end, &p, &r)) {
+            if (r.tag == 0x66 && r.n >= 2 && r.type[1] == 0 && end + r.v[1] < sz)
+                snprintf(pic->name, sizeof pic->name, "%.*s", (int)slen((const char*)b + end + r.v[1], sz - end - r.v[1]), (const char*)b + end + r.v[1]);
+            else if (r.tag == 0x6b && r.n >= 1) add_int(&pic->same, &pic->nsame, place_index(r.v[0]));
+            else if (r.tag == 0x6c && r.n >= 3 && r.type[0] == 2 && r.type[1] == 2) {
+                Door* nd = realloc(pic->door, sizeof(Door) * (size_t)(pic->ndoor + 1));
+                if (!nd) break;
+                pic->door = nd;
+                Door* d = &pic->door[pic->ndoor++];
+                memset(d, 0, sizeof *d);
+                d->x = rec_float(&r, 0); d->z = rec_float(&r, 1);
+                for (int i = 2; i < r.n; i++) add_int(&d->rooms, &d->n, place_index(r.v[i]));
+            }
+        }
+        free(b);
+    }
+    free(names);
+    gpc_close(&g);
+}
+
+/* The picture shown (its name from the game's memory) as drawn for place pi:
+ * of those with that name, the one drawing pi, else the one with pi behind a door. */
+static const Pic* pic_for(int pi, const char* shown) {
+    const Pic* best = NULL; int score = 0;
+    for (int i = 0; i < g_npics; i++) {
+        const Pic* p = &g_pics[i];
+        if (strncmp(p->name, shown, 6)) continue;
+        int s = in_list(p->same, p->nsame, pi) ? 3 : 1;
+        for (int d = 0; s == 1 && d < p->ndoor; d++) if (in_list(p->door[d].rooms, p->door[d].n, pi)) s = 2;
+        if (s > score) { score = s; best = p; }
+    }
+    return best;
+}
+
 /* ---------------------------------------------------------------- what is shown */
-typedef struct { float sx, sy; int box, opened; } Mark;
-static Mark g_mark[160]; static int g_nmark;
+typedef struct {
+    float sx, sy;
+    int door;                       /* -1: a spot of this place (spot), else a building's door on the picture */
+    int spot, opened;               /* a spot: which, emptied */
+    int closed, emptied, shelves, recipes;   /* a door: what its rooms hold */
+} Mark;
+#define MAX_MARKS 256
+static Mark g_mark[MAX_MARKS]; static int g_nmark;
 static float g_hx = -1, g_hy = -1; static int g_hover = -1;
+static int g_here = -1, g_own; static const Pic* g_pic;          /* this frame's place, drawn in its own units, and picture */
 
 void mapmarks_hover(float x, float y) { g_hx = x; g_hy = y; }
 
-static int lang_index(void) { return g_fw_language >= 1 && g_fw_language <= 5 ? g_fw_language - 1 : 0; }
+static int is_box(int kind) { return kind == K_CHEST || kind == K_GOLD || kind == K_BLUE || kind == K_UNKNOWN; }
 
 static const char* kind_name(int kind) {
-    static const char* const t[6][5] = {
+    static const char* const t[7][5] = {
         { "Treasure chest", "Coffre", "Schatztruhe", "Forziere", "Cofre" },
         { "Treasure chest", "Coffre", "Schatztruhe", "Forziere", "Cofre" },
         { "Blue chest", "Coffre bleu", "Blaue Truhe", "Forziere blu", "Cofre azul" },
         { "Pot", "Jarre", "Krug", "Giara", "Vasija" },
         { "Barrel", "Tonneau", "Fass", "Barile", "Barril" },
         { "Treasure chest", "Coffre", "Schatztruhe", "Forziere", "Cofre" },
+        { "Bookshelf", "Biblioth\xC3\xA8que", "B\xC3\xBC" "cherregal", "Libreria", "Estanter\xC3\xAD" "a" },
     };
     return t[kind][lang_index()];
 }
 
 /* What is in it, as the game would say it. */
-static void content(const Box* b, char* out, size_t cap) {
+static void content(const Spot* b, char* out, size_t cap) {
     static const char* const random_item[5] = { "Random item", "Objet au hasard", "Zuf\xC3\xA4lliger Gegenstand", "Oggetto a caso", "Objeto al azar" };
     static const char* const unknown[5] = { "Contents unknown", "Contenu inconnu", "Inhalt unbekannt", "Contenuto ignoto", "Contenido desconocido" };
     const char* nm = item_name(b->what);
@@ -396,18 +629,23 @@ static void content(const Box* b, char* out, size_t cap) {
     else snprintf(out, cap, "%s", unknown[lang_index()]);
 }
 
-static const char* status(const Box* b, int opened) {
+static const char* status(const Spot* b, int opened) {
     static const char* const open_chest[5] = { "Already opened", "D\xC3\xA9j\xC3\xA0 ouvert", "Schon ge\xC3\xB6" "ffnet", "Gi\xC3\xA0 aperto", "Ya abierto" };
     static const char* const closed_chest[5] = { "Not opened yet", "Pas encore ouvert", "Noch nicht ge\xC3\xB6" "ffnet", "Non ancora aperto", "A\xC3\xBA" "n sin abrir" };
     static const char* const searched[5] = { "Already searched", "D\xC3\xA9j\xC3\xA0 fouill\xC3\xA9", "Schon durchsucht", "Gi\xC3\xA0 frugato", "Ya registrado" };
     static const char* const not_searched[5] = { "Not searched yet", "Pas encore fouill\xC3\xA9", "Noch nicht durchsucht", "Non ancora frugato", "A\xC3\xBA" "n sin registrar" };
-    int box = b->kind == K_CHEST || b->kind == K_GOLD || b->kind == K_BLUE || b->kind == K_UNKNOWN;
-    return (box ? (opened ? open_chest : closed_chest) : (opened ? searched : not_searched))[lang_index()];
+    return (is_box(b->kind) ? (opened ? open_chest : closed_chest) : (opened ? searched : not_searched))[lang_index()];
+}
+
+static const char* teaches(void) {
+    static const char* const t[5] = { "Teaches alchemy recipes", "Apprend des recettes d'alchimie", "Lehrt Alchemie-Rezepte", "Insegna ricette alchemiche", "Ense\xC3\xB1" "a recetas de alquimia" };
+    return t[lang_index()];
 }
 
 /* ---------------------------------------------------------------- drawing (premultiplied RGBA) */
 static uint8_t g_img[MAPMARKS_W * MAPMARKS_H * 4];
-static uint32_t g_txt[MAPMARKS_W * 64];                         /* the tooltip's text, drawn alone */
+#define TXT_H 360
+static uint32_t g_txt[MAPMARKS_W * TXT_H];                       /* the tooltip's text, drawn alone */
 
 static void blend(int x, int y, uint32_t rgb, float a) {
     if (x < 0 || y < 0 || x >= MAPMARKS_W || y >= MAPMARKS_H || a <= 0) return;
@@ -429,102 +667,248 @@ static void rbox(float cx, float cy, float hw, float hh, float rad, uint32_t rgb
         }
 }
 
+#define EDGE 0x201008
+static void glyph_chest(float cx, float cy, float R, uint32_t body, uint32_t band, float a) {   /* lid, band, lock */
+    rbox(cx, cy, 3.2f * R, 2.5f * R, 0.8f * R, EDGE, a);
+    rbox(cx, cy, 3.2f * R - 1.5f, 2.5f * R - 1.5f, 0.8f * R - 1, body, a);
+    rbox(cx, cy - 0.5f * R, 3.2f * R - 1.5f, 0.3f * R, 0, band, a);
+    rbox(cx, cy + 0.3f * R, 0.55f * R, 0.75f * R, 0.25f * R, band, a);
+}
+static void glyph_book(float cx, float cy, float R, uint32_t cover, float a) {   /* cover, pages, spine */
+    rbox(cx, cy, 2.7f * R, 3.0f * R, 0.5f * R, EDGE, a);
+    rbox(cx, cy, 2.7f * R - 1.5f, 3.0f * R - 1.5f, 0.5f * R - 1, cover, a);
+    rbox(cx + 1.75f * R, cy, 0.35f * R, 2.4f * R, 0, 0xF4ECD8, a);
+    rbox(cx - 1.9f * R, cy, 0.3f * R, 2.7f * R, 0, EDGE, a * 0.5f);
+    rbox(cx - 0.1f * R, cy - 0.8f * R, 1.0f * R, 0.3f * R, 0, 0xF2C94C, a);   /* the title */
+}
+
+static uint32_t book_color(int recipes, int dull) { return dull ? 0x9A9A9A : recipes ? 0x8E55D8 : 0x2F9A5E; }
+
 static void draw_mark(const Mark* m, int hover) {
-    const Box* b = &g_box[m->box];
-    float R = MAPMARKS_R * 1.4f, cx = m->sx * MAPMARKS_R, cy = m->sy * MAPMARKS_R, a = m->opened ? 0.6f : 1.0f;
-    uint32_t edge = 0x201008;
+    float R = MAPMARKS_R * 1.4f, cx = m->sx * MAPMARKS_R, cy = m->sy * MAPMARKS_R;
+    if (m->door >= 0) {                                          /* a building: its contents on a dark badge */
+        int box = m->closed || m->emptied, two = box && m->shelves;
+        float k = 0.75f, hw = (two ? 6.6f : 3.8f) * R, hh = 3.4f * R;
+        if (hover) rbox(cx, cy, hw + 0.8f * R, hh + 0.8f * R, 1.8f * R, 0xFFFFFF, 0.95f);
+        rbox(cx, cy, hw, hh, 1.4f * R, 0xFFF8E0, 0.9f);
+        rbox(cx, cy, hw - 2, hh - 2, 1.4f * R - 2, 0x3A2A1A, 0.92f);
+        float x = two ? cx - 2.8f * R : cx;
+        if (box) glyph_chest(x, cy, R * k, m->closed ? 0xD0402E : 0x8A8A8A, m->closed ? 0xF2C94C : 0xB0B0B0, 1);
+        if (m->shelves) glyph_book(two ? cx + 2.8f * R : cx, cy, R * k, book_color(m->recipes > 0, 0), 1);
+        return;
+    }
+    const Spot* b = &held(g_here)->s[m->spot];
+    float a = m->opened ? 0.6f : 1.0f;
+    const Book* bk = b->kind == K_SHELF ? find_book(g_places[g_here].num, b->idx) : NULL;
+    if (b->kind == K_SHELF && (!bk || bk->dull)) a = 0.75f;
     /* a light halo: seen on the map's sand as on its grass */
     if (hover) rbox(cx, cy, 4.6f * R, 4.0f * R, 2.0f * R, 0xFFFFFF, 0.95f);
     else rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);
     switch (b->kind) {
     case K_POT:
-        rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, edge, a);
+        rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, EDGE, a);
         rbox(cx, cy, 2.4f * R - 1.5f, 2.4f * R - 1.5f, 2.4f * R - 1.5f, m->opened ? 0x8A8A8A : 0xC07A44, a);
         rbox(cx, cy - 1.6f * R, 1.1f * R, 0.5f * R, 0.4f * R, m->opened ? 0x5A5A5A : 0x6A3A1A, a);   /* the mouth */
         break;
     case K_BARREL:
-        rbox(cx, cy, 2.2f * R, 2.7f * R, 1.0f * R, edge, a);
+        rbox(cx, cy, 2.2f * R, 2.7f * R, 1.0f * R, EDGE, a);
         rbox(cx, cy, 2.2f * R - 1.5f, 2.7f * R - 1.5f, 1.0f * R - 1, m->opened ? 0x8A8A8A : 0xB98A4E, a);
-        rbox(cx, cy - 1.1f * R, 2.0f * R, 0.25f * R, 0, edge, a * 0.8f);   /* the hoops */
-        rbox(cx, cy + 1.1f * R, 2.0f * R, 0.25f * R, 0, edge, a * 0.8f);
+        rbox(cx, cy - 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);   /* the hoops */
+        rbox(cx, cy + 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);
         break;
-    default: {                                                   /* a chest: lid, band, lock */
-        uint32_t body = m->opened ? 0x8A8A8A : b->kind == K_BLUE ? 0x3C78E0 : 0xD0402E;
-        uint32_t band = m->opened ? 0xB0B0B0 : 0xF2C94C;
-        rbox(cx, cy, 3.2f * R, 2.5f * R, 0.8f * R, edge, a);
-        rbox(cx, cy, 3.2f * R - 1.5f, 2.5f * R - 1.5f, 0.8f * R - 1, body, a);
-        rbox(cx, cy - 0.5f * R, 3.2f * R - 1.5f, 0.3f * R, 0, band, a);
-        rbox(cx, cy + 0.3f * R, 0.55f * R, 0.75f * R, 0.25f * R, band, a);
+    case K_SHELF:
+        glyph_book(cx, cy, R, book_color(bk && bk->recipes, !bk || bk->dull), a);
         break;
-    }
+    default:
+        glyph_chest(cx, cy, R, m->opened ? 0x8A8A8A : b->kind == K_BLUE ? 0x3C78E0 : 0xD0402E, m->opened ? 0xB0B0B0 : 0xF2C94C, a);
+        break;
     }
 }
 
-static void draw_tooltip(const Mark* m) {
-    const Box* b = &g_box[m->box];
-    char what[80], line1[140];
+/* ---------------------------------------------------------------- the tooltip */
+typedef struct { char s[140]; uint32_t c; } Line;
+#define MAX_LINES 12
+static Line g_line[MAX_LINES]; static int g_nline;
+#define C_TEXT 0xFFFFFF
+#define C_TODO 0x8EE28E
+#define C_DONE 0xA8A8A8
+#define C_RECIPE 0xC9A6FF
+#define C_HEAD 0xF2C94C
+
+static void add_line(uint32_t c, const char* s) {
+    if (g_nline < MAX_LINES) { snprintf(g_line[g_nline].s, sizeof g_line[0].s, "%s", s); g_line[g_nline++].c = c; }
+}
+
+/* One spot's line(s); short: one line, for a building's list. */
+static void spot_lines(int pi, const Spot* b, int opened, int is_short) {
+    char what[100], line[140];
+    if (b->kind == K_SHELF) {
+        const Book* bk = find_book(g_places[pi].num, b->idx);
+        if (is_short) {
+            snprintf(line, sizeof line, "%s: %s", kind_name(K_SHELF), bk ? bk->title : "?");
+            add_line(bk && bk->recipes ? C_RECIPE : C_TEXT, line);
+            return;
+        }
+        if (!bk || bk->dull) { add_line(C_TEXT, kind_name(K_SHELF)); if (bk) add_line(C_DONE, bk->title); return; }
+        snprintf(line, sizeof line, "%s: %s", kind_name(K_SHELF), bk->title);
+        add_line(C_TEXT, line);
+        if (bk->recipes) add_line(C_RECIPE, teaches());
+        return;
+    }
     content(b, what, sizeof what);
-    snprintf(line1, sizeof line1, "%s: %s", kind_name(b->kind), what);
-    const char* line2 = status(b, m->opened);
+    snprintf(line, sizeof line, "%s: %s", kind_name(b->kind), what);
+    if (is_short) { add_line(opened ? C_DONE : C_TODO, line); return; }
+    add_line(C_TEXT, line);
+    add_line(opened ? C_DONE : C_TODO, status(b, opened));
+}
+
+/* A building: what its rooms hold, the best first (chests, books, then pots
+ * and barrels, then what was already taken), the same ones counted once. */
+static void door_lines(const Mark* m) {
+    static const char* const inside[5] = { "Inside", "\xC3\x80 l'int\xC3\xA9rieur", "Drinnen", "All'interno", "Dentro" };
+    static const char* const more[5] = { "+%d more", "+%d de plus", "+%d weitere", "+%d altri", "+%d m\xC3\xA1s" };
+    enum { MAX_ITEMS = 64 };
+    static struct { Line l; int rank, n; } item[MAX_ITEMS];
+    enum { MAX_SEEN = 512 };
+    static const Spot* seen[MAX_SEEN];
+    int nitem = 0, extra = 0, nseen = 0;
+    const Door* d = &g_pic->door[m->door];
+    for (int r = 0; r < d->n; r++) {
+        if (g_own && d->rooms[r] == g_here) continue;            /* already shown */
+        const Held* h = held(d->rooms[r]);
+        for (int i = 0; h && i < h->n; i++) {
+            const Spot* b = &h->s[i];
+            /* the same room in its other versions (the inn grows as guests
+             * come): the same chest (its flag) or shelf (where it stands) */
+            int dup = 0;
+            for (int k = 0; k < nseen && !dup; k++)
+                dup = seen[k]->kind == b->kind && (b->kind == K_SHELF ? fabsf(seen[k]->x - b->x) < 0.5f && fabsf(seen[k]->z - b->z) < 0.5f
+                                                                     : seen[k]->flag == b->flag);
+            if (dup) continue;
+            if (nseen < MAX_SEEN) seen[nseen++] = b;
+            int opened = b->kind != K_SHELF && flag_set(b->flag), rank;
+            if (b->kind == K_SHELF) {
+                const Book* bk = find_book(g_places[d->rooms[r]].num, b->idx);
+                if (!bk || bk->dull) continue;
+                rank = 1;
+            } else if (opened) {
+                if (!g_mapmarks_opened) continue;
+                rank = 3;
+            } else rank = b->kind == K_CHEST || b->kind == K_GOLD ? 0 : 2;
+            g_nline = 0;
+            spot_lines(d->rooms[r], b, opened, 1);
+            int k;
+            for (k = 0; k < nitem; k++) if (item[k].rank == rank && !strcmp(item[k].l.s, g_line[0].s)) break;
+            if (k < nitem) item[k].n++;
+            else if (nitem < MAX_ITEMS) { item[nitem].l = g_line[0]; item[nitem].rank = rank; item[nitem++].n = 1; }
+            else extra++;
+        }
+    }
+    g_nline = 0;
+    add_line(C_HEAD, inside[lang_index()]);
+    for (int rank = 0; rank < 4; rank++)
+        for (int k = 0; k < nitem; k++) {
+            if (item[k].rank != rank) continue;
+            if (g_nline >= MAX_LINES - 1) { extra += item[k].n; continue; }
+            char s[160];
+            if (item[k].n > 1) snprintf(s, sizeof s, "%s  \xC3\x97%d", item[k].l.s, item[k].n);
+            else snprintf(s, sizeof s, "%s", item[k].l.s);
+            add_line(item[k].l.c, s);
+        }
+    if (extra) { char s[40]; snprintf(s, sizeof s, more[lang_index()], extra); add_line(C_DONE, s); }
+}
+
+static void draw_tooltip(const Mark* m) {
+    g_nline = 0;
+    if (m->door >= 0) door_lines(m);
+    else spot_lines(g_here, &held(g_here)->s[m->spot], m->opened, 0);
+    if (!g_nline) return;
     float px = 7.5f * MAPMARKS_R;                                /* text height */
-    int lh = (int)(px * 1.2f), pad = 2 * MAPMARKS_R;
-    memset(g_txt, 0, sizeof g_txt);
-    int w1 = text_draw(g_txt, MAPMARKS_W, 64, 0, 0, px, 0xFFFFFF, line1);
-    int w2 = text_draw(g_txt, MAPMARKS_W, 64, 0, lh, px, 0x00FF00, line2);   /* green channel: the second line */
-    int tw = (w1 > w2 ? w1 : w2) + 2 * pad, th = 2 * lh + 2 * pad;
-    if (tw > MAPMARKS_W) tw = MAPMARKS_W;
+    int lh = (int)(px * 1.2f), pad = 2 * MAPMARKS_R, tw = 0, th;
+    if (g_nline * lh > TXT_H) g_nline = TXT_H / lh;
+    memset(g_txt, 0, sizeof(uint32_t) * MAPMARKS_W * (size_t)(g_nline * lh));
+    for (int i = 0; i < g_nline; i++) {
+        int w = text_draw(g_txt, MAPMARKS_W, g_nline * lh, 0, i * lh, px, 0xFFFFFF, g_line[i].s);
+        if (w > tw) tw = w;
+    }
+    tw += 2 * pad; th = g_nline * lh + 2 * pad;
+    if (tw > MAPMARKS_W - 4) tw = MAPMARKS_W - 4;
     int x0 = (int)(m->sx * MAPMARKS_R) - tw / 2, y0 = (int)((m->sy - 8) * MAPMARKS_R) - th;
-    if (y0 < 0) y0 = (int)((m->sy + 8) * MAPMARKS_R);          /* no room above: below */
+    if (y0 < 2) y0 = (int)((m->sy + 8) * MAPMARKS_R);           /* no room above: below */
+    if (y0 + th > MAPMARKS_H - 2) y0 = MAPMARKS_H - 2 - th;      /* ...nor there: over it */
+    if (y0 < 2) y0 = 2;
     if (x0 < 2) x0 = 2;
     if (x0 + tw > MAPMARKS_W - 2) x0 = MAPMARKS_W - 2 - tw;
     rbox(x0 + tw / 2.0f, y0 + th / 2.0f, tw / 2.0f, th / 2.0f, 2.0f * MAPMARKS_R, 0x101418, 0.88f);
-    uint32_t c2 = m->opened ? 0xA8A8A8 : 0x8EE28E;
-    for (int y = 0; y < 2 * lh && y < 64; y++)
+    for (int y = 0; y < g_nline * lh; y++)
         for (int x = 0; x < tw - 2 * pad; x++) {
             uint32_t t = g_txt[y * MAPMARKS_W + x];
-            if (!t) continue;
-            int first = y < lh;
-            float cov = (float)(first ? (t >> 16) & 255 : (t >> 8) & 255) / 255.0f;
-            blend(x0 + pad + x, y0 + pad + y, first ? 0xFFFFFF : c2, cov);
+            if (t) blend(x0 + pad + x, y0 + pad + y, g_line[y / lh].c, (float)((t >> 16) & 255) / 255.0f);
         }
 }
 
 /* ---------------------------------------------------------------- once a frame */
+static void add_mark(const Mark* m) { if (g_nmark < MAX_MARKS) g_mark[g_nmark++] = *m; }
+
+static int on_screen(float sx, float sy) { return sx >= -4 && sx <= 260 && sy >= -4 && sy <= 196; }
+
 int mapmarks_update(const uint8_t** rgba) {
     static int loaded, had;
     static uint32_t last_key;
     *rgba = NULL;
-    if (!loaded) {
+    g_nmark = 0; g_here = -1; g_own = 0; g_pic = NULL;
+    int ok = g_mapmarks && rd32(FIELD_PTR) != 0;
+    uint32_t mp = rd32(MINIMAP_PTR);
+    if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
+    if (ok && !loaded) {
         loaded = 1;
         load_places();
         g_tbox = rom_file("data/scenario/treasure.nsarc", &g_tbox_n);
-        if (g_tbox) LOG_INFO("mapmarks: %d places\n", g_nplaces);
+        load_pics();
+        LOG_INFO("mapmarks: %d places, %d map pictures\n", g_nplaces, g_npics);
     }
-    g_nmark = 0;
-    int ok = g_mapmarks && g_tbox && g_nplaces && rd32(FIELD_PTR) != 0;
-    uint32_t mp = rd32(MINIMAP_PTR);
-    if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
-    const Place* pl = ok ? place(rd16(MAP_NUM)) : NULL;
-    if (pl) {
-        /* only the map of the place itself: inside a house the map is the
-         * town's (another picture), and the house's units aren't the town's */
+    int pi = ok ? place_index(rd16(MAP_NUM)) : -1;
+    if (pi >= 0) {
         char shown[10];
         memcpy(shown, &g_main_ram[(mp + 2) & (MAIN_RAM_SIZE - 1)], 9); shown[9] = 0;
-        if (strlen(pl->map) < 6 || strncmp(shown, pl->map, 6)) pl = NULL;
-    }
-    if (pl) {
-        if (g_box_place != pl->num) { load_boxes(pl); g_box_place = pl->num; }
-        load_names(g_fw_language);
         float scale = (float)(int32_t)rd32(mp + 0x38) / 4096.0f;
         float cx = (float)(int32_t)rd32(mp + 0x44), cy = (float)(int32_t)rd32(mp + 0x48);
-        if (!(scale > 0.1f && scale < 64)) g_nbox = 0;
-        for (int i = 0; i < g_nbox; i++) {
-            const Box* b = &g_box[i];
-            float sx = b->x * scale - cx + 128, sy = b->z * scale - cy + 96;
-            if (sx < -4 || sx > 260 || sy < -4 || sy > 196) continue;
-            int opened = flag_set(b->flag);
-            if (opened && !g_mapmarks_opened) continue;
-            g_mark[g_nmark++] = (Mark){ sx, sy, i, opened };
+        if (scale > 0.1f && scale < 64) {
+            g_here = pi;
+            g_pic = pic_for(pi, shown);
+            load_names(g_fw_language);
+            load_books(g_fw_language);
+            /* this place's own spots: when the picture is drawn in its units
+             * (not a house's: it shows the town around it) */
+            const Place* pl = &g_places[pi];
+            int own = g_own = g_pic ? in_list(g_pic->same, g_pic->nsame, pi) : strlen(pl->map) >= 6 && !strncmp(shown, pl->map, 6);
+            const Held* h = own ? held(pi) : NULL;
+            for (int i = 0; h && i < h->n; i++) {
+                const Spot* b = &h->s[i];
+                Mark m = { b->x * scale - cx + 128, b->z * scale - cy + 96, -1, i, b->kind != K_SHELF && flag_set(b->flag), 0, 0, 0, 0 };
+                if (!on_screen(m.sx, m.sy) || (m.opened && !g_mapmarks_opened)) continue;
+                add_mark(&m);
+            }
+            /* the buildings: a badge on the door if their rooms hold anything */
+            for (int d = 0; g_pic && d < g_pic->ndoor; d++) {
+                const Door* door = &g_pic->door[d];
+                Mark m = { door->x * scale - cx + 128, door->z * scale - cy + 96, d, -1, 0, 0, 0, 0, 0 };
+                if (!on_screen(m.sx, m.sy)) continue;
+                for (int r = 0; r < door->n; r++) {
+                    if (own && door->rooms[r] == pi) continue;       /* already shown */
+                    const Held* hr = held(door->rooms[r]);
+                    for (int i = 0; hr && i < hr->n; i++) {
+                        const Spot* b = &hr->s[i];
+                        if (b->kind == K_SHELF) {
+                            const Book* bk = find_book(g_places[door->rooms[r]].num, b->idx);
+                            if (bk && !bk->dull) { m.shelves++; m.recipes += bk->recipes; }
+                        } else if (flag_set(b->flag)) m.emptied++;
+                        else m.closed++;
+                    }
+                }
+                if (!g_mapmarks_opened) m.emptied = 0;
+                if (m.closed || m.emptied || m.shelves) add_mark(&m);
+            }
         }
     }
     /* the mark under the mouse (the nearest) */
@@ -534,14 +918,16 @@ int mapmarks_update(const uint8_t** rgba) {
         float dx = g_mark[i].sx - g_hx, dy = g_mark[i].sy - g_hy;
         if (g_hx >= 0 && dx * dx + dy * dy < best) { best = dx * dx + dy * dy; g_hover = i; }
     }
-    /* redraw only when something moved */
+    /* redraw only when something changed */
     uint32_t key = 2166136261u;
     for (int i = 0; i < g_nmark; i++) {
-        int v[4] = { (int)lroundf(g_mark[i].sx * MAPMARKS_R), (int)lroundf(g_mark[i].sy * MAPMARKS_R), g_mark[i].box, g_mark[i].opened };
-        for (int k = 0; k < 4; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
+        const Mark* m = &g_mark[i];
+        int v[8] = { (int)lroundf(m->sx * MAPMARKS_R), (int)lroundf(m->sy * MAPMARKS_R), m->door, m->spot, m->opened, m->closed, m->emptied, m->shelves };
+        for (int k = 0; k < 8; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
     }
     key = (key ^ (uint32_t)(g_hover + 2)) * 16777619u;
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;
+    key = (key ^ (uint32_t)g_here) * 16777619u;
     if (!g_nmark) { int changed = had; had = 0; last_key = 0; return changed; }
     if (had && key == last_key) return 0;
     had = 1; last_key = key;
