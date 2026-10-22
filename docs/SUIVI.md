@@ -38,6 +38,7 @@ jour : 2026-10-22.
 | `runtime/mapmarks.c/.h` (nouveau) | `claude/project-thread-6dtla9` #8, #9, #10 | Marqueurs de carte |
 | `runtime/gl_render.c`, `build.mk`, `tools/build-game.sh` | `graph/icones-metiers` (pas encore poussée) | `draw_sprites` dans `gl_compose` et crochet de sprites dans le pack de textures (`dump-2d/` ignoré par le scan) ; dépendance `runtime/hdsprite.h` ; appel de `tools/job_icons.py` vers `game/textures/jobs` |
 | `runtime/frontend_sdl.c` | `graph/combat-disposition` (pas encore poussée) | Disposition du HUD de combat, fenêtres d'expérience et de montée de niveau |
+| `runtime/gl_render.c`, `runtime/gpu2d.c` | `graph/contour-blanc` (pas encore poussée) | Style Minimal : contour blanc conservé |
 
 ## Décisions
 
