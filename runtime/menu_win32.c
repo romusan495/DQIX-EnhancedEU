@@ -179,6 +179,9 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
     item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
     sep(modern);
+    item(modern, MI_MAPMARKS, L"&Map: mark the chests, pots and barrels (the mouse over one: what is in it)");
+    item(modern, MI_MAPMARKS_OPENED, L"Map: also mark the ones already &emptied (greyed)");
+    sep(modern);
     HMENU farm = sub(modern, L"Farm &gold by itself");
     item(farm, MI_FARM, L"&Farm here now\tCtrl+G");
     item(farm, MI_FARM_TARGET, L"Gold &target...");

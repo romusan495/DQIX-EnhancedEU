@@ -617,6 +617,7 @@ static float g_half_w = 128.0f;                                /* the frame bein
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
+static GLuint overlay_tex; static int overlay_on;   /* gl_set_overlay() */
 static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
 static int g_ready;
 
@@ -1728,6 +1729,23 @@ static void draw_pieces(const GlPresent* v, GLuint src) {
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 }
 
+/* gl_set_overlay()'s picture (the map's markers) over the canvas rect v->overlay. */
+static void draw_overlay(const GlPresent* v) {
+    const float* q = v->overlay;
+    p_glUseProgram(prog_copy);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, overlay_tex); p_glBindSampler(0, 0);
+    p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
+    float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
+                  q[2] * v->sc / (float)v->win_w * 2, q[3] * v->sc / (float)v->win_h * 2);
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_uv"), 0, 1, 1, -1);   /* rows top-down */
+    p_glBindVertexArray(vao_quad);
+    p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   /* premultiplied */
+    p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    p_glDisable(GL_BLEND);
+}
+
 /* Draw the screens (and the console, if chosen) into the window. Call once
  * per emulated frame: the motion blur advances with every call. */
 void gl_present(const GlPresent* v) {
@@ -1798,6 +1816,7 @@ void gl_present(const GlPresent* v) {
     p_glBindVertexArray(vao_quad);
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
     if (v->npiece) draw_pieces(v, final_tex);
+    if (overlay_on && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v);
 }
 
 /* A console photo (RGBA, rows top-down), drawn around the screens. */
@@ -1812,6 +1831,21 @@ void gl_set_skin(const uint8_t* rgba, int w, int h) {
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     skin_w = w; skin_h = h;
+}
+
+/* A picture drawn over the screens where GlPresent.overlay says (premultiplied
+ * RGBA, rows top-down); NULL: none. */
+void gl_set_overlay(const uint8_t* rgba, int w, int h) {
+    overlay_on = rgba != NULL;
+    if (!rgba) return;
+    if (!overlay_tex) p_glGenTextures(1, &overlay_tex);
+    p_glBindTexture(GL_TEXTURE_2D, overlay_tex);
+    p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
 /* The window as shown (for tests): top-down RGB, caller frees. */

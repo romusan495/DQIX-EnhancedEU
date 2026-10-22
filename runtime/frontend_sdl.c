@@ -34,6 +34,7 @@
 #include "gl_render.h"
 #include "menu.h"
 #include "farm.h"
+#include "mapmarks.h"
 #include "version.h"
 #include "session.h"
 #include "air.h"
@@ -445,6 +446,8 @@ static void settings_load(void) {
         else if (!strcmp(key, "swap_screens")) g_swap = atoi(val) != 0;
         else if (!strcmp(key, "widescreen_popout")) g_wide_pop = atoi(val) != 0;
         else if (!strcmp(key, "widescreen_battle_hud")) g_hud = atoi(val) != 0;
+        else if (!strcmp(key, "map_markers")) g_mapmarks = atoi(val) != 0;
+        else if (!strcmp(key, "map_markers_opened")) g_mapmarks_opened = atoi(val) != 0;
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
         else if (!strcmp(key, "smooth_2d")) g_smooth2d = atoi(val) != 0;
         else if (!strcmp(key, "outlines")) { int v = atoi(val); if (v >= 0 && v <= 2) g_outline = v; }
@@ -528,6 +531,10 @@ static void settings_save(void) {
     fprintf(f, "widescreen_popout = %d\n", g_wide_pop);
     fprintf(f, "# widescreen battles: the party's panels along the top and the commands in the bottom left, over the 3D: 0 or 1\n");
     fprintf(f, "widescreen_battle_hud = %d\n", g_hud);
+    fprintf(f, "# the map: the chests, pots and barrels of the place marked (the mouse over one: what is in it): 0 or 1\n");
+    fprintf(f, "map_markers = %d\n", g_mapmarks);
+    fprintf(f, "# ...also the ones already emptied (greyed): 0 or 1\n");
+    fprintf(f, "map_markers_opened = %d\n", g_mapmarks_opened);
     fprintf(f, "# window size: 1 to 8 times the DS screens (F3)\n");
     fprintf(f, "window_scale = %d\n", g_scale);
     fprintf(f, "# stacked, side_by_side, corner (the top screen small beside the field), wide (widescreen),\n");
@@ -1197,6 +1204,23 @@ static void auto_scale(void) {
     if (++frames >= 30) { gl_render_set_scale(want); pending = frames = 0; }
 }
 
+/* The map's markers (mapmarks.c) over the top screen, in whichever window
+ * shows it whole, while it shows the map (the 3D on the bottom screen, or the
+ * map kept during a battle); the mouse over that window points at them. */
+static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
+    const float* t = v->top;
+    if (t[2] < 128 || t[3] < 96 || v->topx[1] != 256 || (a_on_top && !v->held)) return;
+    memcpy(v->overlay, t, sizeof v->overlay);
+    const char* test = getenv("DQIX_MAPMARKS_MOUSE");            /* tests: "x,y" on the top screen */
+    if (test) { float x, y; if (sscanf(test, "%f,%f", &x, &y) == 2) mapmarks_hover(x, y); return; }
+    if (SDL_GetMouseFocus() != win) return;
+    int ww, wh, dw, dh, mx, my; SDL_GetWindowSize(win, &ww, &wh); SDL_GL_GetDrawableSize(win, &dw, &dh);
+    SDL_GetMouseState(&mx, &my);
+    float lx = ((float)mx + 0.5f) * (float)dw / (float)ww, ly = ((float)my + 0.5f) * (float)dh / (float)wh;   /* drawable pixels, as v is */
+    lx = (lx - v->ox) / v->sc; ly = (ly - v->oy) / v->sc;
+    if (lx >= t[0] && lx < t[0] + t[2] && ly >= t[1] && ly < t[1] + t[3]) mapmarks_hover((lx - t[0]) * 256 / t[2], (ly - t[1]) * 192 / t[3]);
+}
+
 static void present_gl(void) {
     auto_scale();
     g_wide_side = g_classic ? 0 : wide_side_target();            /* the next 3D frames (only the picture changes) */
@@ -1228,14 +1252,21 @@ static void present_gl(void) {
         g_small_alpha += (target - g_small_alpha) * 0.2f;
         if (fabsf(target - g_small_alpha) < 0.01f) g_small_alpha = target;
     }
+    {   /* the map's markers: drawn when they change */
+        const uint8_t* rgba;
+        if (mapmarks_update(&rgba)) gl_set_overlay(rgba, MAPMARKS_W, MAPMARKS_H);
+    }
     int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
     GlPresent v; canvas_layout(&v, w, h);
+    mapmarks_hover(-1, -1);
+    map_overlay(&v, g_win, (pow >> 15) & 1);
     gl_present(&v);
     window_shot_hook(w, h, 0);
     SDL_GL_SwapWindow(g_win);
     if (g_win2 && SDL_GL_MakeCurrent(g_win2, g_glctx) == 0) {   /* two windows: the other screen */
         int w2, h2; SDL_GL_GetDrawableSize(g_win2, &w2, &h2);
         GlPresent v2; canvas_layout_for(&v2, w2, h2, 1); v2.again = 1;
+        map_overlay(&v2, g_win2, (pow >> 15) & 1);
         gl_present(&v2);
         window_shot_hook(w2, h2, 1);
         SDL_GL_SwapWindow(g_win2);
@@ -1331,6 +1362,8 @@ static void menu_sync(void) {
     }
     menu_check(MI_POPOUT, g_wide_pop && wide); menu_enable(MI_POPOUT, g_gl);
     menu_check(MI_HUD, g_hud && wide); menu_enable(MI_HUD, g_gl);
+    menu_check(MI_MAPMARKS, g_mapmarks); menu_enable(MI_MAPMARKS, g_gl);
+    menu_check(MI_MAPMARKS_OPENED, g_mapmarks_opened); menu_enable(MI_MAPMARKS_OPENED, g_gl && g_mapmarks);
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
@@ -1917,6 +1950,8 @@ static void do_action(int id) {
         relayout = 1;
         break;
     case MI_HUD: g_hud = !g_hud; break;
+    case MI_MAPMARKS: g_mapmarks = !g_mapmarks; break;
+    case MI_MAPMARKS_OPENED: g_mapmarks_opened = !g_mapmarks_opened; break;
     case MI_FULL2: second_window_fullscreen(); break;
     case MI_LCD: if (g_gl) g_opt.lcd = !g_opt.lcd; g_fps_t0 = 0; break;
     case MI_LCDCOL: g_opt.lcd_color = !g_opt.lcd_color; break;
