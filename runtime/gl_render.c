@@ -222,7 +222,7 @@ static const char* FS_COMP =
     "uniform int u_has3d; uniform vec2 u_outsize;\n"
     "uniform int u_wide; uniform float u_wtot, u_wside;\n"   /* widescreen: DS pixels across, added each side */
     "uniform float u_s2d;\n"                                    /* smooth 2D: the width of an output pixel in DS pixels (0: off) */
-    "uniform int u_cut;\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
+    "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     /* Smooth 2D: xBR's corner rule (the same as xbr_upscale below): at each
      * corner of a DS pixel, if the neighbours across that corner form an
@@ -267,7 +267,7 @@ static const char* FS_COMP =
     "  if (u_has3d == 0) {\n"
     /* (premultiplied: the HUD's pieces are see-through there) */
     "    int k = u_cut != 0 ? int(texelFetch(u_col, p2, 0).a * 255.0 + 0.5) : 0;\n"
-    "    if (k == 3) { o_color = vec4(col * 0.6, 0.6); return; }\n"
+    "    if (k > 2) { o_color = vec4(u_tint[min(k - 3, 7)] * 0.6, 0.6); return; }\n"
     "    if (k != 0) { o_color = vec4(0.0, 0.0, 0.0, k == 1 ? 0.0 : 0.55); return; }\n"
     "    o_color = vec4(u_s2d > 0.0 && !side ? smooth2d(p2, fr) : col, 1.0); return;\n"
     "  }\n"
@@ -1439,6 +1439,7 @@ const Renderer3D* gl_renderer3d(void) { return &g_gl_renderer; }
 extern uint32_t g_engine_out[2][256 * 192];
 extern uint32_t g_comp_c2[256 * 192];
 extern uint8_t g_comp_info[256 * 192 * 4];
+extern uint32_t g_hud_tint[8];                                  /* gpu2d.c: the battle cards' colours (minimal windows) */
 extern int g_comp_has3d;
 
 static void upload_rgb(GLuint tex, const uint32_t* src) {
@@ -1608,7 +1609,7 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_info"), 2);
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_3d"), 3);
     GLint loc_rect = p_glGetUniformLocation(prog_comp, "u_rect"), loc_has3d = p_glGetUniformLocation(prog_comp, "u_has3d");
-    GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut");
+    GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
     p_glUniform4f(p_glGetUniformLocation(prog_comp, "u_uv"), 0, 0, 1, 1);
@@ -1622,6 +1623,11 @@ void gl_compose(int a_on_top, int lcd_on) {
         p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, has3d ? g_fb[g_fb_shown].post : white_tex);
         p_glUniform1i(loc_has3d, eng == 0 && has3d);
         p_glUniform1i(loc_cut, g_cut && !top);                     /* the commands screen (the HUD's pieces) */
+        if (g_cut && !top) {
+            float t[8 * 3];
+            for (int i = 0; i < 8 * 3; i++) t[i] = (float)((g_hud_tint[i / 3] >> (16 - 8 * (i % 3))) & 255) / 255.0f;
+            p_glUniform3fv(loc_tint, 8, t);
+        }
         int wide = eng == 0 && has3d && g_wside > 0;                 /* the 3D screen, widened; the other in the middle */
         p_glUniform1i(loc_wide, wide);
         if (wide) g_wide_shown = top ? 0 : 1;
