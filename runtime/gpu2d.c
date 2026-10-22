@@ -90,8 +90,8 @@ static int win_palette(Engine* e, uint32_t palbase) {
  * dark boxes (3) for the name, HP/MP and orders; colours 6-8 differ per
  * member. Beside the cards, a gradient (a palette of rising colours); the
  * commands' letters are on the windows' panel colour (1) of another palette. In the
- * battle HUD (gl_render.c) the minimal style leaves out the backdrop and the
- * frames and shows the boxes see-through, in the member's colour. */
+ * battle HUD (gl_render.c) the minimal style leaves out the backdrop, keeps
+ * the white frames and shows the boxes see-through, in the member's colour. */
 #define GPU_HUD_TINTS 8                                             /* (gl_render.c: u_tint) */
 uint32_t g_hud_tint[GPU_HUD_TINTS];                                 /* the cards' colours this frame (0xRRGGBB) */
 int g_hud_ntint;
@@ -169,8 +169,8 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 }
                 int k = 0;
                 if (winpal & b)                                     /* (the panel even inside a letter's box, not its shading) */
-                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? WIN_EDGE : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
-                else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
+                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9) ? WIN_CLEAR : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
                 out->win[x] = (uint8_t)k; out->wins |= k;
@@ -609,20 +609,13 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         else render_affine_bg(e, eng, bg, kind, &bgl[bg]);
         if (mos) bg_mosaic_x(&bgl[bg], R16(e, 0x4C) & 15);
     }
-    /* minimal windows: the frame left out; where its white line was, the panel
-     * a little lighter (a thin edge) */
+    /* minimal windows: the frame's grey shading left out, its white line kept
+     * (a thin outline) */
     int winl = 0;                                                   /* (bits) the layers with window pixels on this line */
     for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].wins && !(bg == 0 && bg_3d)) winl |= 1 << bg;
-    if (winl) {
-        uint8_t edge[256] = { 0 };
-        for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
-            BgLine* l = &bgl[bg];
-            for (int x = 0; x < 256; x++) if (l->win[x] == WIN_EDGE || l->win[x] == WIN_SHADE) { edge[x] |= l->win[x] == WIN_EDGE && (l->col[x] & PX_OPAQUE); l->col[x] = 0; }
-        }
-        for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
-            BgLine* l = &bgl[bg];
-            for (int x = 0; x < 256; x++) if (edge[x] && l->win[x] == WIN_PANEL && (l->col[x] & PX_OPAQUE)) l->col[x] = 0x5294 | PX_OPAQUE;
-        }
+    for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
+        BgLine* l = &bgl[bg];
+        for (int x = 0; x < 256; x++) if (l->win[x] == WIN_SHADE) l->col[x] = 0;
     }
     int obj_on = (disp >> 12) & 1;
     if (obj_on) { render_objs(e, eng, y, &objl); obj_mosaic_x(&objl, (R16(e, 0x4C) >> 8) & 15); }
