@@ -99,9 +99,8 @@ chosen in the Language menu), Windows 10 or 11 (64-bit), about 3 GB of free spac
 first time.
 
 1. Download the latest **stable** release from the
-   **[Releases page](https://github.com/sackchief/dqix-enhanced/releases)**
-   (*Source code (zip)*) and unzip it. The **Nightly** release there is the
-   newest work, less tested.
+   **[Releases page](https://github.com/romusan495/DQIX-EnhancedEU/releases)**
+   (*Source code (zip)*) and unzip it.
 2. Double-click **`Install Dragon Quest IX.bat`**. A setup window walks you
    through it: choose your ROM (it says which version it is), where to put
    the game (your Documents by default), and shortcuts on the desktop and in

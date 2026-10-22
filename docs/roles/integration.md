@@ -32,3 +32,19 @@ dossier de jeu, tenue du suivi central.
 - Sauvegarde du dossier de jeu avant une mise à jour risquée : `J:\DQIX-Backups\<date>-<raison>`.
 - Les branches fusionnées ne se suppriment qu'avec l'accord de Romuald.
 - Pas de CI GitHub : la vérification se fait sur ce PC.
+
+## Release hebdomadaire (décidé avec Romuald le 2026-10-22)
+Une tâche Claude planifiée par semaine ; rien n'est publié sans le feu vert de
+Romuald dans le thread `[Intégration] Releases hebdomadaires`.
+1. Lister les PR fusionnées dans `main` depuis le dernier tag `v31.N`. Aucune :
+   pas de release cette semaine.
+2. Branche `integ/release-v31.N` : `runtime/version.h` (`DQIX_VERSION` et la
+   date), `release-notes/v31.N.md` (anglais, style des notes existantes :
+   « What's new since v31.(N-1) », comment installer, rien du jeu inclus). PR.
+3. `dqix-build-check` sur la branche (PC allumé). Demander le feu vert.
+4. Après accord : fusion, tag `v31.N` sur `main`, branche `stable` déplacée sur
+   ce tag (le bouton « Check for updates » la lit), release GitHub `v31.N` avec
+   la note comme texte. Seulement le *Source code (zip)* automatique de GitHub.
+- **Jamais dans une release** : ROM, `dqix.exe`, C généré, `build/`, `game/`,
+  textures ou films upscalés, `wfc/` et les extras (données du jeu).
+- Un nouveau numéro upstream (v32) : refaire le port, puis repartir à v32.1.

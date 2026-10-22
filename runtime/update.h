@@ -11,15 +11,15 @@
 #pragma once
 #include <stddef.h>
 
-#define UPDATE_REPO "sackchief/dqix-enhanced"
+#define UPDATE_REPO "romusan495/DQIX-EnhancedEU"
 
 typedef struct {
     int ok;                       /* both versions were read */
-    char stable[32], nightly[32]; /* e.g. "v27", "v27-nightly9" */
+    char stable[32], nightly[32]; /* e.g. "v27", "v31.2", "v27-nightly9" */
     char error[160];
 } UpdateInfo;
 
-/* 1 if a > b (v27 > v27-nightly9 > v27-nightly8 > v26) */
+/* 1 if a > b (v32 > v31.2 > v31.1 > v31 > v31-nightly9 > v30) */
 int update_newer(const char* a, const char* b);
 
 /* in the background; update_poll() returns 1 once, when it has finished */
