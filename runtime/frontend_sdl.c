@@ -97,6 +97,10 @@ extern void (*g_report_capture)(uint32_t out[2][256 * 192]);
 extern void (*g_report_perf)(FILE* f);
 static void perf_write(FILE* f);
 static int g_classic = 1;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
+/* Widescreen needs Enhanced: only the GPU's 3D can be drawn wider, and only it
+ * says which screen holds the 3D (Classic showed the commands screen big and
+ * the battle small in the corner). In Classic the layout waits, stacked. */
+#define WIDE_GL (g_gl && !g_classic)
 extern int g_comp_gl;
 extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
@@ -222,7 +226,7 @@ static const char* BACKLIGHT_NAME[5] = { "", "low", "medium", "high", "max" };
 /* Widescreen: DS pixels to add left and right of the 3D picture. 16:9 in a
  * window; in fullscreen, as wide as the monitor (up to 2:1 more). */
 static int wide_side_target(void) {
-    if (!(g_gl && g_wide && !g_side_by_side)) return 0;
+    if (!(WIDE_GL && g_wide && !g_side_by_side)) return 0;
     int side = 43;                                                /* (192 * 16 / 9 - 256) / 2 */
     if (g_fullscreen && g_win) {
         int w, h; SDL_GetWindowSize(g_win, &w, &h);
@@ -235,7 +239,7 @@ static int wide_side_target(void) {
 static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
     memset(v, 0, sizeof *v);
     int two = g_gl && g_two && !g_side_by_side && !g_single;
-    int wide = g_gl && g_wide && !g_side_by_side && !two;
+    int wide = WIDE_GL && g_wide && !g_side_by_side && !two;
     int single = g_single && !wide;                               /* one screen (in widescreen the left trigger hides the small one instead) */
     int corner = g_gl && g_corner && !g_side_by_side && !wide && !two && !single;
     int shell = g_gl && g_opt.shell && !g_side_by_side && !corner && !wide && !two && !single;
@@ -770,7 +774,7 @@ static void second_window_keep_rect(void) {                     /* remember wher
     SDL_GetWindowSize(g_win2, &g_win2_rect[2], &g_win2_rect[3]);
 }
 static void second_window_sync(void) {
-    int want = g_gl && ((g_two && !g_single) || (g_wide && g_wide_pop)) && !g_side_by_side && g_win && !g_headless;
+    int want = g_gl && ((g_two && !g_single) || (g_wide && g_wide_pop && !g_classic)) && !g_side_by_side && g_win && !g_headless;
     if (!want && g_win2) {
         second_window_keep_rect();
         SDL_GL_MakeCurrent(g_win, g_glctx);
@@ -1115,7 +1119,7 @@ extern uint8_t g_comp_info[256 * 192 * 4];
 extern int g_comp_has3d;
 extern uint32_t g_engine_out[2][256 * 192];
 static void wide_update(int a_on_top) {
-    if (!g_wide || g_wide_pop) { g_wide_mix = 1.0f; if (!g_wide) return; }
+    if (!g_wide || !WIDE_GL || g_wide_pop) { g_wide_mix = 1.0f; if (!g_wide || !WIDE_GL) return; }
     int side = 0, which = gl_wide_shown(&side);
     {   /* the small screen: the one without the 3D (engine B), or the top one */
         int small_top = which != 0;
@@ -1151,7 +1155,7 @@ static void wide_update(int a_on_top) {
  * small screen. In the field, keep the map for the map window. */
 static void hud_update(int a_on_top) {
     g_hud_n = 0; g_hud_win[2] = 0;
-    if (!g_gl || !g_hud || !g_wide || g_side_by_side || (g_two && !g_single)) return;
+    if (!WIDE_GL || !g_hud || !g_wide || g_side_by_side || (g_two && !g_single)) return;
     int side = 0, which = gl_wide_shown(&side);
     if (which == 1 && g_wide_pop) {                               /* the field: the map the window keeps during battles */
         uint16_t mb; memcpy(&mb, &g_io[(a_on_top ? 0 : 0x1000) + 0x6C], 2);   /* the top screen's engine (the map) */
@@ -1359,8 +1363,8 @@ static void menu_sync(void) {
         menu_enable(MI_SES_HOST, !in); menu_enable(MI_SES_JOIN, !in);
         menu_enable(MI_NET, !in);                            /* a session uses the built-in Wi-Fi only (the PCs must agree) */
     }
-    int stacked = !g_side_by_side && !g_single && !((g_corner || g_wide || g_two) && g_gl);
-    int wide = g_wide && g_gl && !g_side_by_side;
+    int stacked = !g_side_by_side && !g_single && !((g_corner || g_two) && g_gl) && !(g_wide && WIDE_GL);
+    int wide = g_wide && WIDE_GL && !g_side_by_side;
     menu_check(MI_PAUSE, g_paused);
     menu_check(MI_UPDATE_AUTO, g_update_auto);
     menu_check(MI_TURBO, g_turbo);
@@ -1402,8 +1406,8 @@ static void menu_sync(void) {
     menu_check(MI_GAP, g_opt.gap || g_opt.shell); menu_enable(MI_GAP, g_gl && stacked && !g_opt.shell);
     menu_check(MI_STACKED, stacked); menu_check(MI_SIDE, g_side_by_side);
     menu_check(MI_CORNER, g_corner && !g_wide && !g_side_by_side); menu_enable(MI_CORNER, g_gl);
-    menu_check(MI_WIDE, g_wide && !g_wide_dyn && !g_side_by_side); menu_enable(MI_WIDE, g_gl);
-    menu_check(MI_WIDE_DYN, g_wide && g_wide_dyn && !g_side_by_side); menu_enable(MI_WIDE_DYN, g_gl);
+    menu_check(MI_WIDE, g_wide && !g_wide_dyn && !g_side_by_side); menu_enable(MI_WIDE, WIDE_GL);
+    menu_check(MI_WIDE_DYN, g_wide && g_wide_dyn && !g_side_by_side); menu_enable(MI_WIDE_DYN, WIDE_GL);
     menu_check(MI_SINGLE, wide ? g_small_hide : g_single);
     for (int i = 0; i < 4; i++) { menu_check(MI_CORNER0 + i, g_small_corner == i); menu_enable(MI_CORNER0 + i, g_gl && !g_wide_dyn); }
     for (int i = 0; i < 3; i++) { menu_check(MI_SSIZE0 + i, g_small_size == i); menu_enable(MI_SSIZE0 + i, g_gl && !g_wide_dyn); }
@@ -1942,6 +1946,7 @@ static void do_action(int id) {
     case MI_CLASSIC: case MI_ENHANCED:
         if (!g_gl) break;
         g_classic = id == MI_CLASSIC; apply_mode(); g_fps_t0 = 0;
+        if (g_wide && !g_side_by_side) { relayout = 1; if (g_classic) notice("Widescreen needs Enhanced: stacked until then"); }
         break;
     case MI_RES1: case MI_RES2: case MI_RES3: case MI_RES4: case MI_RES6: case MI_RES8:
         if (!g_gl || g_classic) break;
@@ -1960,7 +1965,7 @@ static void do_action(int id) {
     case MI_HDTEXT: if (g_gl) { g_hdtext = !g_hdtext; apply_mode(); } break;
     case MI_HDMOVIE: if (g_gl) { g_hdmovie = !g_hdmovie; if (g_hdmovie) hdmovie_init(); apply_mode(); } break;   /* on: look in movies/ again */
     case MI_POPOUT:
-        if (!g_gl) break;
+        if (!WIDE_GL) break;
         if (g_wide && !g_side_by_side) g_wide_pop = !g_wide_pop;
         else { g_wide_pop = 1; g_wide = 1; g_corner = g_side_by_side = g_two = 0; }   /* turns widescreen on too */
         relayout = 1;
@@ -1979,17 +1984,17 @@ static void do_action(int id) {
     case MI_STACKED: case MI_SIDE: g_side_by_side = id == MI_SIDE; g_corner = g_wide = g_two = g_single = 0; relayout = 1; break;
     case MI_CORNER: if (g_gl) { g_corner = !(g_corner && !g_wide && !g_side_by_side && !g_single); g_wide = g_side_by_side = g_two = g_single = 0; relayout = 1; } break;
     case MI_WIDE: case MI_WIDE_DYN:                               /* basic or dynamic widescreen (again: off) */
-        if (g_gl) {
+        if (WIDE_GL) {
             int dyn = id == MI_WIDE_DYN, on = g_wide && !g_side_by_side && g_wide_dyn == dyn;
             g_wide = !on; g_wide_dyn = dyn; g_corner = g_side_by_side = g_two = g_single = 0; relayout = 1;
         }
         break;
     case MI_TWO: if (g_gl) { g_two = !(g_two && !g_side_by_side && !g_single); g_corner = g_wide = g_side_by_side = g_single = 0; relayout = 1; } break;
     case MI_SINGLE:                                               /* U / left trigger: one screen; in widescreen the small one hides */
-        if (g_wide && g_gl && !g_side_by_side) { g_small_hide = !g_small_hide; notice(g_small_hide ? "Small screen hidden" : "Small screen shown"); }
+        if (g_wide && WIDE_GL && !g_side_by_side) { g_small_hide = !g_small_hide; notice(g_small_hide ? "Small screen hidden" : "Small screen shown"); }
         else { g_single = !g_single; relayout = 1; notice(g_single ? "Single screen (%s)" : "Both screens", g_swap ? "top" : "bottom"); }
         break;
-    case MI_SWAP: if (!(g_wide && g_gl && !g_side_by_side)) { g_swap = !g_swap; relayout = 1; } break;
+    case MI_SWAP: if (!(g_wide && WIDE_GL && !g_side_by_side)) { g_swap = !g_swap; relayout = 1; } break;
     case MI_OPACITY1: case MI_OPACITY1 + 1: case MI_OPACITY1 + 2: case MI_OPACITY1 + 3:
         g_small_opacity = 100 - 25 * (id - MI_OPACITY1); notice("Small screen: %d%%", g_small_opacity); break;
     case MI_CORNER0: case MI_CORNER0 + 1: case MI_CORNER0 + 2: case MI_CORNER0 + 3: {
@@ -2121,15 +2126,15 @@ static void do_action(int id) {
 }
 
 /* ---------------------------------------------------------------- hotkeys (Game > Controls) */
-static int wide_now(void) { return g_wide && g_gl && !g_side_by_side; }
+static int wide_now(void) { return g_wide && WIDE_GL && !g_side_by_side; }
 static void hotkey(int a) {
     switch (a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;
     case CA_LAYOUT: {                                            /* stacked -> side by side -> corner -> widescreen -> dynamic (-> two windows, with two monitors) */
-        int two_ok = SDL_GetNumVideoDisplays() > 1, gl = g_gl;
-        int id = g_single ? MI_STACKED : g_side_by_side ? (gl ? MI_CORNER : MI_STACKED) : (g_corner && gl) ? MI_WIDE
-               : (g_wide && gl && !g_wide_dyn) ? MI_WIDE_DYN : (g_wide && gl) ? (two_ok ? MI_TWO : MI_STACKED) : (g_two && gl) ? MI_STACKED : MI_SIDE;
+        int two_ok = SDL_GetNumVideoDisplays() > 1, gl = g_gl, wgl = WIDE_GL;    /* (no widescreen in Classic) */
+        int id = g_single ? MI_STACKED : g_side_by_side ? (gl ? MI_CORNER : MI_STACKED) : (g_corner && gl) ? (wgl ? MI_WIDE : two_ok ? MI_TWO : MI_STACKED)
+               : (g_wide && wgl && !g_wide_dyn) ? MI_WIDE_DYN : (g_wide && wgl) ? (two_ok ? MI_TWO : MI_STACKED) : (g_two && gl) ? MI_STACKED : MI_SIDE;
         do_action(id);
         break;
     }
