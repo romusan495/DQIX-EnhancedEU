@@ -100,6 +100,7 @@ static int g_classic = 0;       /* Classic: the DS's own 3D renderer, exact; Enh
 extern int g_comp_gl;
 extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
+static int g_all_options;       /* every option in the menus and on the keys (settings.ini all_options), else only the project's own setup */
 
 /* How the screens are shown (View and Screen menus). The DS Lite parts need OpenGL. */
 static struct {
@@ -454,6 +455,7 @@ static void settings_load(void) {
             g_player_name[strcspn(g_player_name, "\r\n")] = 0;
             continue;
         }
+        if (!strcmp(key, "all_options")) { g_all_options = atoi(val) != 0; continue; }
         if (!strcmp(key, "update_check")) { g_update_auto = atoi(val) != 0; continue; }
         if (!strcmp(key, "update_skip")) { snprintf(g_update_skip, sizeof g_update_skip, "%s", val); continue; }
         if (!strcmp(key, "session_port")) { int v = atoi(val); if (v > 0 && v < 65536) g_session_port = v; continue; }
@@ -530,6 +532,8 @@ static void settings_save(void) {
     if (!f) return;
     fprintf(f, "# Dragon Quest IX (PC) settings. The game saves this when you change something.\n");
     fprintf(f, "settings_version = %d\n", SETTINGS_VERSION);
+    fprintf(f, "# every option in the menus and on the keys (other layouts, DS Lite screen, fonts...): 0 or 1\n");
+    fprintf(f, "all_options = %d\n", g_all_options);
     fprintf(f, "# mode: classic (exactly like the DS) or enhanced (sharper 3D on the graphics card). F5 switches.\n");
     fprintf(f, "mode = %s\n", g_classic ? "classic" : "enhanced");
     fprintf(f, "# 3D resolution in enhanced mode: 1 to 12, or auto (as sharp as the window shows it; F4)\n");
@@ -891,7 +895,7 @@ void frontend_init(int argc, char** argv) {
         const char* names[N_DRAWN + MAX_SKINS];
         for (int i = 0; i < N_DRAWN; i++) names[i] = SHELLS[i].name;
         for (int i = 0; i < g_nskins; i++) names[N_DRAWN + i] = g_skins[i].name;
-        menu_init(g_win, names, N_SHELLS);
+        menu_init(g_win, names, N_SHELLS, g_all_options);
         if (g_update_auto && !session_requested() && update_project_dir()) update_check_async();
         update_actual();
         menu_sync();
@@ -2144,6 +2148,10 @@ static void do_action(int id) {
 /* ---------------------------------------------------------------- hotkeys (Game > Controls) */
 static int wide_now(void) { return g_wide && g_gl && !g_side_by_side; }
 static void hotkey(int a) {
+    if (!g_all_options) switch (a) {                             /* their menu items are hidden too (menu_init) */
+    case CA_LAYOUT: case CA_SINGLE: case CA_SWAP: case CA_CORNER: case CA_SMALLSIZE: case CA_OPACITY:
+    case CA_RES3D: case CA_MODE: case CA_LCD: case CA_SHELL: case CA_ACTUAL: return;
+    }
     switch (a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;

@@ -32,8 +32,9 @@ enum {
 };
 #define N_FONTS 15                                                      /* MI_FONT0 + i */
 
-/* shell_names: the console colours, in order (MI_SHELLC0 + i) */
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells);
+/* shell_names: the console colours, in order (MI_SHELLC0 + i); all: every
+ * option, else only the project's own setup (the rest from settings.ini) */
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all);
 void menu_show(int on);                       /* hidden in fullscreen */
 /* the second window (two windows): a bar with only Fullscreen (MI_FULL2) */
 void menu_init_second(SDL_Window* win);
