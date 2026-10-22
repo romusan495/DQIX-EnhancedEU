@@ -28,6 +28,7 @@ enum {
     MI_HDMOVIE = 310,                                                   /* HD movies from the movies folder */
     MI_HUD = 320,                                                       /* widescreen battles: the HUD over the 3D */
     MI_WINSTYLE0 = 330,                                                 /* windows: like the DS, minimal (+0..1) */
+    MI_MAPMARKS = 340, MI_MAPMARKS_OPENED,                              /* the map: chests, pots and barrels marked (mapmarks.c) */
 };
 #define N_FONTS 15                                                      /* MI_FONT0 + i */
 
