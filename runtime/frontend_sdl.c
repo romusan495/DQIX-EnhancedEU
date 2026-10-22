@@ -1209,9 +1209,10 @@ static void present_gl(void) {
         if (lg && g_frame % 60 == 0) g_box_tests = g_box_in = g_box_widened = 0;
     }
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
+    hud_update((pow >> 15) & 1);                                 /* (before composing: the minimal style cuts the cards out for it) */
+    gl_set_hud_cut(g_winstyle && g_hud_n > 0);
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
-    hud_update((pow >> 15) & 1);
     gl_dump_hook();
     test_hooks();
     {   /* widescreen: the small screen see-through (O), but solid while the mouse is on it */

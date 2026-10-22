@@ -79,10 +79,28 @@ typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
  * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
 int g_winstyle;                                                     /* 0 like the DS, 1 minimal: no frame, a fainter panel */
-enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE };
+enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX };
+static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
-    return (pal16(e->pal + (palbase + 2) * 2) & 0x7FFF) == 0x2108 && (pal16(e->pal + (palbase + 4) * 2) & 0x7FFF) == 0x4210
-        && (pal16(e->pal + (palbase + 8) * 2) & 0x7FFF) == 0x6B5A && (pal16(e->pal + (palbase + 10) * 2) & 0x7FFF) == 0x7FFF;
+    return palc(e, palbase, 2) == 0x2108 && palc(e, palbase, 4) == 0x4210 && palc(e, palbase, 8) == 0x6B5A && palc(e, palbase, 10) == 0x7FFF;
+}
+/* The party's cards in battles (commands screen): a backdrop in the member's
+ * colour (9) framed in white (14, 15) with grey lines between cards (4),
+ * dark boxes (3) for the name, HP/MP and orders; colours 6-8 differ per
+ * member. Beside the cards, a gradient (a palette of rising colours); the
+ * commands' letters are on the windows' panel colour (1) of another palette. In the
+ * battle HUD (gl_render.c) the minimal style leaves out the backdrop and the
+ * frames and shows the boxes as see-through panels. */
+static int card_palette(Engine* e, uint32_t palbase) {
+    return palc(e, palbase, 3) == 0x18C6 && palc(e, palbase, 4) == 0x294A && palc(e, palbase, 11) == 0x2529
+        && palc(e, palbase, 12) == 0x314A && palc(e, palbase, 13) == 0x396B && palc(e, palbase, 14) == 0x7FFF && palc(e, palbase, 15) == 0x7FFF;
+}
+static int ramp_palette(Engine* e, uint32_t palbase) {
+    for (int i = 2; i < 16; i++) {
+        uint16_t a = palc(e, palbase, i - 1), b = palc(e, palbase, i);
+        if ((b & 31) < (a & 31) || ((b >> 5) & 31) < ((a >> 5) & 31) || (b >> 10) < (a >> 10)) return 0;
+    }
+    return palc(e, palbase, 15) != palc(e, palbase, 1);
 }
 
 static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
@@ -105,7 +123,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     int hd = g_hdtext_on && g_hdtext_any && g_comp_gl && !c256;   /* the letters are 4-bit */
     out->tags = 0;
     int ws = g_winstyle && g_comp_gl && !c256;
-    uint32_t winpal = 0, winchecked = 0;                            /* palettes (bits) that are the windows' */
+    uint32_t winpal = 0, cardpal = 0, ramppal = 0, inkpal = 0, winchecked = 0;   /* palettes (bits): the windows', the cards', a gradient, letters on a panel */
     out->wins = 0;
     for (int x = 0; x < 256;) {
         uint32_t xx = (x + hofs) & (w - 1);
@@ -129,10 +147,19 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
             if (hd) { uint32_t t = row ? hdtext_tag(out->src[x]) : 0; out->tag[x] = t; out->tags |= t != 0; }
             if (ws) {
                 uint32_t b = 1u << (ent >> 12);
-                if (!(winchecked & b)) { winchecked |= b; if (win_palette(e, palbase)) winpal |= b; }
+                if (!(winchecked & b)) {
+                    winchecked |= b;
+                    if (win_palette(e, palbase)) winpal |= b;
+                    else if (eng == 1 && card_palette(e, palbase)) cardpal |= b;
+                    else if (eng == 1 && ramp_palette(e, palbase)) ramppal |= b;
+                    else if (eng == 1 && palc(e, palbase, 1) == 0x18C6) inkpal |= b;
+                }
                 int k = 0;
-                if ((winpal & b) && !(hd && out->tag[x]))           /* (not a letter's shading) */
-                    k = idx == 1 ? WIN_PANEL : idx == 10 ? WIN_EDGE : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                if (winpal & b)                                     /* (the panel even inside a letter's box, not its shading) */
+                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? WIN_EDGE : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
+                else if ((ramppal & b) && idx) k = WIN_CLEAR;
+                else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
                 out->win[x] = (uint8_t)k; out->wins |= k;
             }
             if (!idx) { out->col[x] = 0; continue; }
@@ -532,7 +559,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         uint8_t edge[256] = { 0 };
         for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
             BgLine* l = &bgl[bg];
-            for (int x = 0; x < 256; x++) if (l->win[x] >= WIN_EDGE) { edge[x] |= l->win[x] == WIN_EDGE && (l->col[x] & PX_OPAQUE); l->col[x] = 0; }
+            for (int x = 0; x < 256; x++) if (l->win[x] == WIN_EDGE || l->win[x] == WIN_SHADE) { edge[x] |= l->win[x] == WIN_EDGE && (l->col[x] & PX_OPAQUE); l->col[x] = 0; }
         }
         for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
             BgLine* l = &bgl[bg];
@@ -591,6 +618,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
         int pan1 = 0;                                               /* v1 is a window's panel (minimal: fainter) */
+        int win1 = 0;                                               /* v1's WIN_* (minimal) */
         uint8_t wm = winmask[x];
         int skipL = -1;
         if (hdl) {
@@ -614,7 +642,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         /* a letter drawn on an opaque box (battle menus, the PV/PM labels): the box
          * stays, and where the game's ink was, the box's colour from beside the
          * letter, so what's behind the box doesn't show through the letter */
-        int paperL = -1; uint32_t paper = 0;
+        int paperL = -1, paperw = 0; uint32_t paper = 0;
         if (skipL >= 0) {
             const BgLine* bl = &bgl[skipL]; uint32_t t = bl->tag[x];
             if (!HDT_INK(t) && (bl->col[x] & PX_OPAQUE)) skipL = -1;
@@ -624,7 +652,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                         int q = x + s * d;
                         if (q < 0 || q > 255) continue;
                         uint32_t tq = bl->tag[q];
-                        if (tq && HDT_INST(tq) == HDT_INST(t) && !HDT_INK(tq) && (bl->col[q] & PX_OPAQUE)) { paper = bl->col[q]; paperL = skipL; skipL = -1; break; }
+                        if (tq && HDT_INST(tq) == HDT_INST(t) && !HDT_INK(tq) && (bl->col[q] & PX_OPAQUE)) { paper = bl->col[q]; paperw = bl->win[q]; paperL = skipL; skipL = -1; break; }
                     }
         }
         for (int k = 0; k < norder; k++) {
@@ -650,7 +678,8 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 }
             }
             v3 = v2; v2 = v1; v1 = v;
-            pan1 = L < 4 && (winl & (1 << L)) && bgl[L].win[x] == WIN_PANEL;
+            win1 = L < 4 && (winl & (1 << L)) ? (L == paperL ? paperw : bgl[L].win[x]) : 0;
+            pan1 = win1 == WIN_PANEL;
         }
         uint32_t ea = eva, eb = evb;
         if (pan1) { ea = eva * 3 / 4; eb = evb + (eva - ea); if (eb > 16) eb = 16; }
@@ -696,6 +725,9 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         }
         line6[x] = color_composite(v1, v2, bldcnt, fx, ea, eb, evy);
         dst[x] = to_rgb6(master_bright(line6[x], mb));
+        /* minimal, the commands screen: in the top byte, how the battle HUD
+         * shows the pixel (gl_render.c): 1 left out, 2 a see-through panel */
+        if (win1 >= WIN_CLEAR || (win1 == WIN_PANEL && eng == 1)) dst[x] |= (win1 == WIN_CLEAR ? 1u : 2u) << 24;
     }
     #undef MARK3D
 }
