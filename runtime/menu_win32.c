@@ -63,6 +63,9 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(oln, MI_OUTLINE0, L"Like the &DS");
     item(oln, MI_OUTLINE0 + 1, L"&Thin");
     item(oln, MI_OUTLINE0 + 2, L"&None");
+    HMENU wst = sub(gfx, L"&Window style (Enhanced)");
+    item(wst, MI_WINSTYLE0, L"Like the &DS");
+    item(wst, MI_WINSTYLE0 + 1, L"&Minimal: no frame, more see-through");
     sep(gfx);
     item(gfx, MI_TEXPACK, L"&HD textures from the textures folder (Enhanced)");
     item(gfx, MI_TEXRELOAD, L"&Reload the HD textures");

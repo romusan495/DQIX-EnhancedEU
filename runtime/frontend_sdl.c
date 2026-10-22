@@ -96,6 +96,7 @@ extern void (*g_report_perf)(FILE* f);
 static void perf_write(FILE* f);
 static int g_classic = 1;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
 extern int g_comp_gl;
+extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
 
 /* How the screens are shown (View and Screen menus). The DS Lite parts need OpenGL. */
@@ -447,6 +448,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
         else if (!strcmp(key, "smooth_2d")) g_smooth2d = atoi(val) != 0;
         else if (!strcmp(key, "outlines")) { int v = atoi(val); if (v >= 0 && v <= 2) g_outline = v; }
+        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 1) g_winstyle = v; }
         else if (!strcmp(key, "upscale_textures")) g_texup = atoi(val) != 0;
         else if (!strcmp(key, "hd_textures")) g_texpack = atoi(val) != 0;
         else if (!strcmp(key, "dump_textures")) g_texdump = atoi(val) != 0;
@@ -510,6 +512,8 @@ static void settings_save(void) {
     fprintf(f, "smooth_2d = %d\n", g_smooth2d);
     fprintf(f, "# enhanced: characters' outlines: 0 like the DS, 1 thin, 2 none\n");
     fprintf(f, "outlines = %d\n", g_outline);
+    fprintf(f, "# enhanced: menu and dialogue windows: 0 like the DS, 1 minimal (no frame, more see-through)\n");
+    fprintf(f, "window_style = %d\n", g_winstyle);
     fprintf(f, "# enhanced: HD textures from the textures folder (textures/<name>.png) instead of the game's: 0 or 1\n");
     fprintf(f, "hd_textures = %d\n", g_texpack);
     fprintf(f, "# enhanced: write every texture the game shows to textures/dump/, to make a pack from: 0 or 1\n");
@@ -688,6 +692,7 @@ static int try_gl(void) {
     if (getenv("DQIX_SMOOTH2D")) g_smooth2d = atoi(getenv("DQIX_SMOOTH2D")) != 0;   /* tests */
     if (getenv("DQIX_TEXUP")) g_texup = atoi(getenv("DQIX_TEXUP")) != 0;
     if (getenv("DQIX_OUTLINES")) g_outline = atoi(getenv("DQIX_OUTLINES"));   /* tests */
+    if (getenv("DQIX_WINDOW_STYLE")) g_winstyle = atoi(getenv("DQIX_WINDOW_STYLE")) == 1;
     gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup); gl_set_outline(g_outline);
     if (getenv("DQIX_HD_TEXTURES")) g_texpack = atoi(getenv("DQIX_HD_TEXTURES")) != 0;   /* tests */
     if (getenv("DQIX_DUMP_TEXTURES")) g_texdump = atoi(getenv("DQIX_DUMP_TEXTURES")) != 0;
@@ -1328,6 +1333,7 @@ static void menu_sync(void) {
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
+    for (int i = 0; i < 2; i++) { menu_check(MI_WINSTYLE0 + i, g_winstyle == i); menu_enable(MI_WINSTYLE0 + i, g_gl && !g_classic); }
     menu_check(MI_TEXUP, g_texup); menu_enable(MI_TEXUP, g_gl && !g_classic);
     menu_check(MI_TEXPACK, g_texpack); menu_enable(MI_TEXPACK, g_gl && !g_classic);
     menu_enable(MI_TEXRELOAD, g_gl && !g_classic && g_texpack);
@@ -1896,6 +1902,7 @@ static void do_action(int id) {
     case MI_SMOOTH: if (g_gl) { g_smooth = !g_smooth; gl_set_smooth(g_smooth); } break;
     case MI_SMOOTH2D: if (g_gl) { g_smooth2d = !g_smooth2d; gl_set_smooth2d(g_smooth2d); } break;
     case MI_OUTLINE0: case MI_OUTLINE0 + 1: case MI_OUTLINE0 + 2: if (g_gl) { g_outline = id - MI_OUTLINE0; gl_set_outline(g_outline); } break;
+    case MI_WINSTYLE0: case MI_WINSTYLE0 + 1: if (g_gl) g_winstyle = id - MI_WINSTYLE0; break;
     case MI_TEXUP: if (g_gl) { g_texup = !g_texup; gl_set_tex_upscale(g_texup); } break;
     case MI_TEXPACK: if (g_gl) { g_texpack = !g_texpack; gl_set_texture_pack(g_texpack); } break;
     case MI_TEXRELOAD: if (g_gl && g_texpack) gl_reload_texture_pack(); break;
