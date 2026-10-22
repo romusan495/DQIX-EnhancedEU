@@ -1575,8 +1575,6 @@ static void draw_text(int eng, int top, float W, float wside) {
 static GLuint movie_tex[2], movie_mask[2];
 static int movie_w[2], movie_h[2];
 
-/* Over the screen just drawn (bound: final_fbo, prog_comp, u_rect set), the
- * HD frame of the movie it shows, if any (r: the screen's rectangle, NDC). */
 /* HD sprites (hdsprite.h): each HD picture over its sprite's place on this
  * screen (DS pixels, the screen's columns after the widescreen sides) */
 static void draw_sprites(int eng, int top, float W, float wside) {
@@ -1606,6 +1604,8 @@ static void draw_sprites(int eng, int top, float W, float wside) {
     p_glUseProgram(prog_comp);
 }
 
+/* Over the screen just drawn (bound: final_fbo, prog_comp, u_rect set), the
+ * HD frame of the movie it shows, if any (r: the screen's rectangle, NDC). */
 static void draw_movie(int eng, const float* r) {
     const uint8_t *rgb, *mask; int w, h, fresh;
     if (!prog_movie || !hdmovie_frame(eng, g_engine_out[eng], &rgb, &w, &h, &mask, &fresh)) return;
