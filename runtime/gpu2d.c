@@ -79,7 +79,7 @@ typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_
 /* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
  * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
-int g_winstyle;                                                     /* 0 like the DS, 1 minimal: no frame, a fainter panel */
+int g_winstyle = 1;                                                 /* 0 like the DS, 1 minimal: no frame, a fainter panel */
 enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX };
 static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
