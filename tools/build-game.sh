@@ -99,6 +99,9 @@ rm -rf game/data/code && cp -r build/extract game/data/code     # the overlays (
 if ! cmp -s "$ROM" game/data/dqix.nds; then cp "$ROM" game/data/dqix.nds; fi
 cp skins/*.png skins/*.txt game/skins/ 2>/dev/null || true
 cp fonts/*.ttf fonts/*.txt game/fonts/ 2>/dev/null || true             # the HD text's fonts (Graphics > Text font)
+# modern job icons, in the HD texture pack (runtime/hdsprite.h): made from the ROM
+# like the program's icon. Optional: without them the game shows its own.
+$PY tools/job_icons.py "$ROM" game/textures/jobs || echo "   job icons: not made (optional)"
 # optional files: the built-in Wi-Fi server's downloads and DQVC schedule
 for src in extras/wfc wfc; do
     for g in "$src"/*/; do

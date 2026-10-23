@@ -11,4 +11,5 @@ extern int g_farm_stopped;         /* it just stopped: the frontend pauses, says
 const char* farm_start(void);      /* NULL if it started, else why it can't */
 void farm_cancel(const char* why);
 int farm_gold(void);               /* the party's gold, -1 if unknown */
+int party_in_battle(void);         /* a battle is on (Modern > Battle speed) */
 void farm_input(uint16_t* keys, int* touch);   /* input.c, every frame */

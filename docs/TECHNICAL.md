@@ -292,6 +292,8 @@ DQIX_MAC=00:09:bf:12:34:56                     the console's MAC (replaying a re
 DQIX_WIFILOG=1 / DQIX_NETLOG=1 / DQIX_NETHEX=1 log the wireless chip / network / every frame in hex
 DQIX_DUMP_AT=100,200                           with DQIX_DUMP=dir,1: only those frames
 DQIX_MODE=enhanced / DQIX_NO_SETTINGS=1        window build: force a mode / ignore settings.ini
+DQIX_CHEATS=gold,hp                            turn those cheats on (keys as in settings.ini, cheats.c)
+DQIX_CHEAT_CODE="94000130 FDFF0000 ..."        one more Action Replay code, run after the cheats every frame
 ```
 
 ## Layout
@@ -328,6 +330,7 @@ runtime/menu_win32.c   the menu bar (Windows)
 runtime/gl_render.c    OpenGL: Enhanced 3D, composition, the DS Lite screen + console
 runtime/frontend_none.c headless frontend (tests)
 runtime/report.c       F10 / crash reports (inputs, saves, screenshot, log)
+runtime/cheats.c       the Cheats menu: Action Replay DS codes (data codes only), per ROM version
 patches.txt            instruction overrides applied when recompiling
 build-pc.bat           one-click Windows build (installs MSYS2 first time)
 build-windows.sh       the build itself (runs inside MSYS2)

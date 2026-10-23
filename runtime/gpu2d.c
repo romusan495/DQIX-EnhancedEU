@@ -8,6 +8,7 @@
 #include <string.h>
 #include "nds.h"
 #include "hdtext.h"
+#include "hdsprite.h"
 extern int g_comp_gl;                                           /* (below) GL composition: the 3D and HD text on the GPU */
 
 uint32_t g_screen[2][256 * 192];
@@ -78,7 +79,9 @@ typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_
 /* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
  * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
-int g_winstyle;                                                     /* 0 like the DS, 1 minimal: no frame, a fainter panel */
+int g_winstyle = 1;                                                 /* 0 like the DS, 1 minimal: no frame, a fainter panel */
+int g_win_outline;                                                  /* minimal: the commands screen's windows keep their white line (frontend_sdl.c: the experience and level-up windows) */
+int g_dlg_outline;                                                  /* ...and the 3D screen's (frontend_sdl.c: in battles, the text box) */
 enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX };
 static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
@@ -168,7 +171,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 }
                 int k = 0;
                 if (winpal & b)                                     /* (the panel even inside a letter's box, not its shading) */
-                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? WIN_EDGE : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? ((eng == 1 ? g_win_outline : g_dlg_outline) ? 0 : WIN_EDGE) : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
                 else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
@@ -242,6 +245,58 @@ static void render_affine_bg(Engine* e, int eng, int bg, int kind, BgLine* out) 
 static const uint8_t obj_w[3][4] = { { 8, 16, 32, 64 }, { 16, 32, 32, 64 }, { 8, 8, 16, 32 } };
 static const uint8_t obj_h[3][4] = { { 8, 16, 32, 64 }, { 8, 8, 16, 32 }, { 16, 32, 32, 64 } };
 
+/* A tiled sprite's pixel: its colour index (0 clear); src: where (VRAM byte * 2 + high nibble) */
+static uint8_t obj_index(Engine* e, uint32_t disp, uint32_t tile, int c256, int w, int tx, int ty, uint32_t* src) {
+    uint32_t base, rowstride;
+    if (disp & 0x10) {                                              /* 1D mapping */
+        base = e->objvram + tile * (32u << ((disp >> 20) & 3));
+        rowstride = (w / 8) * (c256 ? 64 : 32);
+    } else {
+        base = e->objvram + tile * 32;
+        rowstride = 32 * 32;
+    }
+    uint32_t addr = base + (ty / 8) * rowstride + (tx / 8) * (c256 ? 64 : 32);
+    if (c256) { *src = (addr + (ty & 7) * 8 + (tx & 7)) * 2; return vr8(addr + (ty & 7) * 8 + (tx & 7)); }
+    uint8_t b = vr8(addr + (ty & 7) * 4 + (tx & 7) / 2);
+    *src = (addr + (ty & 7) * 4 + (tx & 7) / 2) * 2 + (tx & 1);
+    return (tx & 1) ? b >> 4 : b & 15;
+}
+
+/* HD sprites (hdsprite.h): sprite i's picture, checked once a frame; if it has
+ * an HD version, listed and left out (1) */
+int g_hdsprite_on;
+int (*g_hdsprite_check)(const uint8_t* rgba, int w, int h, uint64_t* key);
+HdSprite g_hdsprites[2][HDSPRITE_MAX];
+int g_hdsprite_n[2];
+static uint64_t hdspr_frame[2][128];                                /* g_frame + 1: checked this frame */
+static uint8_t hdspr_hd[2][128];
+static int hd_sprite(Engine* e, int eng, int i, uint32_t disp, const uint8_t* ext, int w, int h, int ox, int oy) {
+    if (hdspr_frame[eng][i] == g_frame + 1) return hdspr_hd[eng][i];
+    hdspr_frame[eng][i] = g_frame + 1; hdspr_hd[eng][i] = 0;
+    const uint8_t* oam = &g_oam[eng * 0x400 + i * 8];
+    uint16_t a0, a1, a2;
+    memcpy(&a0, oam, 2); memcpy(&a1, oam + 2, 2); memcpy(&a2, oam + 4, 2);
+    int c256 = (a0 >> 13) & 1, any = 0;
+    static uint8_t rgba[64 * 64 * 4];
+    for (int ty = 0; ty < h; ty++)
+        for (int tx = 0; tx < w; tx++) {
+            uint32_t src;
+            uint8_t idx = obj_index(e, disp, a2 & 0x3FF, c256, w, tx, ty, &src);
+            uint8_t* p = &rgba[(ty * w + tx) * 4];
+            if (!idx) { memset(p, 0, 4); continue; }
+            uint16_t c = c256 ? (ext ? ext16(ext, (a2 >> 12) * 256 + idx) : pal16(e->pal + 0x200 + idx * 2)) : pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + idx) * 2);
+            uint32_t r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+            p[0] = (uint8_t)(r << 3 | r >> 2); p[1] = (uint8_t)(g << 3 | g >> 2); p[2] = (uint8_t)(b << 3 | b >> 2); p[3] = 255;
+            any = 1;
+        }
+    uint64_t key;
+    if (!any || !g_hdsprite_check(rgba, w, h, &key) || g_hdsprite_n[eng] == HDSPRITE_MAX) return 0;
+    HdSprite* s = &g_hdsprites[eng][g_hdsprite_n[eng]++];
+    s->x = ox; s->y = oy >= 192 ? oy - 256 : oy; s->w = w; s->h = h;
+    s->hflip = (a1 >> 12) & 1; s->vflip = (a1 >> 13) & 1; s->key = key;
+    return hdspr_hd[eng][i] = 1;
+}
+
 static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
     uint32_t disp = R32(e, 0);
     const uint8_t* oam = &g_oam[eng * 0x400];
@@ -275,6 +330,7 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
         int c256 = (a0 >> 13) & 1;
         int prio = (a2 >> 10) & 3;
         uint32_t tile = a2 & 0x3FF;
+        if (g_hdsprite_on && g_comp_gl && !affine && mode < 2 && hd_sprite(e, eng, i, disp, ext, w, h, ox, oy)) continue;
         int16_t pa = 0x100, pb = 0, pc = 0, pd = 0x100;
         if (affine) {
             int p = (a1 >> 9) & 31;
@@ -305,19 +361,9 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 col = vr16(addr);
                 opaque = (col & 0x8000) && (a2 >> 12);                  /* alpha 0: not drawn at all */
             } else {
-                uint32_t base, rowstride;
-                if (disp & 0x10) {                                  /* 1D mapping */
-                    base = e->objvram + tile * (32u << ((disp >> 20) & 3));
-                    rowstride = (w / 8) * (c256 ? 64 : 32);
-                } else {
-                    base = e->objvram + tile * 32;
-                    rowstride = 32 * 32;
-                }
-                uint32_t addr = base + (ty / 8) * rowstride + (tx / 8) * (c256 ? 64 : 32);
-                uint8_t idx;
-                if (c256) idx = vr8(addr + (ty & 7) * 8 + (tx & 7));
-                else { uint8_t b = vr8(addr + (ty & 7) * 4 + (tx & 7) / 2); idx = (tx & 1) ? b >> 4 : b & 15; }
-                if (idx) objsrc = c256 ? (addr + (ty & 7) * 8 + (tx & 7)) * 2 : (addr + (ty & 7) * 4 + (tx & 7) / 2) * 2 + (tx & 1);
+                uint32_t src;
+                uint8_t idx = obj_index(e, disp, tile, c256, w, tx, ty, &src);
+                if (idx) objsrc = src;
                 opaque = idx != 0;
                 if (c256) col = ext ? ext16(ext, (a2 >> 12) * 256 + idx) : pal16(e->pal + 0x200 + idx * 2);
                 else col = pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + idx) * 2);
@@ -766,6 +812,7 @@ void gpu_affine_written(int eng, int bg) { latch_affine(eng, bg); }
 
 void gpu_frame_start(void) {
     if (g_hdtext_on) hdtext_frame_start();
+    g_hdsprite_n[0] = g_hdsprite_n[1] = 0;
     for (int eng = 0; eng < 2; eng++) {
         Engine* e = &g_eng[eng];
         for (int bg = 2; bg < 4; bg++) latch_affine(eng, bg);

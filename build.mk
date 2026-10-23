@@ -68,7 +68,7 @@ $(OBJ)/gen7/%.o: $(GEN7)/%.c runtime/cpu.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(PIC) $(DEFS) -Iruntime -I$(GEN7) -c $< -o $@
 
-$(OBJ)/rt/gl_render.o: runtime/gl_render.c runtime/gl_render.h runtime/gpu3d.h runtime/nds.h runtime/hdtext.h runtime/hdmovie.h
+$(OBJ)/rt/gl_render.o: runtime/gl_render.c runtime/gl_render.h runtime/gpu3d.h runtime/nds.h runtime/hdtext.h runtime/hdmovie.h runtime/hdsprite.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
@@ -87,7 +87,7 @@ $(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.
 # Sessions need every PC to compute exactly the same: no stack garbage in uninitialised variables.
 DETERMINISM ?= -ftrivial-auto-var-init=zero
 $(OBJ)/rt/relay.o: runtime/relay.h runtime/relay_url.h
-$(OBJ)/rt/%.o: runtime/%.c runtime/nds.h runtime/cpu.h runtime/coro.h runtime/frontend.h runtime/version.h runtime/air.h runtime/session.h runtime/hdtext.h
+$(OBJ)/rt/%.o: runtime/%.c runtime/nds.h runtime/cpu.h runtime/coro.h runtime/frontend.h runtime/version.h runtime/air.h runtime/session.h runtime/hdtext.h runtime/hdsprite.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -Wall -Wextra -Wno-unused-parameter $(PIC) $(DETERMINISM) $(DEFS) -Iruntime -I$(GEN) -c $< -o $@
 

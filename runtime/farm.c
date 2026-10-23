@@ -25,14 +25,17 @@ int g_farm_stopped;
 #define WALK_FLAG 0x109DA4
 /* the field's characters, by number: 0 the hero, 0x70..0x7B the monsters
  * walking around. 0 until an adventure is loaded. Each points at a record
- * whose second word is 0x4E21xxxx while it is there, with its position (x,
- * height, z, 20.12 fixed point) at +0x44. */
+ * whose second word has the map's number (PLACE_NUM: 0x4E21 in Angel
+ * Falls' field, 0x4E22 west of Stornway...) in its top half while it is
+ * there, with its position (x, height, z, 20.12 fixed point) at +0x44. */
 #define FIELD_PTR 0x0F33E0
 #define MON_FIRST 0x70
 #define MON_COUNT 12
 #define POS       0x44
 /* the map the party is on (the room, town, field...) */
 #define MAP_ID    0x0FB33C
+/* the place's number (u16): towns 1..., fields 20001... (mapmarks.c) */
+#define PLACE_NUM 0x0FB3F0
 /* the party's gold (u32) */
 #define GOLD      0x0F6D48
 /* the party's characters: up to 5 records of 0x964 bytes, the hero's last.
@@ -59,6 +62,13 @@ int farm_gold(void) {
     return g <= 9999999 ? (int)g : -1;
 }
 
+/* A battle is on: the 3D is on the top screen (the field has it on the
+ * bottom one) and the hero's record has its max HP (0 on the field). */
+int party_in_battle(void) {
+    int max = rd16(CHARS + (N_CHARS - 1) * CHAR_SIZE + CHAR_HP + 4);
+    return (IO16(0x304) & 0x8000) && adventure_loaded() && max > 0 && max <= 999;
+}
+
 /* Someone in the party is knocked out or below a third of their HP. */
 static int party_in_danger(char* who, size_t n) {
     for (int i = 0; i < N_CHARS; i++) {
@@ -83,7 +93,7 @@ static int party_in_danger(char* who, size_t n) {
 /* Where a field character is (x, z), or 0 if it isn't there. */
 static int field_pos(int id, double* x, double* z) {
     uint32_t p = rd32(FIELD_PTR + 4 * id);
-    if (p < 0x02000000 || p >= 0x02400000 || (rd32(p + 4) >> 16) != 0x4E21) return 0;
+    if (p < 0x02000000 || p >= 0x02400000 || (rd32(p + 4) >> 16) != rd16(PLACE_NUM)) return 0;
     *x = (int32_t)rd32(p + POS) / 4096.0;
     *z = (int32_t)rd32(p + POS + 8) / 4096.0;
     return 1;
