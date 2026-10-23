@@ -110,6 +110,8 @@ static int g_classic = 0;       /* Classic: the DS's own 3D renderer, exact; Enh
 #define WIDE_GL (g_gl && !g_classic)
 extern int g_comp_gl;
 extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
+extern int g_win_outline;       /* ...minimal: the commands screen's windows with their white line */
+extern int g_dlg_outline;       /* ...and the 3D screen's (the text box in battles) */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
 static int g_battle_speed = 1;  /* Modern > Battle speed: 1, 2 or 3 times as fast (not in a session) */
 static int g_all_options;       /* every option in the menus and on the keys (settings.ini all_options), else only the project's own setup */
@@ -1327,6 +1329,8 @@ static void present_gl(void) {
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
     hud_update((pow >> 15) & 1);                                 /* (before composing: the minimal style cuts the cards out for it) */
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
+    g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
+    g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
     gl_dump_hook();
