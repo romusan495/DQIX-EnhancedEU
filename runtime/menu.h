@@ -49,6 +49,16 @@ void menu_enable(int id, int on);
 void menu_set_text(int id, const char* text);   /* UTF-8 */
 int menu_command(const SDL_Event* e);         /* the chosen item, or 0 */
 
+/* The menus as menu_init built them, on every system (the in-game menu,
+ * gamemenu.c, shows the same tree as the bar): node 0 is the bar, every other
+ * node names its parent. Check marks and greyed items as the frontend set them. */
+enum { MENU_ITEM, MENU_SUB, MENU_SEP, MENU_LABEL };
+#define MENU_MAX_ID 1024
+typedef struct { short parent, kind; int id; char text[160], key[24]; } MenuNode;   /* text and key (shortcut) in UTF-8 */
+int menu_nodes(const MenuNode** nodes);
+int menu_checked(int id);
+int menu_enabled(int id);
+
 /* Size of one pixel of the monitor the window is on, in millimetres, from
  * the monitor's own description of itself (EDID). 0 if unknown. */
 float display_mm_per_pixel(SDL_Window* win);

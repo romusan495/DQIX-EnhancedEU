@@ -41,6 +41,7 @@ typedef struct {
 #define GL_MAX_PIECES 8
 void gl_hold(void);                                   /* keep this frame's picture (the map window during battles) */
 void gl_set_skin(const uint8_t* rgba, int w, int h);
+void gl_set_menu(const uint8_t* rgba, int w, int h);      /* the in-game menu over the whole window (premultiplied RGBA, rows top-down; NULL: none) */
 void gl_set_overlay(const uint8_t* rgba, int w, int h);   /* a picture over the screens (premultiplied RGBA, rows top-down; NULL: none) */
 void gl_present(const GlPresent* v);
 uint8_t* gl_read_window(int w, int h);

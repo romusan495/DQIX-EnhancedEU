@@ -2,35 +2,72 @@
 #include "menu.h"
 #include "controls.h"
 #include "cheats.h"
+#include <stdio.h>
+#include <string.h>
+#include <wchar.h>
 
+/* ---------------------------------------------------------------- the menus, on every system
+ * One tree, built by menu_init: the menu bar shows it (Windows) and so does
+ * the in-game menu (gamemenu.c), so both always list the same things. */
+#define MAX_NODES 512
+static MenuNode g_node[MAX_NODES];
+static int g_nnode;
+static unsigned char g_checked[MENU_MAX_ID], g_disabled[MENU_MAX_ID];
+typedef int Menu;                                 /* a submenu: its node; 0 = the bar */
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include "SDL_syswm.h"
-#include <string.h>
-#include <wchar.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-static HWND g_hwnd;
 static HMENU g_bar;
+static HMENU g_hm[MAX_NODES];                     /* each submenu's popup menu */
+#endif
 
-static void item(HMENU m, int id, const wchar_t* text) { AppendMenuW(m, MF_STRING, (UINT_PTR)id, text); }
-static void sep(HMENU m) { AppendMenuW(m, MF_SEPARATOR, 0, NULL); }
-static HMENU sub(HMENU parent, const wchar_t* text) {
-    HMENU m = CreatePopupMenu();
-    AppendMenuW(parent, MF_POPUP, (UINT_PTR)m, text);
-    return m;
+/* "&Window size\tF3" -> text "Window size", key "F3" (UTF-8) */
+static void to_utf8(const wchar_t* w, MenuNode* n) {
+    char* o = n->text; size_t cap = sizeof n->text;
+    for (; *w; w++) {
+        unsigned c = (unsigned)*w;
+        if (c == '&') continue;
+        if (c == '\t') { *o = 0; o = n->key; cap = sizeof n->key; continue; }
+        char b[4]; int k;
+        if (c < 0x80) { b[0] = (char)c; k = 1; }
+        else if (c < 0x800) { b[0] = (char)(0xC0 | c >> 6); b[1] = (char)(0x80 | (c & 63)); k = 2; }
+        else { b[0] = (char)(0xE0 | c >> 12); b[1] = (char)(0x80 | ((c >> 6) & 63)); b[2] = (char)(0x80 | (c & 63)); k = 3; }
+        if (cap <= (size_t)k) break;
+        memcpy(o, b, (size_t)k); o += k; cap -= (size_t)k;
+    }
+    *o = 0;
 }
 
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) {
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(win, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return;
-    g_hwnd = info.info.win.window;
-    g_bar = CreateMenu();
+static int add(Menu parent, int kind, int id, const wchar_t* w, const char* utf8) {
+    if (g_nnode >= MAX_NODES) return 0;
+    int i = g_nnode++;
+    MenuNode* n = &g_node[i];
+    memset(n, 0, sizeof *n);
+    n->parent = (short)parent; n->kind = (short)kind; n->id = id;
+    if (w) to_utf8(w, n);
+    else if (utf8) snprintf(n->text, sizeof n->text, "%s", utf8);
+#ifdef _WIN32
+    HMENU pm = parent ? g_hm[parent] : g_bar;
+    wchar_t buf[200];
+    if (!w && utf8 && MultiByteToWideChar(CP_UTF8, 0, utf8, -1, buf, 200)) w = buf;
+    if (pm) {
+        if (kind == MENU_SUB) { g_hm[i] = CreatePopupMenu(); AppendMenuW(pm, MF_POPUP, (UINT_PTR)g_hm[i], w); }
+        else if (kind == MENU_SEP) AppendMenuW(pm, MF_SEPARATOR, 0, NULL);
+        else AppendMenuW(pm, kind == MENU_LABEL ? MF_STRING | MF_GRAYED : MF_STRING, (UINT_PTR)id, w);
+    }
+#endif
+    return i;
+}
+static void item(Menu m, int id, const wchar_t* text) { add(m, MENU_ITEM, id, text, NULL); }
+static void item8(Menu m, int id, const char* text) { add(m, MENU_ITEM, id, NULL, text); }
+static void label(Menu m, const wchar_t* text) { add(m, MENU_LABEL, 0, text, NULL); }
+static void sep(Menu m) { add(m, MENU_SEP, 0, NULL, NULL); }
+static Menu sub(Menu parent, const wchar_t* text) { return add(parent, MENU_SUB, 0, text, NULL); }
 
-    HMENU game = sub(g_bar, L"&Game");
+static void build(int all, const char* const* shell_names, int n_shells) {
+    g_nnode = 0;
+    add(0, MENU_SUB, 0, L"Menu", NULL);           /* node 0: the bar itself */
+    Menu game = sub(0, L"&Game");
     item(game, MI_PAUSE, L"&Pause\tP");
     item(game, MI_TURBO, L"&Fast forward\t(or hold Tab)");
     item(game, MI_RESET, L"&Reset...\tCtrl+R");
@@ -48,12 +85,12 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
 
     /* all = 0 (the usual): only what the project's own setup uses; the rest
      * keeps working from settings.ini (all_options = 1 shows it again) */
-    HMENU gfx = sub(g_bar, L"G&raphics");
+    Menu gfx = sub(0, L"G&raphics");
     if (all) {
         item(gfx, MI_CLASSIC, L"&Classic: exactly like the DS\tF5");
         item(gfx, MI_ENHANCED, L"&Enhanced: sharper 3D\tF5");
         sep(gfx);
-        HMENU res = sub(gfx, L"3D &resolution (Enhanced)\tF4");
+        Menu res = sub(gfx, L"3D &resolution (Enhanced)\tF4");
         item(res, MI_RES1, L"1x (DS)");
         item(res, MI_RES2, L"2x");
         item(res, MI_RES3, L"3x");
@@ -67,11 +104,11 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(gfx, MI_TEXUP, L"&Upscaled textures, xBR (Enhanced)");
     item(gfx, MI_SMOOTH2D, L"Smooth &2D: menus, maps, sprites (Enhanced)");
     if (all) {
-        HMENU oln = sub(gfx, L"Character &outlines (Enhanced)");
+        Menu oln = sub(gfx, L"Character &outlines (Enhanced)");
         item(oln, MI_OUTLINE0, L"Like the &DS");
         item(oln, MI_OUTLINE0 + 1, L"&Thin");
         item(oln, MI_OUTLINE0 + 2, L"&None");
-        HMENU wst = sub(gfx, L"&Window style (Enhanced)");
+        Menu wst = sub(gfx, L"&Window style (Enhanced)");
         item(wst, MI_WINSTYLE0, L"Like the &DS");
         item(wst, MI_WINSTYLE0 + 1, L"&Minimal: no frame, more see-through");
     }
@@ -81,7 +118,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     if (all) item(gfx, MI_TEXDUMP, L"&Dump textures to textures\\dump (for making a pack)");
     sep(gfx);
     item(gfx, MI_HDTEXT, L"HD te&xt (Enhanced)");
-    HMENU fnt = sub(gfx, L"Text &font");
+    Menu fnt = sub(gfx, L"Text &font");
     item(fnt, MI_FONT0, L"The game's own letters, &smoothed");
     if (all) {
         item(fnt, MI_FONT0 + 1, L"&Georgia");
@@ -108,33 +145,29 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(gfx, MI_HDMOVIE, L"HD &movies from the movies folder (Enhanced)");
 
     if (all) {
-        HMENU scr = sub(g_bar, L"&Screen");
+        Menu scr = sub(0, L"&Screen");
         item(scr, MI_LCD, L"&DS Lite screen\tF6");
         sep(scr);
         item(scr, MI_LCDCOL, L"LCD &colours");
         item(scr, MI_GRID, L"&Pixel grid (at 3x and larger)");
         item(scr, MI_GHOST, L"&Motion blur");
-        HMENU bl = sub(scr, L"&Backlight");
+        Menu bl = sub(scr, L"&Backlight");
         item(bl, MI_BL1, L"&Low");
         item(bl, MI_BL2, L"&Medium");
         item(bl, MI_BL3, L"&High");
         item(bl, MI_BL4, L"Ma&x");
     }
 
-    HMENU view = sub(g_bar, L"&View");
+    Menu view = sub(0, L"&View");
     if (all) {
         item(view, MI_SHELL, L"Show the DS &Lite\tF7");
-        HMENU col = sub(view, L"Console &colour");
-        for (int i = 0; i < n_shells; i++) {
-            wchar_t w[64];
-            MultiByteToWideChar(CP_UTF8, 0, shell_names[i], -1, w, 64);
-            item(col, MI_SHELLC0 + i, w);
-        }
+        Menu col = sub(view, L"Console &colour");
+        for (int i = 0; i < n_shells; i++) item8(col, MI_SHELLC0 + i, shell_names[i]);
         item(view, MI_GAP, L"&Gap between the screens");
         item(view, MI_ACTUAL, L"&Actual size (as big as a real DS Lite)\tF8");
         sep(view);
     }
-    HMENU size = sub(view, L"&Window size\tF3");
+    Menu size = sub(view, L"&Window size\tF3");
     item(size, MI_SIZE1, L"1x");
     item(size, MI_SIZE2, L"2x");
     item(size, MI_SIZE3, L"3x");
@@ -142,16 +175,16 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     if (all) item(view, MI_INTEGER, L"&Integer scaling");
     item(view, MI_FULL, L"&Fullscreen\tF11");
 
-    HMENU wl = sub(g_bar, L"&Wireless");
+    Menu wl = sub(0, L"&Wireless");
     item(wl, MI_NET, L"&Connect (Nintendo Wi-Fi Connection replacement)");
-    HMENU srv = sub(wl, L"&Server");
+    Menu srv = sub(wl, L"&Server");
     item(srv, MI_SRV_BUILTIN, L"&Built-in (offline: DQIX's preserved downloads)");
     sep(srv);
     item(srv, MI_SRV_ALTWFC, L"&AltWFC (172.104.88.237)");
     item(srv, MI_SRV_WIIMMFI, L"&Wiimmfi (164.132.44.106): not for DQIX");
     item(srv, MI_SRV_CUSTOM, L"&Custom (wfc_server in settings.ini)");
     sep(wl);
-    HMENU friends = sub(wl, L"&Play with friends far away (tag mode, visiting)");
+    Menu friends = sub(wl, L"&Play with friends far away (tag mode, visiting)");
     item(friends, MI_SES_HOST, L"&Host: your friends join you...");
     item(friends, MI_SES_JOIN, L"&Join a friend...");
     item(friends, MI_SES_START, L"&Start now (everyone is here)\tEnter");
@@ -164,14 +197,14 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     sep(wl);
     item(wl, MI_NET_HELP, L"&How does this work?");
 
-    HMENU modern = sub(g_bar, L"&Modern");
+    Menu modern = sub(0, L"&Modern");
     item(modern, MI_ANALOG, L"Walk in any &direction with the left stick");
     if (all) {
         item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
     }
     sep(modern);
     item(modern, MI_MINIMAP, L"Map in the top right co&rner (one window, gone during battles)\tM");
-    HMENU ms = sub(modern, L"Map si&ze");
+    Menu ms = sub(modern, L"Map si&ze");
     item(ms, MI_SSIZE0, L"Small");
     item(ms, MI_SSIZE0 + 1, L"Medium");
     item(ms, MI_SSIZE0 + 2, L"Large");
@@ -180,17 +213,17 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(modern, MI_MAPMONSTERS, L"Map: show the m&onsters walking nearby (red dots)");
     item(modern, MI_INTERIOR_MAPS, L"Map: a plan of the &rooms inside buildings (drawn from their walls)");
     sep(modern);
-    HMENU st = sub(modern, L"&Start (takes effect next launch)");
+    Menu st = sub(modern, L"&Start (takes effect next launch)");
     item(st, MI_SKIP0, L"&Logos and opening movie, as on a DS");
     item(st, MI_SKIP0 + 1, L"Skip the &logos");
     item(st, MI_SKIP0 + 2, L"Skip the logos and the opening &movie");
     sep(modern);
-    HMENU bsp = sub(modern, L"&Battle speed");
+    Menu bsp = sub(modern, L"&Battle speed");
     item(bsp, MI_BSPEED1, L"&Normal");
     item(bsp, MI_BSPEED1 + 1, L"&2x");
     item(bsp, MI_BSPEED1 + 2, L"&3x");
     sep(modern);
-    HMENU farm = sub(modern, L"Farm &gold by itself");
+    Menu farm = sub(modern, L"Farm &gold by itself");
     item(farm, MI_FARM, L"&Farm here now\tCtrl+G");
     item(farm, MI_FARM_TARGET, L"Gold &target...");
     item(farm, MI_FARM_FAST, L"Fast &forward while farming");
@@ -198,28 +231,52 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(farm, MI_FARM_HELP, L"&How does it work?");
     sep(modern);
     item(modern, MI_MODERN_HELP, L"&What is this?");
-    HMENU cheat = sub(g_bar, L"&Cheats");                  /* Action Replay codes for this ROM's version (cheats.c) */
-    AppendMenuW(cheat, MF_STRING | MF_GRAYED, 0, cheats_european() ? L"Codes for the European version" : L"Codes for the USA version");
+    Menu cheat = sub(0, L"&Cheats");                  /* Action Replay codes for this ROM's version (cheats.c) */
+    label(cheat, cheats_european() ? L"Codes for the European version" : L"Codes for the USA version");
     sep(cheat);
-    for (int i = 0; i < cheats_count(); i++) {
-        wchar_t w[160];
-        if (MultiByteToWideChar(CP_UTF8, 0, cheats_name(i), -1, w, 160)) item(cheat, MI_CHEAT0 + i, w);
-    }
+    for (int i = 0; i < cheats_count(); i++) item8(cheat, MI_CHEAT0 + i, cheats_name(i));
     sep(cheat);
     item(cheat, MI_CHEATS_HELP, L"&About these cheats");
-    HMENU lang = sub(g_bar, L"&Language");
+    Menu lang = sub(0, L"&Language");
     item(lang, MI_LANG1, L"&English");
     item(lang, MI_LANG1 + 1, L"&Fran\u00e7ais");
     item(lang, MI_LANG1 + 2, L"&Deutsch");
     item(lang, MI_LANG1 + 3, L"&Italiano");
     item(lang, MI_LANG1 + 4, L"E&spa\u00f1ol");
-    HMENU help = sub(g_bar, L"&Help");
+    Menu help = sub(0, L"&Help");
     item(help, MI_CONTROLS, L"&Controls");
     item(help, MI_UPDATE, L"Check for &updates...");
     item(help, MI_UPDATE_AUTO, L"Check for updates at &start");
     sep(help);
     item(help, MI_SEND_REPORT, L"&Send a bug report...");
     item(help, MI_ABOUT, L"&About");
+}
+
+int menu_nodes(const MenuNode** nodes) { *nodes = g_node; return g_nnode; }
+int menu_checked(int id) { return id > 0 && id < MENU_MAX_ID && g_checked[id]; }
+int menu_enabled(int id) { return !(id > 0 && id < MENU_MAX_ID && g_disabled[id]); }
+static void note_check(int id, int on) { if (id > 0 && id < MENU_MAX_ID) g_checked[id] = (unsigned char)(on != 0); }
+static void note_enable(int id, int on) { if (id > 0 && id < MENU_MAX_ID) g_disabled[id] = (unsigned char)(on == 0); }
+static void note_text(int id, const char* text) {
+    for (int i = 1; i < g_nnode; i++) if (g_node[i].id == id && g_node[i].kind == MENU_ITEM) snprintf(g_node[i].text, sizeof g_node[i].text, "%s", text);
+}
+
+#ifdef _WIN32
+#include "SDL_syswm.h"
+#include <string.h>
+#include <wchar.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static HWND g_hwnd;
+
+
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) {
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (SDL_GetWindowWMInfo(win, &info) && info.subsystem == SDL_SYSWM_WINDOWS) { g_hwnd = info.info.win.window; g_bar = CreateMenu(); }
+    build(all, shell_names, n_shells);                /* (the in-game menu needs it even without a bar) */
+    if (!g_bar) return;
 
     SetMenu(g_hwnd, g_bar);
     SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
@@ -238,7 +295,7 @@ void menu_init_second(SDL_Window* win) {
     g_hwnd2 = NULL;
     if (!win || !SDL_GetWindowWMInfo(win, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return;
     g_hwnd2 = info.info.win.window;
-    if (!g_bar2) { g_bar2 = CreateMenu(); item(g_bar2, MI_FULL2, L"&Fullscreen (F11)"); }
+    if (!g_bar2) { g_bar2 = CreateMenu(); AppendMenuW(g_bar2, MF_STRING, (UINT_PTR)MI_FULL2, L"&Fullscreen (F11)"); }
     SetMenu(g_hwnd2, g_bar2);
     SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
 }
@@ -247,14 +304,17 @@ void menu_show_second(int on) {
 }
 
 void menu_check(int id, int on) {
+    note_check(id, on);
     if (g_bar) CheckMenuItem(g_bar, (UINT)id, MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED));
 }
 
 void menu_enable(int id, int on) {
+    note_enable(id, on);
     if (g_bar) EnableMenuItem(g_bar, (UINT)id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
 }
 
 void menu_set_text(int id, const char* text) {
+    note_text(id, text);
     wchar_t w[200];
     if (!g_bar || !MultiByteToWideChar(CP_UTF8, 0, text, -1, w, 200)) return;
     MENUITEMINFOW mi = { sizeof mi };
@@ -795,13 +855,13 @@ int choice_box(SDL_Window* win, const char* title, const char* text, const char*
                const char* check, int* checked) { (void)win; (void)title; (void)text; (void)buttons; (void)n; (void)def; (void)cancel; (void)check; (void)checked; return -1; }
 char* ask_text(SDL_Window* win, const char* title, const char* prompt) { (void)win; (void)title; (void)prompt; return NULL; }
 float display_mm_per_pixel(SDL_Window* win) { (void)win; return 0; }
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) { (void)win; (void)shell_names; (void)n_shells; (void)all; }
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) { (void)win; build(all, shell_names, n_shells); }
 void menu_show(int on) { (void)on; }
 void menu_init_second(SDL_Window* win) { (void)win; }
 void menu_show_second(int on) { (void)on; }
-void menu_check(int id, int on) { (void)id; (void)on; }
-void menu_enable(int id, int on) { (void)id; (void)on; }
-void menu_set_text(int id, const char* text) { (void)id; (void)text; }
+void menu_check(int id, int on) { note_check(id, on); }
+void menu_enable(int id, int on) { note_enable(id, on); }
+void menu_set_text(int id, const char* text) { note_text(id, text); }
 int menu_command(const SDL_Event* e) { (void)e; return 0; }
 int session_window_open(SDL_Window* win) { (void)win; return 0; }
 void volume_window_open(SDL_Window* win, int* volume, int* mute) { (void)win; (void)volume; (void)mute; }
