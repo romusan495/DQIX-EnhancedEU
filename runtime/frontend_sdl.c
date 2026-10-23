@@ -508,6 +508,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "save_backups")) g_save_backups = atoi(val) != 0;
         else if (!strcmp(key, "cheats")) cheats_from_list(val);
         else if (!strcmp(key, "map_monsters")) g_mapmarks_monsters = atoi(val) != 0;
+        else if (!strcmp(key, "interior_maps")) g_interior_maps = atoi(val) != 0;
         else if (!strcmp(key, "walk_any_direction")) g_analog_walk = atoi(val) != 0;   /* (the older analog_walk, off by default then, is ignored) */
         else if (!strcmp(key, "fullscreen")) g_fullscreen = atoi(val) != 0;
         else if (!strcmp(key, "dslite_filter")) g_opt.lcd = atoi(val) != 0;
@@ -602,6 +603,8 @@ static void settings_save(void) {
         fprintf(f, "cheats = %s\n", on); }
     fprintf(f, "# Modern > Map: the monsters walking nearby, as red dots: 0 or 1\n");
     fprintf(f, "map_monsters = %d\n", g_mapmarks_monsters);
+    fprintf(f, "# Modern > Map: inside buildings, a plan of the room drawn from its walls (the game shows the town): 0 or 1\n");
+    fprintf(f, "interior_maps = %d\n", g_interior_maps);
     fprintf(f, "# 0 or 1 (F11)\n");
     fprintf(f, "fullscreen = %d\n", g_fullscreen);
     fprintf(f, "# DS Lite screen filter (F6) and its parts: 0 or 1; backlight: low, medium, high, max\n");
@@ -1461,6 +1464,7 @@ static void menu_sync(void) {
     menu_check(MI_MAPMARKS, g_mapmarks); menu_enable(MI_MAPMARKS, g_gl);
     menu_check(MI_MAPMARKS_OPENED, g_mapmarks_opened); menu_enable(MI_MAPMARKS_OPENED, g_gl && g_mapmarks);
     menu_check(MI_MAPMONSTERS, g_mapmarks_monsters); menu_enable(MI_MAPMONSTERS, g_gl && g_mapmarks);
+    menu_check(MI_INTERIOR_MAPS, g_interior_maps); menu_enable(MI_INTERIOR_MAPS, g_gl);
     for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
     menu_check(MI_SAVEBAK, g_save_backups);
     for (int i = 0; i < cheats_count(); i++) {
@@ -2052,6 +2056,7 @@ static void do_action(int id) {
     case MI_MAPMARKS: g_mapmarks = !g_mapmarks; break;
     case MI_MAPMARKS_OPENED: g_mapmarks_opened = !g_mapmarks_opened; break;
     case MI_MAPMONSTERS: g_mapmarks_monsters = !g_mapmarks_monsters; break;
+    case MI_INTERIOR_MAPS: g_interior_maps = !g_interior_maps; break;
     case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
     case MI_FULL2: second_window_fullscreen(); break;

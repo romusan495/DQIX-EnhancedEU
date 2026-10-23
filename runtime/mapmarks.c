@@ -55,6 +55,7 @@
 int g_mapmarks = 1;
 int g_mapmarks_opened = 1;
 int g_mapmarks_monsters = 1;
+int g_interior_maps = 1;
 
 /* ---------------------------------------------------------------- the game's memory */
 #define FIELD_PTR   0x0F33E0       /* 0 until an adventure is loaded (farm.c) */
@@ -714,14 +715,14 @@ static const Pic* pic_for(int pi, const char* shown) {
 /* ---------------------------------------------------------------- what is shown */
 typedef struct {
     float sx, sy;
-    int door;                       /* -1: a spot of this place (spot), -2: a monster, else a building's door on the picture */
+    int door;                       /* -1: a spot of this place (spot), -2: a monster, -3: the hero, else a building's door on the picture */
     int spot, opened;               /* a spot: which, emptied */
     int closed, emptied, shelves, recipes, quests;   /* a door: what its rooms hold */
 } Mark;
 #define MAX_MARKS 256
 static Mark g_mark[MAX_MARKS]; static int g_nmark;
 static float g_hx = -1, g_hy = -1; static int g_hover = -1;
-static int g_here = -1, g_own; static const Pic* g_pic;          /* this frame's place, drawn in its own units, and picture */
+static int g_here = -1, g_own, g_plan_on; static const Pic* g_pic;   /* this frame's place, drawn in its own units, on its plan, and picture */
 
 void mapmarks_hover(float x, float y) { g_hx = x; g_hy = y; }
 
@@ -839,6 +840,11 @@ static uint32_t book_color(int recipes, int dull) { return dull ? 0x9A9A9A : rec
 
 static void draw_mark(const Mark* m, int hover) {
     float R = MAPMARKS_R * 1.4f, cx = m->sx * MAPMARKS_R, cy = m->sy * MAPMARKS_R;
+    if (m->door == -3) {                                         /* the hero: a blue dot */
+        rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, 0xFFFFFF, 1);
+        rbox(cx, cy, 2.4f * R - 2, 2.4f * R - 2, 2.4f * R - 2, 0x2A6CE0, 1);
+        return;
+    }
     if (m->door == -2) {                                         /* a monster: a red dot */
         rbox(cx, cy, 1.9f * R, 1.9f * R, 1.9f * R, 0xFFF8E0, 0.8f);
         rbox(cx, cy, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 0xE0302A, 1);
@@ -1060,6 +1066,172 @@ static void draw_tooltip(const Mark* m) {
         }
 }
 
+/* ---------------------------------------------------------------- a building's plan */
+/* Inside a house the game shows the town around it. The room's walls are in
+ * its collision: data/map/<C01M05>.amdj (NARC) holds C01A0500.col2 (DS LZ):
+ * at +20 the triangles' count, at +36 where they start, 28 bytes each: three
+ * corners (x, height, z: s16, 1024 per field unit), the normal (s16, 4.12)
+ * and two attributes. The upright ones (the walls) seen from above outline
+ * the floor: everything the outside doesn't reach. */
+#define PLAN_GAP 3                 /* overlay pixels: gaps in the walls up to twice this wide are closed */
+#define EDGE_EPS 300.0f            /* collision units (1024 per field unit): a wall ending this close to the plan's edge ends on it */
+#define EXIT_W (10 * 1024.0f)      /* ...a way out between two of them at most this wide */
+#define EXITS_MAX 256
+#define PLAN_TOP 15                /* top-screen rows: the place's name above (on the right), the party's names below, */
+#define PLAN_BOTTOM 176            /* left uncovered */
+#define PLAN_NAME_X 198
+#define PLAN_WALL 2.5f             /* ...the walls' half thickness */
+static uint8_t g_plan[MAPMARKS_W * MAPMARKS_H];                 /* 0 outside, 1 floor, 2 wall */
+static uint8_t g_wall[MAPMARKS_W * MAPMARKS_H];
+static int* g_fill;
+static int g_plan_of = -1, g_plan_ok;                            /* the place it is of, drawn at all */
+static float g_plan_k, g_plan_ox, g_plan_oy;                     /* a point (x, z) of the field at (x * k + ox, z * k + oy) on the top screen */
+
+static void plan_line(uint8_t* m, float x0, float y0, float x1, float y1, float r) {   /* overlay pixels */
+    int ax = (int)floorf(fminf(x0, x1) - r), bx = (int)ceilf(fmaxf(x0, x1) + r);
+    int ay = (int)floorf(fminf(y0, y1) - r), by = (int)ceilf(fmaxf(y0, y1) + r);
+    float dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
+    for (int y = ay < 0 ? 0 : ay; y <= by && y < MAPMARKS_H; y++)
+        for (int x = ax < 0 ? 0 : ax; x <= bx && x < MAPMARKS_W; x++) {
+            float px = (float)x + 0.5f - x0, py = (float)y + 0.5f - y0;
+            float t = l2 > 0 ? (px * dx + py * dy) / l2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            float ex = px - t * dx, ey = py - t * dy;
+            if (ex * ex + ey * ey <= r * r) m[y * MAPMARKS_W + x] = 1;
+        }
+}
+
+/* The outside (3): from the edges over the pixels left 0. */
+static void plan_outside(void) {
+    int n = 0;
+    for (int i = 0; i < MAPMARKS_W * MAPMARKS_H; i++) {
+        int x = i % MAPMARKS_W, y = i / MAPMARKS_W;
+        if ((x == 0 || y == 0 || x == MAPMARKS_W - 1 || y == MAPMARKS_H - 1) && !g_plan[i]) { g_plan[i] = 3; g_fill[n++] = i; }
+    }
+    while (n) {
+        int i = g_fill[--n], x = i % MAPMARKS_W, y = i / MAPMARKS_W;
+        int nb[4] = { x > 0 ? i - 1 : -1, x < MAPMARKS_W - 1 ? i + 1 : -1, y > 0 ? i - MAPMARKS_W : -1, y < MAPMARKS_H - 1 ? i + MAPMARKS_W : -1 };
+        for (int k = 0; k < 4; k++) if (nb[k] >= 0 && !g_plan[nb[k]]) { g_plan[nb[k]] = 3; g_fill[n++] = nb[k]; }
+    }
+}
+
+/* The floor (0) grown back over what the thick walls took (2, not a real
+ * wall), up to PLAN_GAP pixels: doorways and gaps then read as floor. */
+static void plan_regrow(void) {
+    int head = 0, tail = 0;
+    static uint8_t dist[MAPMARKS_W * MAPMARKS_H];
+    for (int i = 0; i < MAPMARKS_W * MAPMARKS_H; i++) { dist[i] = 0; if (!g_plan[i]) g_fill[tail++] = i; }
+    while (head < tail) {
+        int i = g_fill[head++], x = i % MAPMARKS_W, y = i / MAPMARKS_W;
+        if (dist[i] >= PLAN_GAP) continue;
+        int nb[4] = { x > 0 ? i - 1 : -1, x < MAPMARKS_W - 1 ? i + 1 : -1, y > 0 ? i - MAPMARKS_W : -1, y < MAPMARKS_H - 1 ? i + MAPMARKS_W : -1 };
+        for (int k = 0; k < 4; k++) {
+            int j = nb[k];
+            if (j < 0 || g_plan[j] != 2 || g_wall[j]) continue;
+            g_plan[j] = 0; dist[j] = (uint8_t)(dist[i] + 1); g_fill[tail++] = j;
+        }
+    }
+}
+
+static int build_plan(const Place* pl) {
+    size_t len = strlen(pl->code);
+    if (len < 6 || pl->code[3] != 'M') return 0;                 /* a town or a field: it has its map */
+    char path[48], name[24];
+    snprintf(path, sizeof path, "data/map/%s.amdj", pl->code);
+    snprintf(name, sizeof name, "%.3sA%s00.col2", pl->code, pl->code + 4);
+    uint32_t n = 0, sz = 0;
+    const uint8_t* amdj = rom_file(path, &n), *packed = narc_file(amdj, n, name, &sz);
+    uint8_t* c = packed ? ds_unpack(packed, sz, &sz) : NULL;
+    if (!c || sz < 60) { free(c); return 0; }
+    uint32_t count = le32(c + 20), start = le32(c + 36);
+    if (start < 40 || start > sz || count > (sz - start) / 28) count = 0;
+    /* the walls: each upright triangle's two farthest corners, from above */
+    float* seg = malloc(sizeof(float) * 4 * (count + EXITS_MAX));
+    int ns = 0;
+    float x0 = 1e9f, x1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
+    for (uint32_t t = 0; seg && t < count; t++) {
+        const uint8_t* p = c + start + 28 * t;
+        int16_t v[12];
+        for (int k = 0; k < 12; k++) v[k] = (int16_t)le16(p + 2 * k);
+        if (abs(v[10]) > 1200) continue;                         /* a floor, a slope, a ceiling */
+        int a = 0, b = 1; float best = -1;
+        for (int i = 0; i < 3; i++)
+            for (int j = i + 1; j < 3; j++) {
+                float dx = (float)(v[3 * i] - v[3 * j]), dz = (float)(v[3 * i + 2] - v[3 * j + 2]);
+                if (dx * dx + dz * dz > best) { best = dx * dx + dz * dz; a = i; b = j; }
+            }
+        if (best < 1) continue;
+        float* s = &seg[4 * ns++];
+        s[0] = v[3 * a]; s[1] = v[3 * a + 2]; s[2] = v[3 * b]; s[3] = v[3 * b + 2];
+        x0 = fminf(x0, fminf(s[0], s[2])); x1 = fmaxf(x1, fmaxf(s[0], s[2]));
+        z0 = fminf(z0, fminf(s[1], s[3])); z1 = fmaxf(z1, fmaxf(s[1], s[3]));
+    }
+    free(c);
+    /* a way out ends on the plan's edge, open: closed there, between two
+     * walls ending on the same side less than EXIT_W apart */
+    for (int side = 0; seg && ns >= 4 && side < 4; side++) {
+        float e[64]; int ne = 0;
+        int ns0 = ns;
+        for (int i = 0; i < ns0 && ne < 64; i++)
+            for (int j = 0; j < 2 && ne < 64; j++) {
+                float x = seg[4 * i + 2 * j], z = seg[4 * i + 2 * j + 1];
+                float d = side == 0 ? x - x0 : side == 1 ? x1 - x : side == 2 ? z - z0 : z1 - z;
+                if (d < EDGE_EPS) e[ne++] = side < 2 ? z : x;
+            }
+        for (int i = 1; i < ne; i++) for (int j = i; j > 0 && e[j] < e[j - 1]; j--) { float t = e[j]; e[j] = e[j - 1]; e[j - 1] = t; }
+        for (int i = 0; i + 1 < ne && ns < (int)count + EXITS_MAX; i++) {
+            if (e[i + 1] - e[i] < 64 || e[i + 1] - e[i] > EXIT_W) continue;
+            float* q = &seg[4 * ns++];
+            float at = side == 0 ? x0 : side == 1 ? x1 : side == 2 ? z0 : z1;
+            if (side < 2) { q[0] = at; q[1] = e[i]; q[2] = at; q[3] = e[i + 1]; }
+            else { q[0] = e[i]; q[1] = at; q[2] = e[i + 1]; q[3] = at; }
+        }
+    }
+    if (ns < 4 || x1 - x0 < 1024 || z1 - z0 < 1024 || (!g_fill && !(g_fill = malloc(sizeof(int) * MAPMARKS_W * MAPMARKS_H)))) { free(seg); return 0; }
+    /* as big as the top screen shows it between the place's name and the party's names */
+    float k = fminf((256 - 28) / (x1 - x0), (PLAN_BOTTOM - PLAN_TOP - 12) / (z1 - z0));   /* DS pixels per collision unit */
+    g_plan_k = k * 1024;
+    g_plan_ox = 128 - (x0 + x1) / 2 * k; g_plan_oy = (PLAN_TOP + PLAN_BOTTOM) / 2.0f - (z0 + z1) / 2 * k;
+    /* the walls drawn thick (the outside can't slip through a doorway), the
+     * outside found, then the walls thin again: what they gave up goes to
+     * the outside where it touches it, to the floor elsewhere */
+    memset(g_plan, 0, sizeof g_plan); memset(g_wall, 0, sizeof g_wall);
+    float R = MAPMARKS_R;
+    for (int i = 0; i < ns; i++) {
+        const float* s = &seg[4 * i];
+        float ax = (s[0] * k + g_plan_ox) * R, ay = (s[1] * k + g_plan_oy) * R, bx = (s[2] * k + g_plan_ox) * R, by = (s[3] * k + g_plan_oy) * R;
+        plan_line(g_plan, ax, ay, bx, by, PLAN_GAP);
+        plan_line(g_wall, ax, ay, bx, by, PLAN_WALL);
+    }
+    free(seg);
+    for (int i = 0; i < MAPMARKS_W * MAPMARKS_H; i++) g_plan[i] *= 2;
+    plan_outside();
+    int floor = 0;
+    for (int i = 0; i < MAPMARKS_W * MAPMARKS_H; i++) floor += g_plan[i] == 0;
+    if (floor < MAPMARKS_W * MAPMARKS_H / 40) return 0;          /* the walls don't close: no plan */
+    plan_regrow();
+    for (int i = 0; i < MAPMARKS_W * MAPMARKS_H; i++) g_plan[i] = g_wall[i] ? 2 : g_plan[i] == 0 ? 1 : 0;
+    return 1;
+}
+
+/* The plan as the picture's background: the floor light, the walls dark,
+ * a shadow under the walls' top left; the outside dark blue. The game's
+ * place name and party names stay seen. */
+static void draw_plan(void) {
+    for (int y = 0; y < MAPMARKS_H; y++)
+        for (int x = 0; x < MAPMARKS_W; x++) {
+            uint8_t v = g_plan[y * MAPMARKS_W + x];
+            if (y >= PLAN_BOTTOM * MAPMARKS_R || (y < PLAN_TOP * MAPMARKS_R && x >= PLAN_NAME_X * MAPMARKS_R)) {
+                memset(&g_img[((size_t)y * MAPMARKS_W + x) * 4], 0, 4);
+                continue;
+            }
+            uint32_t c = v == 2 ? 0x4A3626 : v == 0 ? 0x1B2438 : 0xE9DCB0;
+            if (v == 1 && x >= 3 && y >= 3 && g_plan[(y - 3) * MAPMARKS_W + x - 3] == 2) c = 0xCDBE92;
+            uint8_t* p = &g_img[((size_t)y * MAPMARKS_W + x) * 4];
+            p[0] = (uint8_t)(c >> 16); p[1] = (uint8_t)(c >> 8); p[2] = (uint8_t)c; p[3] = 255;
+        }
+}
+
 /* ---------------------------------------------------------------- once a frame */
 static void add_mark(const Mark* m) { if (g_nmark < MAX_MARKS) g_mark[g_nmark++] = *m; }
 
@@ -1069,8 +1241,8 @@ int mapmarks_update(const uint8_t** rgba) {
     static int loaded, had;
     static uint32_t last_key;
     *rgba = NULL;
-    g_nmark = 0; g_here = -1; g_own = 0; g_pic = NULL;
-    int ok = g_mapmarks && rd32(FIELD_PTR) != 0;
+    g_nmark = 0; g_here = -1; g_own = 0; g_plan_on = 0; g_pic = NULL;
+    int ok = (g_mapmarks || g_interior_maps) && rd32(FIELD_PTR) != 0;
     uint32_t mp = rd32(MINIMAP_PTR);
     if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
     /* the map is the top screen's BG1: off when a page covers it (the quest log...) */
@@ -1102,10 +1274,19 @@ int mapmarks_update(const uint8_t** rgba) {
              * (not a house's: it shows the town around it) */
             const Place* pl = &g_places[pi];
             int own = g_own = g_pic ? in_list(g_pic->same, g_pic->nsame, pi) : strlen(pl->map) >= 6 && !strncmp(shown, pl->map, 6);
-            const Held* h = own ? held(pi) : NULL;
+            /* a house's: drawn on the room's own plan instead, if it has one */
+            if (!own && g_interior_maps) {
+                if (g_plan_of != pi) {
+                    g_plan_of = pi; g_plan_ok = build_plan(pl);
+                    LOG_INFO("mapmarks: %s, %s\n", pl->code, g_plan_ok ? "plan drawn from its walls" : "no plan");
+                }
+                g_plan_on = g_plan_ok;
+            }
+            float k = g_plan_on ? g_plan_k : scale, ox = g_plan_on ? g_plan_ox : 128 - cx, oy = g_plan_on ? g_plan_oy : 96 - cy;
+            const Held* h = (own || g_plan_on) && g_mapmarks ? held(pi) : NULL;
             for (int i = 0; h && i < h->n; i++) {
                 const Spot* b = &h->s[i];
-                Mark m = { b->x * scale - cx + 128, b->z * scale - cy + 96, -1, i, spot_done(b), 0, 0, 0, 0, 0 };
+                Mark m = { b->x * k + ox, b->z * k + oy, -1, i, spot_done(b), 0, 0, 0, 0, 0 };
                 if (!on_screen(m.sx, m.sy) || !spot_shown(b) || (m.opened && !g_mapmarks_opened)) continue;
                 if (b->kind == K_QUEST) {                            /* one bubble per person: offered first, then under way */
                     int st = quest_state(b->idx), k;
@@ -1119,7 +1300,7 @@ int mapmarks_update(const uint8_t** rgba) {
                 add_mark(&m);
             }
             /* the buildings: a badge on the door if their rooms hold anything */
-            for (int d = 0; g_pic && d < g_pic->ndoor; d++) {
+            for (int d = 0; g_pic && g_mapmarks && !g_plan_on && d < g_pic->ndoor; d++) {
                 const Door* door = &g_pic->door[d];
                 Mark m = { door->x * scale - cx + 128, door->z * scale - cy + 96, d, -1, 0, 0, 0, 0, 0, 0 };
                 if (!on_screen(m.sx, m.sy)) continue;
@@ -1141,11 +1322,18 @@ int mapmarks_update(const uint8_t** rgba) {
                 if (!g_mapmarks_opened) m.emptied = 0;
                 if (m.closed || m.emptied || m.shelves || m.quests) add_mark(&m);
             }
+            /* on a plan, the hero: field character 0 (farm.c) */
+            uint32_t a = rd32(FIELD_PTR);
+            if (g_plan_on && a >= 0x02000000 && a < 0x02400000) {
+                float x = (float)(int32_t)rd32(a + 0x44) / 4096.0f, z = (float)(int32_t)rd32(a + 0x4C) / 4096.0f;
+                Mark m = { x * k + ox, z * k + oy, -3, -1, 0, 0, 0, 0, 0, 0 };
+                if (on_screen(m.sx, m.sy)) add_mark(&m);
+            }
         }
     }
     /* the monsters walking around: a town's picture scrolls (its centre at
      * +0x44/+0x48), a field's shows the whole field around its origin */
-    if (ok && g_mapmarks_monsters) {
+    if (ok && g_mapmarks && g_mapmarks_monsters && !g_plan_on) {
         uint16_t here = rd16(MAP_NUM);
         float scale = (float)(int32_t)rd32(mp + 0x38) / 4096.0f;
         float cx = field ? 0 : (float)(int32_t)rd32(mp + 0x44), cy = field ? 0 : (float)(int32_t)rd32(mp + 0x48);
@@ -1162,7 +1350,7 @@ int mapmarks_update(const uint8_t** rgba) {
     float best = 64;                                             /* within 8 pixels */
     for (int i = 0; i < g_nmark; i++) {
         float dx = g_mark[i].sx - g_hx, dy = g_mark[i].sy - g_hy;
-        if (g_hx >= 0 && g_mark[i].door != -2 && dx * dx + dy * dy < best) { best = dx * dx + dy * dy; g_hover = i; }
+        if (g_hx >= 0 && g_mark[i].door > -2 && dx * dx + dy * dy < best) { best = dx * dx + dy * dy; g_hover = i; }
     }
     /* redraw only when something changed */
     uint32_t key = 2166136261u;
@@ -1174,10 +1362,12 @@ int mapmarks_update(const uint8_t** rgba) {
     key = (key ^ (uint32_t)(g_hover + 2)) * 16777619u;
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;
     key = (key ^ (uint32_t)g_here) * 16777619u;
-    if (!g_nmark) { int changed = had; had = 0; last_key = 0; return changed; }
+    key = (key ^ (uint32_t)g_plan_on) * 16777619u;
+    if (!g_nmark && !g_plan_on) { int changed = had; had = 0; last_key = 0; return changed; }
     if (had && key == last_key) return 0;
     had = 1; last_key = key;
-    memset(g_img, 0, sizeof g_img);
+    if (g_plan_on) draw_plan();
+    else memset(g_img, 0, sizeof g_img);
     for (int pass = 0; pass < 2; pass++)                          /* the monsters first, under the rest */
         for (int i = 0; i < g_nmark; i++) if (i != g_hover && (g_mark[i].door == -2) == !pass) draw_mark(&g_mark[i], 0);
     if (g_hover >= 0) { draw_mark(&g_mark[g_hover], 1); draw_tooltip(&g_mark[g_hover]); }

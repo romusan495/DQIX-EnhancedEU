@@ -178,6 +178,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(modern, MI_MAPMARKS, L"&Map: mark the chests, bookshelves and quests (the mouse over one: what it holds)");
     item(modern, MI_MAPMARKS_OPENED, L"Map: also mark the ones already &emptied or done (greyed)");
     item(modern, MI_MAPMONSTERS, L"Map: show the m&onsters walking nearby (red dots)");
+    item(modern, MI_INTERIOR_MAPS, L"Map: a plan of the &rooms inside buildings (drawn from their walls)");
     sep(modern);
     HMENU bsp = sub(modern, L"&Battle speed");
     item(bsp, MI_BSPEED1, L"&Normal");
