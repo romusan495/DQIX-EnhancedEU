@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include "nds.h"
+#include "bootskip.h"
 #ifdef _WIN32
 #include <direct.h>
 #define make_dir(d) _mkdir(d)
@@ -58,6 +59,7 @@ static void rom_start(Core* k, uint32_t ctl) {
             g_card_buf[i] = g_rom[a % g_rom_size];
         }
         if (g_card_read_hook) g_card_read_hook(addr, len);
+        bootskip_card_read(addr);
         int dmas = 0;
         for (int ch = 0; ch < 4; ch++) if (k->dma[ch].pending == DMA_CARD && (k->dma[ch].ctl & 0x80000000u)) {
             dmas |= 1 << ch;
