@@ -63,7 +63,11 @@ static int g_swap;                                                /* the screens
 static int g_two;                                                 /* two windows, one screen in each (two monitors) */
 static SDL_Window* g_win2;                                        /* ...the second one (the top screen, or the bottom one when swapped) */
 static int g_win2_full, g_win2_rect[4];                           /* ...fullscreen; where it was as a window (w = 0: not yet) */
-static int g_wide_pop = 1;                                        /* widescreen: the small screen in its own window (the field alone) */
+static int g_wide_pop = 0;                                        /* widescreen: the small screen in its own window (the field alone; no longer offered) */
+static int g_minimap = 1;                                         /* widescreen: the map small in a corner of the one window (no second window), not in battles */
+static int g_map_shown = 1;                                       /* ...shown (Modern > Map in the top right corner) */
+static float g_mini_vis = 1.0f;                                   /* ...1 shown, 0 gone (the game's 2D under it: a menu) */
+#define MINIMAP_TOP 38                                            /* ...in the top corners, under the field's "X Menu" sign */
 static int g_smooth = 1;                                          /* Enhanced: smooth (filtered) textures */
 static int g_smooth2d = 1, g_texup = 1, g_outline = 1;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
 static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
@@ -263,8 +267,8 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
          * Left trigger / U hides the small screen; holding the swap button
          * shows it big in the middle (g_peek). */
         float S = (float)wide_side_target();
-        int pop = g_wide_pop;                                     /* the small screen in the second window */
-        int dyn = g_wide_dyn && !pop && !g_small_hide && !g_peek;
+        int pop = g_wide_pop && !g_minimap;                       /* the small screen in the second window */
+        int dyn = g_wide_dyn && !pop && !g_minimap && !g_small_hide && !g_peek;
         float t = which == 0 || !dyn ? 1.0f : g_wide_mix * g_wide_mix * (3 - 2 * g_wide_mix);   /* eased */
         v->cw = 256 + 2 * S; v->ch = 192;
         float* big = which == 0 ? v->top : v->bot, *small = which == 0 ? v->bot : v->top;
@@ -275,17 +279,22 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         big[0] = cx0 + (wx0 - cx0) * t; big[2] = cww + (ww - cww) * t;
         bigx[0] = ctx0 + (wtx0 - ctx0) * t; bigx[1] = big[2];
         big[1] = 0; big[3] = 192;
-        if (!g_wide_dyn) {
+        if (!g_wide_dyn || g_minimap) {
             static const float SW[3] = { 64, 256.0f / 3, 128 }, SH[3] = { 48, 64, 96 };
             int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3;
+            if (g_minimap && which == 0) z = 2;                  /* battles: the commands screen when the HUD doesn't take it (spell lists...), large */
             small[2] = SW[z]; small[3] = SH[z];
             small[0] = c == 0 || c == 3 ? 2 : v->cw - small[2] - 2;
-            small[1] = c < 2 ? 2 : 192 - small[3] - 2;
+            small[1] = c < 2 ? (g_minimap && which != 0 ? MINIMAP_TOP : 2) : 192 - small[3] - 2;
         } else if (which == 0) { small[2] = 128; small[3] = 96; small[0] = small[1] = 2; }   /* battles: top left, over the sky */
         else { small[0] = small[1] = 2 * t; small[2] = 256.0f / 3; small[3] = 64; }
         if (g_small_blank && t > 0.99f) small[2] = small[3] = 0;   /* black (battle intros, fades): leave the field whole */
         v->front = small == v->bot;                               /* the small one in front */
         v->alpha = 1.0f + (g_small_alpha - 1.0f) * t;            /* see-through (O) while it is over the field */
+        if (g_minimap && which != 0) {                            /* the minimap: fades out while a menu is under it */
+            v->alpha *= g_mini_vis;
+            if (g_mini_vis < 0.02f || !g_map_shown) small[2] = small[3] = 0;
+        } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
         if (pop) {                                                /* first window: the field alone; second: the small screen, whole */
@@ -429,7 +438,7 @@ static void default_console_color(void) {
 static const char* const LANGUAGE_KEY[6] = { "", "english", "french", "german", "italian", "spanish" };
 static const char* const LANGUAGE_NAME[6] = { "", "English", "Fran\xc3\xa7" "ais", "Deutsch", "Italiano", "Espa\xc3\xb1ol" };
 /* settings_version 2: a new install looks like the project's own setup (Enhanced,
- * dynamic widescreen with the map in its own window, the battle HUD, the map
+ * widescreen with the map in the top right corner, the battle HUD, the map
  * markers...). An older settings.ini keeps the player's own things (volume,
  * language, wireless, controls, gold farm) but takes these looks once. */
 #define SETTINGS_VERSION 2
@@ -452,7 +461,6 @@ static void settings_load(void) {
     while (fgets(line, sizeof line, f)) sscanf(line, " settings_version = %d", &version);
     rewind(f);
     int seen_rs = 0;                                              /* render_scale (v29) wins over the older resolution_3d */
-    int opacity_chosen = 0, opacity_saved = 0;                    /* v31: the small screen's opacity counts once picked (before, 100 was saved either way) */
     while (fgets(line, sizeof line, f)) {
         char key[64]; char val[64];
         if (line[0] == '#' || sscanf(line, " %63[^= ] = %63s", key, val) != 2) continue;
@@ -472,16 +480,12 @@ static void settings_load(void) {
         else if (!strcmp(key, "resolution_3d")) { int v = atoi(val); if (v >= 1 && v <= 4) { g_scale3d = v; if (!seen_rs) g_res_auto = v == 4; } }   /* before v29: 4 was the most (now Auto) */
         else if (!strcmp(key, "render_scale")) { seen_rs = 1; int v = atoi(val); g_res_auto = !strcmp(val, "auto") || v < 1; if (!g_res_auto) g_scale3d = v > GL_MAX_SCALE ? GL_MAX_SCALE : v; }
         else if (!strcmp(key, "window_scale")) { int v = atoi(val); if (v >= 1 && v <= 8) g_scale = v; }
-        else if (!strcmp(key, "layout")) { g_side_by_side = !strcmp(val, "side_by_side"); g_corner = !strcmp(val, "corner"); g_wide = !strcmp(val, "wide") || !strcmp(val, "wide_dynamic"); g_wide_dyn = !strcmp(val, "wide_dynamic"); g_two = !strcmp(val, "two_windows"); }
-        else if (!strcmp(key, "single_screen")) g_single = atoi(val) != 0;
-        else if (!strcmp(key, "small_screen_corner")) g_small_corner = atoi(val) & 3;
+        /* (layout, single_screen, swap_screens, the small screen's corner, opacity and window: no longer
+         * chosen, the one layout is widescreen with the map in the corner, stacked in Classic) */
         else if (!strcmp(key, "small_screen_size")) { int v = atoi(val); if (v >= 0 && v <= 2) g_small_size = v; }
-        else if (!strcmp(key, "small_screen_hidden")) g_small_hide = atoi(val) != 0;
-        else if (!strcmp(key, "small_screen_opacity_chosen")) opacity_chosen = atoi(val) != 0;
+        else if (!strcmp(key, "minimap")) g_map_shown = atoi(val) != 0;
         else if (!strcmp(key, "volume")) { int v = atoi(val); if (v >= 0 && v <= 100) g_volume = v; }
         else if (!strcmp(key, "mute")) g_mute = atoi(val) != 0;
-        else if (!strcmp(key, "swap_screens")) g_swap = atoi(val) != 0;
-        else if (!strcmp(key, "widescreen_popout")) g_wide_pop = atoi(val) != 0;
         else if (!strcmp(key, "widescreen_battle_hud")) g_hud = atoi(val) != 0;
         else if (!strcmp(key, "map_markers")) g_mapmarks = atoi(val) != 0;
         else if (!strcmp(key, "map_markers_opened")) g_mapmarks_opened = atoi(val) != 0;
@@ -495,9 +499,6 @@ static void settings_load(void) {
         else if (!strcmp(key, "hd_text")) g_hdtext = atoi(val) != 0;
         else if (!strcmp(key, "hd_movies")) g_hdmovie = atoi(val) != 0;
         else if (!strcmp(key, "hd_text_font")) snprintf(g_hdfont, sizeof g_hdfont, "%s", val);
-        else if (!strcmp(key, "small_screen_opacity")) { int v = atoi(val); if (v >= 10 && v <= 100) opacity_saved = v; }
-        else if (!strcmp(key, "second_window")) { int r[4]; if (sscanf(val, "%d,%d,%d,%d", &r[0], &r[1], &r[2], &r[3]) == 4 && r[2] > 0 && r[3] > 0) memcpy(g_win2_rect, r, sizeof r); }
-        else if (!strcmp(key, "second_window_fullscreen")) g_win2_full = atoi(val) != 0;
         else if (!strcmp(key, "farm_gold_target")) { long v = atol(val); if (v > 0 && v <= 9999999) g_farm_target = (int)v; }
         else if (!strcmp(key, "farm_fast_forward")) g_farm_fast = atoi(val) != 0;
         else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 3) g_battle_speed = v; }
@@ -531,7 +532,6 @@ static void settings_load(void) {
         }
     }
     fclose(f);
-    if (opacity_chosen && opacity_saved) g_small_opacity = opacity_saved;
     /* the colour counts once the player picked one (before nightly5 it was saved either way) */
     if (g_color_chosen) {
         for (int i = 0; i < N_DRAWN; i++) if (!strcmp(color, SHELLS[i].key)) g_opt.shell_color = i;
@@ -571,8 +571,9 @@ static void settings_save(void) {
     fprintf(f, "hd_text_font = %s\n", g_hdfont);
     fprintf(f, "# enhanced: the movies (opening, dragon...) from the movies folder, upscaled: 0 or 1\n");
     fprintf(f, "hd_movies = %d\n", g_hdmovie);
-    fprintf(f, "# widescreen: the small screen (map, battle commands) in a window of its own: 0 or 1\n");
-    fprintf(f, "widescreen_popout = %d\n", g_wide_pop);
+    fprintf(f, "# the map in the top right corner (gone during battles): 0 or 1; its size 0 small, 1 medium, 2 large\n");
+    fprintf(f, "minimap = %d\n", g_map_shown);
+    fprintf(f, "small_screen_size = %d\n", g_small_size);
     fprintf(f, "# widescreen battles: the party's panels along the top and the commands in the bottom left, over the 3D: 0 or 1\n");
     fprintf(f, "widescreen_battle_hud = %d\n", g_hud);
     fprintf(f, "# the map: the chests, pots and barrels of the place marked (the mouse over one: what is in it): 0 or 1\n");
@@ -581,27 +582,9 @@ static void settings_save(void) {
     fprintf(f, "map_markers_opened = %d\n", g_mapmarks_opened);
     fprintf(f, "# window size: 1 to 8 times the DS screens (F3)\n");
     fprintf(f, "window_scale = %d\n", g_scale);
-    fprintf(f, "# stacked, side_by_side, corner (the top screen small beside the field), wide (widescreen),\n");
-    fprintf(f, "# wide_dynamic (widescreen that makes room for menus; experimental) or two_windows (one screen in each); F2\n");
-    fprintf(f, "layout = %s\n", g_side_by_side ? "side_by_side" : g_wide ? (g_wide_dyn ? "wide_dynamic" : "wide") : g_corner ? "corner" : g_two ? "two_windows" : "stacked");
-    fprintf(f, "# one screen only (U / left trigger): 0 or 1\n");
-    fprintf(f, "single_screen = %d\n", g_single);
-    fprintf(f, "# widescreen's small screen: corner 0 top left, 1 top right, 2 bottom right, 3 bottom left (K / right stick click);\n");
-    fprintf(f, "# size 0 small, 1 medium, 2 large (I); hidden 0 or 1 (U / left trigger)\n");
-    fprintf(f, "small_screen_corner = %d\n", g_small_corner);
-    fprintf(f, "small_screen_size = %d\n", g_small_size);
-    fprintf(f, "small_screen_hidden = %d\n", g_small_hide);
     fprintf(f, "# volume 0 to 100 (- and =), and mute\n");
     fprintf(f, "volume = %d\n", g_volume);
     fprintf(f, "mute = %d\n", g_mute);
-    fprintf(f, "# the screens trade places (F9): 0 or 1\n");
-    fprintf(f, "swap_screens = %d\n", g_swap);
-    fprintf(f, "# widescreen: how solid the small screen over the field is, in %% (O / left stick click): 100, 75, 50 or 25\n");
-    fprintf(f, "small_screen_opacity = %d\n", g_small_opacity);
-    fprintf(f, "small_screen_opacity_chosen = 1\n");
-    fprintf(f, "# two windows: where the second one goes (x,y,width,height) and whether it is fullscreen\n");
-    fprintf(f, "second_window = %d,%d,%d,%d\n", g_win2_rect[0], g_win2_rect[1], g_win2_rect[2], g_win2_rect[3]);
-    fprintf(f, "second_window_fullscreen = %d\n", g_win2_full);
     fprintf(f, "# Modern: the left stick walks in any direction, like the stylus (0 or 1)\n");
     fprintf(f, "walk_any_direction = %d\n", g_analog_walk);
     fprintf(f, "# Modern > Farm gold by itself: stop once the party has this much gold, and fast forward while farming (0 or 1)\n");
@@ -816,7 +799,7 @@ static void second_window_keep_rect(void) {                     /* remember wher
     SDL_GetWindowSize(g_win2, &g_win2_rect[2], &g_win2_rect[3]);
 }
 static void second_window_sync(void) {
-    int want = g_gl && ((g_two && !g_single) || (g_wide && g_wide_pop && !g_classic)) && !g_side_by_side && g_win && !g_headless;
+    int want = g_gl && ((g_two && !g_single) || (g_wide && g_wide_pop && !g_minimap && !g_classic)) && !g_side_by_side && g_win && !g_headless;
     if (!want && g_win2) {
         second_window_keep_rect();
         SDL_GL_MakeCurrent(g_win, g_glctx);
@@ -1196,6 +1179,22 @@ static void wide_update(int a_on_top) {
         for (int i = 0; i < 256 * 192 && blank; i += 7) if (px[i] & 0xFFFFFF) blank = 0;
         g_small_blank = blank;
     }
+    if (g_minimap) {   /* the minimap: is the game's 2D (a menu) under it? Then it fades out, and back once that's gone */
+        int under = 0;
+        if (which == 1 && g_comp_has3d) {
+            static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
+            int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
+            int x0 = c == 0 || c == 3 ? 2 - S : 256 + S - SW[z] - 2, y0 = c < 2 ? MINIMAP_TOP : 192 - SH[z] - 2;   /* on the DS's picture (S more at the canvas' left) */
+            int n = 0, n2d = 0;
+            for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
+                for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) { n++; if ((g_comp_info[(y * 256 + x) * 4] & 3) == 0) n2d++; }
+            under = n > 0 && n2d * 20 > n;                       /* more than 5% */
+        }
+        static int clear;                                         /* frames without 2D under it */
+        clear = under ? 0 : clear + 1;
+        if (under) g_mini_vis = fmaxf(0.0f, g_mini_vis - 1.0f / 6);
+        else if (clear >= 20) g_mini_vis = fminf(1.0f, g_mini_vis + 1.0f / 12);
+    }
     int covered = 1;
     if (which == 0) covered = 0;                                  /* 3D on the top screen: no sliding */
     else if (which == 1 && g_comp_has3d) {
@@ -1224,7 +1223,7 @@ static void hud_update(int a_on_top) {
     g_hud_n = 0; g_hud_win[2] = 0;
     if (!WIDE_GL || !g_hud || !g_wide || g_side_by_side || (g_two && !g_single)) return;
     int side = 0, which = gl_wide_shown(&side);
-    if (which == 1 && g_wide_pop) {                               /* the field: the map the window keeps during battles */
+    if (which == 1 && g_wide_pop && !g_minimap) {                 /* the field: the map the window keeps during battles */
         uint16_t mb; memcpy(&mb, &g_io[(a_on_top ? 0 : 0x1000) + 0x6C], 2);   /* the top screen's engine (the map) */
         static unsigned n;                                        /* a copy of the whole picture: a few times a second is enough */
         if (n++ % 10 == 0 && !g_small_blank && (!(mb >> 14) || !(mb & 0x1F))) gl_hold();   /* not while it fades out (into a battle) */
@@ -1296,7 +1295,8 @@ static void auto_scale(void) {
  * map kept during a battle); the mouse over that window points at them. */
 static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
     const float* t = v->top;
-    if (t[2] < 128 || t[3] < 96 || v->topx[1] != 256 || (a_on_top && !v->held)) return;
+    float least = g_minimap ? 48 : 128;                          /* the minimap: small, but it's the map */
+    if (t[2] < least || t[3] < least * 0.75f || v->topx[1] != 256 || (a_on_top && !v->held) || (g_minimap && g_mini_vis < 0.99f)) return;
     memcpy(v->overlay, t, sizeof v->overlay);
     const char* test = getenv("DQIX_MAPMARKS_MOUSE");            /* tests: "x,y" on the top screen */
     if (test) { float x, y; if (sscanf(test, "%f,%f", &x, &y) == 2) mapmarks_hover(x, y); return; }
@@ -1327,7 +1327,7 @@ static void present_gl(void) {
     gl_dump_hook();
     test_hooks();
     {   /* widescreen: the small screen see-through (O), but solid while the mouse is on it */
-        float target = (float)g_small_opacity / 100.0f;
+        float target = g_minimap ? 0.85f : (float)g_small_opacity / 100.0f;   /* the minimap: nearly solid, to read it */
         int ww, wh, mx, my; SDL_GetWindowSize(g_win, &ww, &wh);
         if (target < 1.0f && SDL_GetMouseFocus() == g_win) {
             GlPresent m; canvas_layout(&m, ww, wh);
@@ -1447,7 +1447,7 @@ static void menu_sync(void) {
         static const int ids[7] = { MI_RES1, MI_RES2, MI_RES3, MI_RES4, MI_RES6, MI_RES8, MI_RES_AUTO }, sc[7] = { 1, 2, 3, 4, 6, 8, 0 };
         for (int i = 0; i < 7; i++) { menu_check(ids[i], sc[i] ? !g_res_auto && g_scale3d == sc[i] : g_res_auto); menu_enable(ids[i], g_gl && !g_classic); }
     }
-    menu_check(MI_POPOUT, g_wide_pop && wide); menu_enable(MI_POPOUT, g_gl);
+    menu_check(MI_MINIMAP, g_map_shown); menu_enable(MI_MINIMAP, WIDE_GL);
     menu_check(MI_HUD, g_hud && wide); menu_enable(MI_HUD, g_gl);
     menu_check(MI_MAPMARKS, g_mapmarks); menu_enable(MI_MAPMARKS, g_gl);
     menu_check(MI_MAPMARKS_OPENED, g_mapmarks_opened); menu_enable(MI_MAPMARKS_OPENED, g_gl && g_mapmarks);
@@ -1481,7 +1481,7 @@ static void menu_sync(void) {
     menu_check(MI_WIDE_DYN, g_wide && g_wide_dyn && !g_side_by_side); menu_enable(MI_WIDE_DYN, WIDE_GL);
     menu_check(MI_SINGLE, wide ? g_small_hide : g_single);
     for (int i = 0; i < 4; i++) { menu_check(MI_CORNER0 + i, g_small_corner == i); menu_enable(MI_CORNER0 + i, g_gl && !g_wide_dyn); }
-    for (int i = 0; i < 3; i++) { menu_check(MI_SSIZE0 + i, g_small_size == i); menu_enable(MI_SSIZE0 + i, g_gl && !g_wide_dyn); }
+    for (int i = 0; i < 3; i++) { menu_check(MI_SSIZE0 + i, g_small_size == i); menu_enable(MI_SSIZE0 + i, WIDE_GL && g_map_shown); }
     menu_check(MI_MUTE, g_mute);
     menu_enable(MI_RESET, !session_requested());
     menu_check(MI_TWO, g_two && !g_side_by_side && g_gl); menu_enable(MI_TWO, g_gl);
@@ -2035,12 +2035,7 @@ static void do_action(int id) {
     case MI_TEXDUMP: if (g_gl) { g_texdump = !g_texdump; gl_set_texture_dump(g_texdump); } break;
     case MI_HDTEXT: if (g_gl) { g_hdtext = !g_hdtext; apply_mode(); } break;
     case MI_HDMOVIE: if (g_gl) { g_hdmovie = !g_hdmovie; if (g_hdmovie) hdmovie_init(); apply_mode(); } break;   /* on: look in movies/ again */
-    case MI_POPOUT:
-        if (!WIDE_GL) break;
-        if (g_wide && !g_side_by_side) g_wide_pop = !g_wide_pop;
-        else { g_wide_pop = 1; g_wide = 1; g_corner = g_side_by_side = g_two = 0; }   /* turns widescreen on too */
-        relayout = 1;
-        break;
+    case MI_MINIMAP: g_map_shown = !g_map_shown; break;
     case MI_HUD: g_hud = !g_hud; break;
     case MI_MAPMARKS: g_mapmarks = !g_mapmarks; break;
     case MI_MAPMARKS_OPENED: g_mapmarks_opened = !g_mapmarks_opened; break;
@@ -2217,24 +2212,11 @@ static void do_action(int id) {
 static int wide_now(void) { return g_wide && WIDE_GL && !g_side_by_side; }
 static void hotkey(int a) {
     if (!g_all_options) switch (a) {                             /* their menu items are hidden too (menu_init) */
-    case CA_LAYOUT: case CA_SINGLE: case CA_SWAP: case CA_CORNER: case CA_SMALLSIZE: case CA_OPACITY:
     case CA_RES3D: case CA_MODE: case CA_LCD: case CA_SHELL: case CA_ACTUAL: return;
     }
     switch (a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;
-    case CA_LAYOUT: {                                            /* stacked -> side by side -> corner -> widescreen -> dynamic (-> two windows, with two monitors) */
-        int two_ok = SDL_GetNumVideoDisplays() > 1, gl = g_gl, wgl = WIDE_GL;    /* (no widescreen in Classic) */
-        int id = g_single ? MI_STACKED : g_side_by_side ? (gl ? MI_CORNER : MI_STACKED) : (g_corner && gl) ? (wgl ? MI_WIDE : two_ok ? MI_TWO : MI_STACKED)
-               : (g_wide && wgl && !g_wide_dyn) ? MI_WIDE_DYN : (g_wide && wgl) ? (two_ok ? MI_TWO : MI_STACKED) : (g_two && gl) ? MI_STACKED : MI_SIDE;
-        do_action(id);
-        break;
-    }
-    case CA_SINGLE: do_action(MI_SINGLE); break;
-    case CA_SWAP: if (wide_now()) g_peek = 1; else do_action(MI_SWAP); break;   /* widescreen: held (released in frontend_frame) */
-    case CA_CORNER: if (!g_wide_dyn) { do_action(MI_CORNER0 + (g_small_corner + 1) % 4); settings_save(); } break;
-    case CA_SMALLSIZE: if (!g_wide_dyn) { do_action(MI_SSIZE0 + (g_small_size + 1) % 3); settings_save(); } break;
-    case CA_OPACITY: do_action(MI_OPACITY1 + ((100 - g_small_opacity) / 25 + 1) % 4); break;
     case CA_WINSIZE: do_action(MI_SIZE1 + g_scale % 4); break;
     case CA_RES3D:
         if (g_gl && !g_classic) {                                /* 1x 2x 3x 4x 6x 8x Auto */
@@ -2395,8 +2377,6 @@ void frontend_frame(void) {
                 was[a] = (uint8_t)now;
             }
             g_pad_resync = 0;
-            /* widescreen: the other screen shows while the swap button is held */
-            if (g_peek && !controls_key_held(CA_SWAP, ks) && !controls_pad_held(CA_SWAP, g_pad)) g_peek = 0;
             if (!wide_now()) g_peek = 0;
             { static int tp = -1; if (tp < 0) tp = getenv("DQIX_TEST_PEEK") != NULL; if (tp && wide_now()) g_peek = 1; }   /* tests */
             /* reset: Start + Select + L + R held for a second on the controller (wherever they are mapped) */

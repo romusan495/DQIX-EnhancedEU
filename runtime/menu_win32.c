@@ -133,32 +133,6 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
         item(view, MI_GAP, L"&Gap between the screens");
         item(view, MI_ACTUAL, L"&Actual size (as big as a real DS Lite)\tF8");
         sep(view);
-        item(view, MI_STACKED, L"S&tacked\tF2");
-        item(view, MI_SIDE, L"&Side by side\tF2");
-        item(view, MI_CORNER, L"Top screen in the &corner\tF2");
-        item(view, MI_WIDE, L"&Widescreen (the action wide, the other screen in a corner)\tF2");
-        item(view, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental: makes room for menus)\tF2");
-        item(view, MI_TWO, L"Two wi&ndows (one screen in each, for two monitors)\tF2");
-        sep(view);
-        item(view, MI_SINGLE, L"Single scr&een (widescreen: hide the small screen)\tU");
-        item(view, MI_SWAP, L"Swa&p the screens (widescreen: hold to see the other)\tF9");
-        HMENU sm = sub(view, L"Widescreen: the small scr&een");
-        item(sm, MI_CORNER0, L"Top left\tK");
-        item(sm, MI_CORNER0 + 1, L"Top right\tK");
-        item(sm, MI_CORNER0 + 2, L"Bottom right\tK");
-        item(sm, MI_CORNER0 + 3, L"Bottom left\tK");
-        sep(sm);
-        item(sm, MI_SSIZE0, L"Small\tI");
-        item(sm, MI_SSIZE0 + 1, L"Medium\tI");
-        item(sm, MI_SSIZE0 + 2, L"Large\tI");
-        sep(sm);
-        item(sm, MI_OPACITY1, L"100% (solid)\tO");
-        item(sm, MI_OPACITY1 + 1, L"75%\tO");
-        item(sm, MI_OPACITY1 + 2, L"50%\tO");
-        item(sm, MI_OPACITY1 + 3, L"25%\tO");
-        sep(sm);
-        item(sm, MI_POPOUT, L"In its own &window (a clean field)");
-        sep(view);
     }
     HMENU size = sub(view, L"&Window size\tF3");
     item(size, MI_SIZE1, L"1x");
@@ -193,13 +167,14 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     HMENU modern = sub(g_bar, L"&Modern");
     item(modern, MI_ANALOG, L"Walk in any &direction with the left stick");
     if (all) {
-        item(modern, MI_WIDE, L"&Widescreen: the action wide, the other screen in a corner");
-        item(modern, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental)");
-        item(modern, MI_CORNER, L"Top screen in the &corner (the field as on the DS)");
-        item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
         item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
     }
     sep(modern);
+    item(modern, MI_MINIMAP, L"Map in the top right co&rner (one window, gone during battles)");
+    HMENU ms = sub(modern, L"Map si&ze");
+    item(ms, MI_SSIZE0, L"Small");
+    item(ms, MI_SSIZE0 + 1, L"Medium");
+    item(ms, MI_SSIZE0 + 2, L"Large");
     item(modern, MI_MAPMARKS, L"&Map: mark the chests, bookshelves and quests (the mouse over one: what it holds)");
     item(modern, MI_MAPMARKS_OPENED, L"Map: also mark the ones already &emptied or done (greyed)");
     item(modern, MI_MAPMONSTERS, L"Map: show the m&onsters walking nearby (red dots)");
