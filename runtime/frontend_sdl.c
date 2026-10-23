@@ -885,6 +885,7 @@ void frontend_init(int argc, char** argv) {
      * Joy-Cons) by their labels, which would swap A/B and X/Y on them. */
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_COMBINE_JOY_CONS, "1");   /* two Joy-Cons are one controller */
+    SDL_SetHint("SDL_QUIT_ON_LAST_WINDOW_CLOSE", "0");             /* closing the window asks first (quit_ask), not a second time */
     if (SDL_Init((g_headless ? 0 : SDL_INIT_VIDEO) | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         exit(1);
@@ -1615,6 +1616,19 @@ static int ask_yes(const char* title, const char* text, const char* yes) {
     return choose(title, text, b, 2, 0, 1) == 0;
 }
 
+/* Escape, closing the window and Game > Exit ask first: a stray Escape
+ * shouldn't end the game. DQIX_QUIT_NOASK=1 skips the question (tests). */
+static void quit_ask(void) {
+    static int asking;
+    if (asking) return;                                        /* already on screen */
+    if (!g_win || (getenv("DQIX_QUIT_NOASK") && atoi(getenv("DQIX_QUIT_NOASK")))) exit(0);
+    asking = 1;
+    int yes = ask_yes("Exit", "Quit the game?\n\nAnything since you last saved in the game is lost.", "Quit");
+    asking = 0;
+    if (yes) exit(0);
+    g_next_frame = SDL_GetPerformanceCounter();                /* the game waited for the answer */
+}
+
 static int ask_name(void) {
     char* t = g_win ? ask_text(g_win, "Your name", "The name your friends see in the session (your hero's name, say):") : NULL;
     if (!t) return g_player_name[0] != 0;
@@ -2033,7 +2047,7 @@ static void do_action(int id) {
         g_next_frame = SDL_GetPerformanceCounter();                /* the game waited while you typed */
         break;
     }
-    case MI_EXIT: exit(0);
+    case MI_EXIT: quit_ask(); break;
     case MI_CLASSIC: case MI_ENHANCED:
         if (!g_gl) break;
         g_classic = id == MI_CLASSIC; apply_mode(); g_fps_t0 = 0;
@@ -2324,13 +2338,13 @@ static void handle_events(void) {
         int mi = menu_command(&e);
         if (mi) { do_action(mi); continue; }
         switch (e.type) {
-        case SDL_QUIT: exit(0);
+        case SDL_QUIT: exit(0);                                   /* Ctrl+C, the system shutting down */
         case SDL_KEYDOWN: {
             if (e.key.repeat || !g_win) break;
             SDL_Scancode k = e.key.keysym.scancode;
             if (g_cap_action >= 0) { capture_key(k, e.key.keysym.mod); break; }   /* Game > Controls: the new key */
             int in2 = g_win2 && e.key.windowID == SDL_GetWindowID(g_win2);   /* typed in the second window */
-            if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else if (g_fullscreen) do_action(MI_FULL); else exit(0); break; }
+            if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else if (g_fullscreen) do_action(MI_FULL); else quit_ask(); break; }
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }
             if (k == SDL_SCANCODE_G && (e.key.keysym.mod & KMOD_CTRL)) { do_action(MI_FARM); break; }   /* Modern > Farm gold by itself */
             int a = controls_key_action(k, e.key.keysym.mod);
@@ -2370,7 +2384,7 @@ static void handle_events(void) {
         case SDL_WINDOWEVENT:
             if (e.window.event == SDL_WINDOWEVENT_CLOSE) {           /* two windows: closing the second one goes back to one */
                 if (g_win2 && e.window.windowID == SDL_GetWindowID(g_win2)) do_action(MI_STACKED);
-                else exit(0);
+                else quit_ask();
                 break;
             }
             if (g_win2 && e.window.windowID == SDL_GetWindowID(g_win2)) {
