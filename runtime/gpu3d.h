@@ -43,6 +43,14 @@ extern int g_wide_side;
 /* Widescreen: the DS's box test (the game's "is it in view?") uses the wide
  * view too: DS pixels added each side, 0 = the DS's own view. */
 extern int g_wide_cull;
+/* Widescreen: the field's "X Menu" sign (one flat quad the game draws in 3D at
+ * the top right) drawn at the bottom right of the wide picture instead, so the
+ * map can sit in that corner. g_sign_frame: the last frame it was moved;
+ * g_sign_rect: where it is now (DS pixels of the 3D screen, x0 y0 x1 y1). */
+#define GX_SIGN_DY 144
+extern int g_sign_move;
+extern uint64_t g_sign_frame;
+extern int g_sign_rect[4], g_sign_dx;               /* ...and how far right it went */
 
 /* Texture helpers for renderers. */
 int  gpu3d_tex_size(uint32_t teximg, int* w, int* h);          /* 0 if no texture (format 0) */

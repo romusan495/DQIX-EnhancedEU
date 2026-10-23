@@ -67,7 +67,7 @@ static int g_wide_pop = 0;                                        /* widescreen:
 static int g_minimap = 1;                                         /* widescreen: the map small in a corner of the one window (no second window), not in battles */
 static int g_map_shown = 1;                                       /* ...shown (Modern > Map in the top right corner) */
 static float g_mini_vis = 1.0f;                                   /* ...1 shown, 0 gone (the game's 2D under it: a menu) */
-#define MINIMAP_TOP 38                                            /* ...in the top corners, under the field's "X Menu" sign */
+#define MINIMAP_GAP 0                                             /* ...right in the corner (the field's "X Menu" sign moves to the bottom: g_sign_dy) */
 static int g_smooth = 1;                                          /* Enhanced: smooth (filtered) textures */
 static int g_smooth2d = 1, g_texup = 1, g_outline = 1;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
 static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
@@ -284,8 +284,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3;
             if (g_minimap && which == 0) z = 2;                  /* battles: the commands screen when the HUD doesn't take it (spell lists...), large */
             small[2] = SW[z]; small[3] = SH[z];
-            small[0] = c == 0 || c == 3 ? 2 : v->cw - small[2] - 2;
-            small[1] = c < 2 ? (g_minimap && which != 0 ? MINIMAP_TOP : 2) : 192 - small[3] - 2;
+            float gap = g_minimap && which != 0 ? MINIMAP_GAP : 2;
+            small[0] = c == 0 || c == 3 ? gap : v->cw - small[2] - gap;
+            small[1] = c < 2 ? gap : 192 - small[3] - gap;
         } else if (which == 0) { small[2] = 128; small[3] = 96; small[0] = small[1] = 2; }   /* battles: top left, over the sky */
         else { small[0] = small[1] = 2 * t; small[2] = 256.0f / 3; small[3] = 64; }
         if (g_small_blank && t > 0.99f) small[2] = small[3] = 0;   /* black (battle intros, fades): leave the field whole */
@@ -974,6 +975,9 @@ static int to_touch_in(SDL_Window* win, int wx, int wy, int* tx, int* ty, int cl
     if (g_gl && v.bot[2] <= 0) return 0;                         /* not shown */
     float bw = v.bot[2] > 0 ? v.bot[2] : 256, bh = v.bot[3] > 0 ? v.bot[3] : 192, bx = v.botx[1] > 0 ? v.botx[1] : 256;
     int x = (int)floorf((lx - v.bot[0]) * bx / bw + (g_gl ? v.botx[0] - (float)side : 0)), y = (int)floorf((ly - v.bot[1]) * 192.0f / bh);
+    if (g_sign_move && g_frame - g_sign_frame < 4 && x >= g_sign_rect[0] && x < g_sign_rect[2] && y >= g_sign_rect[1] && y < g_sign_rect[3]) {
+        x -= g_sign_dx; y -= GX_SIGN_DY;                          /* the "X Menu" sign, moved: where the game has it */
+    }
     if (clamp) { x = x < 0 ? 0 : x > 255 ? 255 : x; y = y < 0 ? 0 : y > 191 ? 191 : y; }
     if (x < 0 || x > 255 || y < 0 || y > 191) return 0;
     *tx = x; *ty = y;
@@ -1184,7 +1188,7 @@ static void wide_update(int a_on_top) {
         if (which == 1 && g_comp_has3d) {
             static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
             int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
-            int x0 = c == 0 || c == 3 ? 2 - S : 256 + S - SW[z] - 2, y0 = c < 2 ? MINIMAP_TOP : 192 - SH[z] - 2;   /* on the DS's picture (S more at the canvas' left) */
+            int x0 = c == 0 || c == 3 ? MINIMAP_GAP - S : 256 + S - SW[z] - MINIMAP_GAP, y0 = c < 2 ? MINIMAP_GAP : 192 - SH[z] - MINIMAP_GAP;   /* on the DS's picture (S more at the canvas' left) */
             int n = 0, n2d = 0;
             for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
                 for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) { n++; if ((g_comp_info[(y * 256 + x) * 4] & 3) == 0) n2d++; }
@@ -1311,6 +1315,7 @@ static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
 static void present_gl(void) {
     auto_scale();
     g_wide_side = g_classic ? 0 : wide_side_target();            /* the next 3D frames (only the picture changes) */
+    g_sign_move = g_minimap && g_map_shown && g_wide_side > 0;   /* the map in the top right: the "X Menu" sign at the bottom right */
     {   /* ...and what the game counts as in view (not in a session: every PC must decide alike) */
         static int off = -1; if (off < 0) off = getenv("DQIX_NO_WIDE_CULL") != NULL;
         g_wide_cull = off || session_requested() ? 0 : g_wide_side;

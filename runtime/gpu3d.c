@@ -255,6 +255,9 @@ static int clip_coords_equal(const Vtx* a, const Vtx* b) {
  * software renderer) is unchanged. A polygon drawn with a smaller viewport
  * (a 3D picture inside a menu) is copied unwidened, in the middle. */
 int g_wide_side;
+int g_sign_move;
+uint64_t g_sign_frame;
+int g_sign_rect[4], g_sign_dx;
 #define WPOLY_MAX 6144
 #define WVTX_MAX (WPOLY_MAX * 6)
 static HPoly wpram[WPOLY_MAX * 2];
@@ -327,6 +330,21 @@ static void wide_submit(int nverts, int facing) {
         u32 w = (u32)v->pos[3];
         if (w == 0) p->degenerate = 1;
         while (wsize < 32 && (w >> wsize)) wsize += 4;
+    }
+    if (g_sign_move && n == 4) {                                 /* the "X Menu" sign: flat (one w), small, at the DS's top right */
+        int sign = 1, x0 = 1 << 20, x1 = -(1 << 20), y0 = 1 << 20, y1 = -(1 << 20);
+        for (int i = 0; i < 4 && sign; i++) {
+            const Vtx* v = p->v[i];
+            int x = v->hpos[0] / 16 - side, y = v->hpos[1] / 16;
+            if (v->pos[3] != p->v[0]->pos[3] || x < 200 || x > 256 || y < 0 || y > 48) sign = 0;
+            x0 = x < x0 ? x : x0; x1 = x > x1 ? x : x1; y0 = y < y0 ? y : y0; y1 = y > y1 ? y : y1;
+        }
+        if (sign && x1 - x0 <= 40 && y1 - y0 <= 40) {
+            for (int i = 0; i < 4; i++) { p->v[i]->hpos[0] += side * 16; p->v[i]->hpos[1] += GX_SIGN_DY * 16; }
+            ytop += GX_SIGN_DY; ybot += GX_SIGN_DY;
+            g_sign_frame = g_frame; g_sign_dx = side;
+            g_sign_rect[0] = x0 + side; g_sign_rect[1] = y0 + GX_SIGN_DY; g_sign_rect[2] = x1 + side; g_sign_rect[3] = y1 + GX_SIGN_DY;
+        }
     }
     if (ybot > 192) p->degenerate = 1;
     if (ytop < 0) ytop = 0;
