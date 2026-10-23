@@ -69,6 +69,13 @@ original)
 - **Top screen in the corner**: the same, with the field as on the DS.
 - Coming: a free camera (see the roadmap).
 
+**Cheats** (in the Cheats menu, all off at first): Action Replay codes for
+your ROM's version (USA or European), each with its own check mark: gold,
+mini medals, HP and MP that stay full in battle, skill points, every
+vocation, and more. Only the codes that change the game's data are there:
+the game's code is compiled, so the ones that rewrite its instructions can't
+work. Codes from Almar's Guides.
+
 **Multiplayer, from anywhere**
 - **Tag mode** (canvassing for guests) and **co-op** (visiting and inviting
   through Pavo) with up to 4 players, over the internet: friends don't need
