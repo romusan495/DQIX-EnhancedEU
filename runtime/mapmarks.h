@@ -17,5 +17,7 @@ extern int g_interior_maps;        /* inside a house (the game shows the town): 
  * (*rgba: premultiplied RGBA, MAPMARKS_W x MAPMARKS_H, rows top-down, or
  * NULL when there is nothing to draw). */
 int mapmarks_update(const uint8_t** rgba);
+/* 1 while the top screen shows a page (an item's card) instead of the map. */
+int mapmarks_top_page(void);
 /* The mouse over the map, in top-screen pixels (x < 0: not over it). */
 void mapmarks_hover(float x, float y);

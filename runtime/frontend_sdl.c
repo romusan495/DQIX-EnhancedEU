@@ -304,6 +304,15 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
+        if (g_minimap && which == 1 && !pop && mapmarks_top_page()) {
+            /* an item's card on the top screen (Items, Equipment...): both
+             * screens whole, side by side, the card on the left, until it closes */
+            v->cw = 512; v->ch = 192;
+            v->top[0] = 0; v->top[1] = 0; v->top[2] = 256; v->top[3] = 192;
+            v->bot[0] = 256; v->bot[1] = 0; v->bot[2] = 256; v->bot[3] = 192;
+            v->topx[0] = v->botx[0] = (float)side; v->topx[1] = v->botx[1] = 256;
+            v->alpha = 1.0f; v->front = 0;
+        }
         if (pop) {                                                /* first window: the field alone; second: the small screen, whole */
             v->alpha = 1.0f;
             if (second) { v->cw = 256; v->ch = 192; big[0] = big[1] = big[2] = big[3] = 0; small[0] = small[1] = 0; small[2] = 256; small[3] = 192; }
@@ -1310,7 +1319,7 @@ static void auto_scale(void) {
 static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
     const float* t = v->top;
     float least = g_minimap ? 48 : 128;                          /* the minimap: small, but it's the map */
-    if (t[2] < least || t[3] < least * 0.75f || v->topx[1] != 256 || (a_on_top && !v->held) || (g_minimap && g_mini_vis < 0.99f)) return;
+    if (t[2] < least || t[3] < least * 0.75f || v->topx[1] != 256 || (a_on_top && !v->held) || (g_minimap && g_mini_vis < 0.99f) || mapmarks_top_page()) return;
     memcpy(v->overlay, t, sizeof v->overlay);
     const char* test = getenv("DQIX_MAPMARKS_MOUSE");            /* tests: "x,y" on the top screen */
     if (test) { float x, y; if (sscanf(test, "%f,%f", &x, &y) == 2) mapmarks_hover(x, y); return; }

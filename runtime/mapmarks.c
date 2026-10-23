@@ -1329,6 +1329,14 @@ static void add_mark(const Mark* m) { if (g_nmark < MAX_MARKS) g_mark[g_nmark++]
 
 static int on_screen(float sx, float sy) { return sx >= -4 && sx <= 260 && sy >= -4 && sy <= 196; }
 
+/* The top screen shows a page instead of the map: an item's card (Items,
+ * Equipment...). The map (towns: BG0CNT 4E01, BG1CNT 0D02; the fields:
+ * 0F01, 1002) leaves BG2CNT at 0; the cards set it (0F00, 0E03, 0002). */
+int mapmarks_top_page(void) {
+    uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000;
+    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0;
+}
+
 int mapmarks_update(const uint8_t** rgba) {
     static int loaded, had;
     static uint32_t last_key;
@@ -1337,6 +1345,7 @@ int mapmarks_update(const uint8_t** rgba) {
     int ok = (g_mapmarks || g_interior_maps) && rd32(FIELD_PTR) != 0;
     uint32_t mp = rd32(MINIMAP_PTR);
     if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
+    if (ok && mapmarks_top_page()) ok = 0;                       /* an item's card: nothing of the map over it */
     /* the map is the top screen's BG1: off when a page covers it (the quest log...) */
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000, bright = IO16(top + 0x6C);
     int field = rd16(MAP_NUM) >= 20000;                          /* the fields (20001...) draw their map on BG0 */
