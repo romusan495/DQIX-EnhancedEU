@@ -21,12 +21,7 @@ const ControlAction g_ctl[CA_N] = {
     [CA_FAST] = { "fast_forward", "Fast forward (hold)", -1 },
     [CA_PAUSE] = { "pause", "Pause", -1 },
     [CA_FULL] = { "fullscreen", "Fullscreen", -1 },
-    [CA_LAYOUT] = { "layout", "Next layout", -1 },
-    [CA_SINGLE] = { "single_screen", "Single screen (widescreen: hide the small screen)", -1 },
-    [CA_SWAP] = { "swap", "Swap the screens (widescreen: hold to see the other one)", -1 },
-    [CA_CORNER] = { "small_corner", "Widescreen: small screen to the next corner", -1 },
-    [CA_SMALLSIZE] = { "small_size", "Widescreen: small screen size", -1 },
-    [CA_OPACITY] = { "small_opacity", "Widescreen: small screen opacity", -1 },
+    [CA_MINIMAP] = { "minimap", "Show / hide the map (top right)", -1 },
     [CA_WINSIZE] = { "window_size", "Window size", -1 },
     [CA_RES3D] = { "resolution_3d", "3D resolution", -1 },
     [CA_MODE] = { "classic_enhanced", "Classic / Enhanced", -1 },
@@ -51,9 +46,7 @@ void controls_defaults(void) {
     K(CA_L, SDL_SCANCODE_Q, 0); K(CA_R, SDL_SCANCODE_W, 0);
     K(CA_START, SDL_SCANCODE_RETURN, 0); K(CA_SELECT, SDL_SCANCODE_RSHIFT, SDL_SCANCODE_BACKSPACE);
     K(CA_UP, SDL_SCANCODE_UP, 0); K(CA_DOWN, SDL_SCANCODE_DOWN, 0); K(CA_LEFT, SDL_SCANCODE_LEFT, 0); K(CA_RIGHT, SDL_SCANCODE_RIGHT, 0);
-    K(CA_FAST, SDL_SCANCODE_TAB, 0); K(CA_PAUSE, SDL_SCANCODE_P, SDL_SCANCODE_PAUSE); K(CA_FULL, SDL_SCANCODE_F11, 0);
-    K(CA_LAYOUT, SDL_SCANCODE_F2, 0); K(CA_SINGLE, SDL_SCANCODE_U, 0); K(CA_SWAP, SDL_SCANCODE_F9, 0);
-    K(CA_CORNER, SDL_SCANCODE_K, 0); K(CA_SMALLSIZE, SDL_SCANCODE_I, 0); K(CA_OPACITY, SDL_SCANCODE_O, 0);
+    K(CA_FAST, SDL_SCANCODE_TAB, 0); K(CA_PAUSE, SDL_SCANCODE_P, SDL_SCANCODE_PAUSE); K(CA_FULL, SDL_SCANCODE_F11, 0); K(CA_MINIMAP, SDL_SCANCODE_M, 0);
     K(CA_WINSIZE, SDL_SCANCODE_F3, 0); K(CA_RES3D, SDL_SCANCODE_F4, 0); K(CA_MODE, SDL_SCANCODE_F5, 0);
     K(CA_LCD, SDL_SCANCODE_F6, 0); K(CA_SHELL, SDL_SCANCODE_F7, 0); K(CA_ACTUAL, SDL_SCANCODE_F8, 0);
     K(CA_VOLDOWN, SDL_SCANCODE_MINUS, 0); K(CA_VOLUP, SDL_SCANCODE_EQUALS, 0);
@@ -66,8 +59,7 @@ void controls_defaults(void) {
     g_ctl_pad[CA_START] = SDL_CONTROLLER_BUTTON_START; g_ctl_pad[CA_SELECT] = SDL_CONTROLLER_BUTTON_BACK;
     g_ctl_pad[CA_UP] = SDL_CONTROLLER_BUTTON_DPAD_UP; g_ctl_pad[CA_DOWN] = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
     g_ctl_pad[CA_LEFT] = SDL_CONTROLLER_BUTTON_DPAD_LEFT; g_ctl_pad[CA_RIGHT] = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
-    g_ctl_pad[CA_SINGLE] = CTL_PAD_LT; g_ctl_pad[CA_SWAP] = CTL_PAD_RT;
-    g_ctl_pad[CA_CORNER] = SDL_CONTROLLER_BUTTON_RIGHTSTICK; g_ctl_pad[CA_OPACITY] = SDL_CONTROLLER_BUTTON_LEFTSTICK;
+    g_ctl_pad[CA_MINIMAP] = SDL_CONTROLLER_BUTTON_RIGHTSTICK;     /* R3 */
 }
 
 /* ---------------------------------------------------------------- names */

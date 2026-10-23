@@ -26,20 +26,26 @@ enum {
     MI_OUTLINE0 = 296,                                                  /* outlines: the DS's, thin, none (+0..2) */
     MI_FONT0 = 600,                                                     /* HD text fonts (+0..N_FONTS-1, see g_fonts in frontend_sdl.c) */
     MI_HDMOVIE = 310,                                                   /* HD movies from the movies folder */
-    MI_HUD = 320,                                                       /* widescreen battles: the HUD over the 3D */
+    MI_HUD = 320, MI_MINIMAP,                                           /* widescreen battles: the HUD over the 3D; the map in the corner (one window) */
     MI_WINSTYLE0 = 330,                                                 /* windows: like the DS, minimal (+0..1) */
-    MI_MAPMARKS = 340, MI_MAPMARKS_OPENED,                              /* the map: chests, pots and barrels marked (mapmarks.c) */
+    MI_MAPMARKS = 340, MI_MAPMARKS_OPENED, MI_MAPMONSTERS,              /* the map: chests, pots and barrels marked, the monsters nearby (mapmarks.c) */
+    MI_BSPEED1 = 350,                                                   /* battle speed: normal, 2x, 3x (+0..2) */
+    MI_SAVEBAK = 360,                                                   /* keep a copy of every save (card.c) */
+    MI_CHEATS_HELP = 370,                                               /* Cheats > About these cheats */
+    MI_CHEAT0 = 700,                                                    /* Cheats: one per code (+0..cheats_count()-1, cheats.c) */
 };
 #define N_FONTS 15                                                      /* MI_FONT0 + i */
 
-/* shell_names: the console colours, in order (MI_SHELLC0 + i) */
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells);
+/* shell_names: the console colours, in order (MI_SHELLC0 + i); all: every
+ * option, else only the project's own setup (the rest from settings.ini) */
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all);
 void menu_show(int on);                       /* hidden in fullscreen */
 /* the second window (two windows): a bar with only Fullscreen (MI_FULL2) */
 void menu_init_second(SDL_Window* win);
 void menu_show_second(int on);
 void menu_check(int id, int on);
 void menu_enable(int id, int on);
+void menu_set_text(int id, const char* text);   /* UTF-8 */
 int menu_command(const SDL_Event* e);         /* the chosen item, or 0 */
 
 /* Size of one pixel of the monitor the window is on, in millimetres, from

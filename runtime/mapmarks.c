@@ -36,6 +36,12 @@
  *    the name, the short description), <C01>.npc (NARC, <C01>place.bin:
  *    where each person stands, see load_givers()); their state is a nibble
  *    per quest at 0x02108B10 (func_0206e130/func_0206e174).
+ *  - the monsters walking around: the field's characters 0x70..0x7B
+ *    (pointers at 0x020F33E0 + 4 * number, farm.c); a record's second word
+ *    has the map's number (0x020FB3F0) in its top half while it is there;
+ *    its position (x, height, z, 20.12) at +0x44, in the same units as the
+ *    spots. A field's map (20001...) shows the whole field, 1 pixel per
+ *    unit around the middle of the screen.
  *
  * Read only: the game never sees any of it. */
 #include <stdio.h>
@@ -48,6 +54,7 @@
 
 int g_mapmarks = 1;
 int g_mapmarks_opened = 1;
+int g_mapmarks_monsters = 1;
 
 /* ---------------------------------------------------------------- the game's memory */
 #define FIELD_PTR   0x0F33E0       /* 0 until an adventure is loaded (farm.c) */
@@ -56,6 +63,8 @@ int g_mapmarks_opened = 1;
 #define FLAGS       0x1088D0       /* the progress flags (bits) */
 #define FLAG_CHEST  0x212
 #define FLAG_OTHER  0x79E
+#define MON_FIRST   0x70           /* the monsters walking around: field characters 0x70..0x7B (farm.c) */
+#define MON_COUNT   12
 
 static uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, &g_main_ram[a & (MAIN_RAM_SIZE - 1)], 4); return v; }
 static uint16_t rd16(uint32_t a) { uint16_t v; memcpy(&v, &g_main_ram[a & (MAIN_RAM_SIZE - 1)], 2); return v; }
@@ -705,7 +714,7 @@ static const Pic* pic_for(int pi, const char* shown) {
 /* ---------------------------------------------------------------- what is shown */
 typedef struct {
     float sx, sy;
-    int door;                       /* -1: a spot of this place (spot), else a building's door on the picture */
+    int door;                       /* -1: a spot of this place (spot), -2: a monster, else a building's door on the picture */
     int spot, opened;               /* a spot: which, emptied */
     int closed, emptied, shelves, recipes, quests;   /* a door: what its rooms hold */
 } Mark;
@@ -830,6 +839,11 @@ static uint32_t book_color(int recipes, int dull) { return dull ? 0x9A9A9A : rec
 
 static void draw_mark(const Mark* m, int hover) {
     float R = MAPMARKS_R * 1.4f, cx = m->sx * MAPMARKS_R, cy = m->sy * MAPMARKS_R;
+    if (m->door == -2) {                                         /* a monster: a red dot */
+        rbox(cx, cy, 1.9f * R, 1.9f * R, 1.9f * R, 0xFFF8E0, 0.8f);
+        rbox(cx, cy, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 0xE0302A, 1);
+        return;
+    }
     if (m->door >= 0) {                                          /* a building: its contents on a dark badge */
         int box = m->closed || m->emptied, n = (box > 0) + (m->shelves > 0) + (m->quests > 0);
         float k = 0.75f, step = 5.6f * R, hw = (1.0f + 2.8f * (float)n) * R, hh = 3.4f * R;
@@ -1061,7 +1075,8 @@ int mapmarks_update(const uint8_t** rgba) {
     if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
     /* the map is the top screen's BG1: off when a page covers it (the quest log...) */
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000, bright = IO16(top + 0x6C);
-    if (ok && !(IO32(top) & 0x200)) ok = 0;
+    int field = rd16(MAP_NUM) >= 20000;                          /* the fields (20001...) draw their map on BG0 */
+    if (ok && !(IO32(top) & (field ? 0x100 : 0x200))) ok = 0;
     if (ok && (bright >> 14) == 2 && (bright & 0x1F) >= 16) ok = 0;   /* faded to black */
     if (ok && !loaded) {
         loaded = 1;
@@ -1070,7 +1085,7 @@ int mapmarks_update(const uint8_t** rgba) {
         load_pics();
         LOG_INFO("mapmarks: %d places, %d map pictures\n", g_nplaces, g_npics);
     }
-    int pi = ok ? place_index(rd16(MAP_NUM)) : -1;
+    int pi = ok && !field ? place_index(rd16(MAP_NUM)) : -1;     /* (a field's map isn't drawn like a town's: no spots there) */
     if (pi >= 0) {
         char shown[10];
         memcpy(shown, &g_main_ram[(mp + 2) & (MAIN_RAM_SIZE - 1)], 9); shown[9] = 0;
@@ -1128,12 +1143,26 @@ int mapmarks_update(const uint8_t** rgba) {
             }
         }
     }
+    /* the monsters walking around: a town's picture scrolls (its centre at
+     * +0x44/+0x48), a field's shows the whole field around its origin */
+    if (ok && g_mapmarks_monsters) {
+        uint16_t here = rd16(MAP_NUM);
+        float scale = (float)(int32_t)rd32(mp + 0x38) / 4096.0f;
+        float cx = field ? 0 : (float)(int32_t)rd32(mp + 0x44), cy = field ? 0 : (float)(int32_t)rd32(mp + 0x48);
+        for (int k = 0; scale > 0.1f && scale < 64 && k < MON_COUNT; k++) {
+            uint32_t a = rd32(FIELD_PTR + 4 * (MON_FIRST + k));
+            if (a < 0x02000000 || a >= 0x02400000 || (rd32(a + 4) >> 16) != here) continue;   /* there, on this map */
+            float x = (float)(int32_t)rd32(a + 0x44) / 4096.0f, z = (float)(int32_t)rd32(a + 0x4C) / 4096.0f;
+            Mark m = { x * scale - cx + 128, z * scale - cy + 96, -2, -1, 0, 0, 0, 0, 0, 0 };
+            if (on_screen(m.sx, m.sy)) add_mark(&m);
+        }
+    }
     /* the mark under the mouse (the nearest) */
     g_hover = -1;
     float best = 64;                                             /* within 8 pixels */
     for (int i = 0; i < g_nmark; i++) {
         float dx = g_mark[i].sx - g_hx, dy = g_mark[i].sy - g_hy;
-        if (g_hx >= 0 && dx * dx + dy * dy < best) { best = dx * dx + dy * dy; g_hover = i; }
+        if (g_hx >= 0 && g_mark[i].door != -2 && dx * dx + dy * dy < best) { best = dx * dx + dy * dy; g_hover = i; }
     }
     /* redraw only when something changed */
     uint32_t key = 2166136261u;
@@ -1149,7 +1178,8 @@ int mapmarks_update(const uint8_t** rgba) {
     if (had && key == last_key) return 0;
     had = 1; last_key = key;
     memset(g_img, 0, sizeof g_img);
-    for (int i = 0; i < g_nmark; i++) if (i != g_hover) draw_mark(&g_mark[i], 0);
+    for (int pass = 0; pass < 2; pass++)                          /* the monsters first, under the rest */
+        for (int i = 0; i < g_nmark; i++) if (i != g_hover && (g_mark[i].door == -2) == !pass) draw_mark(&g_mark[i], 0);
     if (g_hover >= 0) { draw_mark(&g_mark[g_hover], 1); draw_tooltip(&g_mark[g_hover]); }
     *rgba = g_img;
     return 1;

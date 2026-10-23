@@ -15,6 +15,7 @@
 #include "nds.h"
 #include "session.h"
 #include "farm.h"
+#include "cheats.h"
 
 typedef struct { uint64_t frame; uint32_t keys; int touch; int tx, ty; uint32_t len; } Press;
 
@@ -245,6 +246,7 @@ void input_update(void) {
         session_unpack(v, &g_keys_down, &g_touch_down, &g_touch_x, &g_touch_y);
     }
     record(g_keys_down, g_touch_down, g_touch_x, g_touch_y);
+    cheats_frame();                                     /* the Cheats menu: the codes that are on */
 }
 
 /* Register views (active-low). */

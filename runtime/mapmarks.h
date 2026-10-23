@@ -6,6 +6,7 @@
 
 extern int g_mapmarks;             /* show them */
 extern int g_mapmarks_opened;      /* ...also the ones already emptied or done (greyed) */
+extern int g_mapmarks_monsters;    /* the monsters walking nearby, as red dots */
 
 #define MAPMARKS_R 3               /* overlay pixels per DS pixel */
 #define MAPMARKS_W (256 * MAPMARKS_R)
