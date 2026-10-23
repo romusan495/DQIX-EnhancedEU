@@ -1315,7 +1315,7 @@ static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
 static void present_gl(void) {
     auto_scale();
     g_wide_side = g_classic ? 0 : wide_side_target();            /* the next 3D frames (only the picture changes) */
-    g_sign_move = g_minimap && g_map_shown && g_wide_side > 0;   /* the map in the top right: the "X Menu" sign at the bottom right */
+    g_sign_move = g_minimap && g_wide_side > 0;                  /* the map's corner: the "X Menu" sign at the bottom right (even with the map hidden) */
     {   /* ...and what the game counts as in view (not in a session: every PC must decide alike) */
         static int off = -1; if (off < 0) off = getenv("DQIX_NO_WIDE_CULL") != NULL;
         g_wide_cull = off || session_requested() ? 0 : g_wide_side;
@@ -2242,6 +2242,7 @@ static void hotkey(int a) {
     switch (a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;
+    case CA_MINIMAP: do_action(MI_MINIMAP); notice(g_map_shown ? "Map shown" : "Map hidden"); break;
     case CA_WINSIZE: do_action(MI_SIZE1 + g_scale % 4); break;
     case CA_RES3D:
         if (g_gl && !g_classic) {                                /* 1x 2x 3x 4x 6x 8x Auto */
