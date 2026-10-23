@@ -1459,7 +1459,10 @@ static void menu_sync(void) {
     menu_check(MI_MAPMONSTERS, g_mapmarks_monsters); menu_enable(MI_MAPMONSTERS, g_gl && g_mapmarks);
     for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
     menu_check(MI_SAVEBAK, g_save_backups);
-    for (int i = 0; i < cheats_count(); i++) { menu_check(MI_CHEAT0 + i, cheats_on(i)); menu_enable(MI_CHEAT0 + i, !session_requested()); }
+    for (int i = 0; i < cheats_count(); i++) {
+        menu_check(MI_CHEAT0 + i, cheats_on(i)); menu_enable(MI_CHEAT0 + i, !session_requested());
+        if (cheats_max(i)) menu_set_text(MI_CHEAT0 + i, cheats_name(i));       /* with the chosen number */
+    }
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
@@ -2131,6 +2134,8 @@ static void do_action(int id) {
         info_box(SDL_MESSAGEBOX_INFORMATION, "Cheats",
             "Action Replay codes, the ones made for this ROM's version (USA or European): tick one to turn it on, tick it again to turn it off. "
             "They are all off at first, and never run while playing with friends.\n\n"
+            "The ones with a number (gold, mini medals, skill points) ask for it when you tick them: "
+            "to change it, untick the cheat and tick it again.\n\n"
             "What they change goes into your adventure log when you save (gold, skill points, vocations...): "
             "save to another slot first, or keep Game > Keep a copy of every save on.\n\n"
             "Only the codes that change the game's data are here: on PC the game's code is compiled, so the codes that rewrite "
@@ -2201,7 +2206,22 @@ static void do_action(int id) {
     default:
         if (id >= MI_FONT0 && id < MI_FONT0 + N_FONTS) { snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont); }
         else if (id >= MI_SHELLC0 && id < MI_SHELLC0 + N_SHELLS) { g_opt.shell_color = id - MI_SHELLC0; g_color_chosen = 1; relayout = 1; }
-        else if (id >= MI_CHEAT0 && id < MI_CHEAT0 + cheats_count()) cheats_set(id - MI_CHEAT0, !cheats_on(id - MI_CHEAT0));
+        else if (id >= MI_CHEAT0 && id < MI_CHEAT0 + cheats_count()) {
+            int i = id - MI_CHEAT0;
+            if (cheats_max(i) && !cheats_on(i)) {           /* turning on one with a number: which number */
+                char prompt[200], name[120];
+                snprintf(name, sizeof name, "%s", cheats_name(i));
+                size_t n = strlen(name); if (n > 3 && !strcmp(name + n - 3, "...")) name[n - 3] = 0;
+                snprintf(prompt, sizeof prompt, "%s\n\nType the number you want, from 0 to %d:", name, cheats_max(i));
+                char* t = g_win ? ask_text(g_win, "Cheats", prompt) : NULL;
+                if (!t) return;                              /* Skip: stays off */
+                long v = -1; for (char* c = t; *c; c++) if (*c >= '0' && *c <= '9' && v < 100000000) v = (v < 0 ? 0 : v * 10) + (*c - '0');   /* "50 000", "50.000 G" */
+                free(t);
+                if (v > cheats_max(i)) v = cheats_max(i);
+                if (v >= 0) cheats_set_value(i, (int)v);     /* nothing typed: the number it had */
+            }
+            cheats_set(i, !cheats_on(i));
+        }
         else return;
     }
     if (relayout && g_win) {                                   /* a new window size only when one was asked for */

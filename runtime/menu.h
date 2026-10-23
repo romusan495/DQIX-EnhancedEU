@@ -45,6 +45,7 @@ void menu_init_second(SDL_Window* win);
 void menu_show_second(int on);
 void menu_check(int id, int on);
 void menu_enable(int id, int on);
+void menu_set_text(int id, const char* text);   /* UTF-8 */
 int menu_command(const SDL_Event* e);         /* the chosen item, or 0 */
 
 /* Size of one pixel of the monitor the window is on, in millimetres, from

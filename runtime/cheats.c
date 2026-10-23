@@ -14,7 +14,10 @@
  * see rom_is_eur), checked in both ROMs' memory with the same save; a code
  * written for one version only says so in its own column. The party
  * versions of the hero's codes repeat them for each member's record, 0x964
- * bytes apart (as the guide's "All Party Members x500 Skill Points" does). */
+ * bytes apart (as the guide's "All Party Members x500 Skill Points" does).
+ *
+ * A cheat that sets a number (gold, mini medals...) lets the player choose
+ * it: VVVVVVVV in its codes is that number, %s in its name shows it. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,15 +30,17 @@ typedef struct {
     const char* name;     /* the menu */
     const char* usa;      /* the codes: "XXXXXXXX YYYYYYYY" pairs */
     const char* eur;      /* NULL: the same as the USA's; "": none for this version */
+    int max;              /* > 0: the player chooses the number (0..max), first the code's own */
+    int def;
 } Cheat;
 
 static const Cheat CHEATS[] = {
-    { "gold", "Gold: always 9,999,999",
-      "020F6D48 0098967F", NULL },
-    { "bank", "Gold in the bank: always 9,999,999",
-      "020F6D44 0098967F", NULL },
-    { "medals", "Mini medals: always 999",
-      "020F6D50 000003E7", NULL },
+    { "gold", "Gold: always %s...",
+      "020F6D48 VVVVVVVV", NULL, 9999999, 9999999 },
+    { "bank", "Gold in the bank: always %s...",
+      "020F6D44 VVVVVVVV", NULL, 9999999, 9999999 },
+    { "medals", "Mini medals: always %s...",
+      "020F6D50 VVVVVVVV", NULL, 999, 999 },
     { "hp", "Party: HP stay full in battle",
       "A20F5510 00000000 DA000000 020F5510 D7000000 020F550C D2000000 00000000 "
       "A20F4BAC 00000000 DA000000 020F4BAC D7000000 020F4BA8 D2000000 00000000 "
@@ -46,8 +51,8 @@ static const Cheat CHEATS[] = {
       "A20F4BAE 00000000 DA000000 020F4BAE D7000000 020F4BAA D2000000 00000000 "
       "A20F424A 00000000 DA000000 020F424A D7000000 020F4246 D2000000 00000000 "
       "A20F38E6 00000000 DA000000 020F38E6 D7000000 020F38E2 D2000000 00000000", NULL },
-    { "skill", "Party: 500 skill points to spend (press Select)",
-      "94000130 FFFB0000 C0000000 00000003 120F3DB0 000001F4 DC000000 00000964 D2000000 00000000", NULL },
+    { "skill", "Party: %s skill points to spend (press Select)...",
+      "94000130 FFFB0000 C0000000 00000003 120F3DB0 VVVVVVVV DC000000 00000964 D2000000 00000000", NULL, 999, 500 },
     { "jobs", "Every vocation unlocked",
       "12108AF8 00000FC9", NULL },
     { "tricks", "Every party trick learnt",
@@ -65,16 +70,35 @@ static const Cheat CHEATS[] = {
 static int g_n = -1;               /* this version's cheats: CHEATS[g_list[i]] */
 static int g_list[N_ALL];
 static int g_on[N_ALL];
+static int g_val[N_ALL];           /* the chosen number (cheats with one) */
+static int g_dirty = 1;            /* the codes must be read again (cheats_frame) */
 
 static const char* codes_of(const Cheat* c) { return rom_is_eur() && c->eur ? c->eur : c->usa; }
 static void list_init(void) {
     if (g_n >= 0) return;
     g_n = 0;
-    for (int i = 0; i < N_ALL; i++) if (*codes_of(&CHEATS[i])) g_list[g_n++] = i;
+    for (int i = 0; i < N_ALL; i++) if (*codes_of(&CHEATS[i])) { g_val[g_n] = CHEATS[i].def; g_list[g_n++] = i; }
 }
 int cheats_european(void) { return rom_is_eur(); }
 int cheats_count(void) { list_init(); return g_n; }
-const char* cheats_name(int i) { list_init(); return i >= 0 && i < g_n ? CHEATS[g_list[i]].name : ""; }
+const char* cheats_name(int i) {
+    static char names[N_ALL][120];
+    list_init();
+    if (i < 0 || i >= g_n) return "";
+    char num[16] = "", grouped[24]; int n = snprintf(num, sizeof num, "%d", g_val[i]), k = 0;
+    for (int j = 0; j < n; j++) { if (j && (n - j) % 3 == 0) grouped[k++] = ','; grouped[k++] = num[j]; }   /* 9,999,999 */
+    grouped[k] = 0;
+    snprintf(names[i], sizeof names[i], CHEATS[g_list[i]].name, grouped);
+    return names[i];
+}
+int cheats_max(int i) { list_init(); return i >= 0 && i < g_n ? CHEATS[g_list[i]].max : 0; }
+int cheats_value(int i) { list_init(); return i >= 0 && i < g_n ? g_val[i] : 0; }
+void cheats_set_value(int i, int v) {
+    list_init();
+    if (i < 0 || i >= g_n || v < 0 || v > CHEATS[g_list[i]].max) return;
+    g_val[i] = v; g_dirty = 1;
+    LOG_INFO("cheat %s: %d\n", CHEATS[g_list[i]].key, v);
+}
 const char* cheats_key(int i) { list_init(); return i >= 0 && i < g_n ? CHEATS[g_list[i]].key : ""; }
 int cheats_on(int i) { list_init(); return i >= 0 && i < g_n && g_on[i]; }
 void cheats_set(int i, int on) {
@@ -89,7 +113,11 @@ void cheats_from_list(const char* list) {
     for (int i = 0; i < g_n; i++) {
         const char* k = CHEATS[g_list[i]].key; size_t n = strlen(k); int on = 0;
         for (const char* p = list; (p = strstr(p, k)); p += n)
-            if ((p == list || p[-1] == ',' || p[-1] == ' ') && (p[n] == 0 || p[n] == ',' || p[n] == ' ' || p[n] == '\r' || p[n] == '\n')) { on = 1; break; }
+            if ((p == list || p[-1] == ',' || p[-1] == ' ') && (p[n] == 0 || p[n] == ',' || p[n] == ' ' || p[n] == '=' || p[n] == '\r' || p[n] == '\n')) {
+                on = 1;
+                if (p[n] == '=') cheats_set_value(i, atoi(p + n + 1));       /* gold=50000 */
+                break;
+            }
         g_on[i] = on;
     }
 }
@@ -97,7 +125,8 @@ void cheats_to_list(char* out, int size) {
     list_init();
     int len = 0; out[0] = 0;
     for (int i = 0; i < g_n && len < size; i++)
-        if (g_on[i]) len += snprintf(out + len, size - len, "%s%s", len ? "," : "", CHEATS[g_list[i]].key);
+        if (g_on[i]) len += CHEATS[g_list[i]].max ? snprintf(out + len, size - len, "%s%s=%d", len ? "," : "", CHEATS[g_list[i]].key, g_val[i])
+                                                  : snprintf(out + len, size - len, "%s%s", len ? "," : "", CHEATS[g_list[i]].key);
 }
 
 /* ---------------------------------------------------------------- the Action Replay DS code types */
@@ -183,13 +212,22 @@ static void run(const uint32_t* code, int n) {
 }
 
 void cheats_frame(void) {
-    static uint32_t words[N_ALL][96]; static int nwords[N_ALL]; static int parsed;
+    static uint32_t words[N_ALL][96]; static int nwords[N_ALL]; static int env;
     list_init();
-    if (!parsed) {
-        parsed = 1;
-        for (int i = 0; i < g_n; i++) nwords[i] = parse(codes_of(&CHEATS[g_list[i]]), words[i], 96);
-        const char* e = getenv("DQIX_CHEATS");           /* tests: the keys of the ones to turn on */
+    if (!env) {
+        env = 1;
+        const char* e = getenv("DQIX_CHEATS");           /* tests: the keys of the ones to turn on (gold=500...) */
         if (e) cheats_from_list(e);
+    }
+    if (g_dirty) {                                       /* the codes, with the chosen numbers in them */
+        g_dirty = 0;
+        for (int i = 0; i < g_n; i++) {
+            char text[1024], num[12]; const char* c = codes_of(&CHEATS[g_list[i]]); const char* v;
+            snprintf(num, sizeof num, "%08X", (unsigned)g_val[i]);
+            snprintf(text, sizeof text, "%s", c);
+            while ((v = strstr(text, "VVVVVVVV"))) memcpy(text + (v - text), num, 8);
+            nwords[i] = parse(text, words[i], 96);
+        }
     }
     if (session_requested()) return;
     for (int i = 0; i < g_n; i++) if (g_on[i]) run(words[i], nwords[i]);
