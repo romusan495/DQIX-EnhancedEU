@@ -2,7 +2,7 @@
 
 Tenu par le rôle Intégration (voir `docs/roles/integration.md`). Les autres
 threads envoient leur compte rendu au coordinateur, qui relaie. Dernière mise à
-jour : 2026-10-22.
+jour : 2026-10-23.
 
 États : `à faire` · `en cours` · `en revue` · `fusionné` · `en pause` · `abandonné`.
 
@@ -12,18 +12,28 @@ jour : 2026-10-22.
 |---|---|---|---|---|---|---|
 | Écran unique et widescreen en combat | Dev | [Dev] Écran unique et combat | `ecran-unique`, PR #2 | fusionné | — | Dans le dossier de jeu depuis le 21/10 |
 | Caméra dézoomée en combat | Dev | [Dev] Écran unique et combat | — | à faire | — | Plan avant de coder |
-| Marqueurs sur la carte : coffres, pots, tonneaux (phase 1) | Dev | [Dev] Écran unique et combat | `claude/project-thread-6dtla9`, PR #8 | fusionné | — | Test Windows dans le dossier de jeu |
-| Carte : bibliothèques et contenu des bâtiments (phase 2) | Dev | [Dev] Écran unique et combat | `claude/project-thread-6dtla9`, PR #9 | fusionné | PR #8 | Test Windows dans le dossier de jeu |
-| Carte : marqueurs de quêtes avec leur état (phase 3) | Dev | [Dev] Écran unique et combat | `claude/project-thread-6dtla9`, PR #10 | fusionné | PR #9 | Test Windows dans le dossier de jeu |
+| Marqueurs sur la carte : coffres, pots, tonneaux (phase 1) | Dev | [Dev] Écran unique et combat | `claude/project-thread-6dtla9`, PR #8 | fusionné | — | Dans le dossier de jeu (v31.1) |
+| Carte : bibliothèques et contenu des bâtiments (phase 2) | Dev | [Dev] Écran unique et combat | `claude/project-thread-6dtla9`, PR #9 | fusionné | PR #8 | Dans le dossier de jeu (v31.1) |
+| Carte : marqueurs de quêtes avec leur état (phase 3) | Dev | [Dev] Écran unique et combat | `claude/project-thread-6dtla9`, PR #10 | fusionné | PR #9 | Dans le dossier de jeu (v31.1) |
 | Textures HD méthode 5 (outil) | Graph | [Graph] Textures HD et interface | `textures-hd-melange`, PR #1 | fusionné | — | Installer les textures restantes |
 | Style de fenêtres « Minimal » | Graph | [Graph] Textures HD et interface | `graph/fenetres-minimal`, PR #5 | fusionné | — | Retour de Romuald en jeu |
-| HUD de combat « Minimal » (cartes transparentes, couleur du membre) | Graph | [Graph] Textures HD et interface | `graph/combat-minimal`, PR #7 | fusionné | PR #5 | Test Windows dans le dossier de jeu |
+| HUD de combat « Minimal » (cartes transparentes, couleur du membre) | Graph | [Graph] Textures HD et interface | `graph/combat-minimal`, PR #7 | fusionné | PR #5 | Dans le dossier de jeu (v31.1) |
+| Icônes de métiers modernes (sprites HD) | Graph | [Graph] Textures HD et interface | `graph/icones-metiers`, PR #12 | fusionné | — | Dans le dossier de jeu |
+| HUD de combat : panneaux en bas à gauche, fenêtres XP/niveau | Graph | [Graph] Textures HD et interface | `graph/combat-disposition`, PR #13 | fusionné | PR #7 | Dans le dossier de jeu |
+| Style Minimal : contour blanc conservé | Graph | [Graph] Textures HD et interface | `graph/contour-blanc`, PR #24 | fusionné | PR #5 | Dans le dossier de jeu (v31.4) |
+| Réglages par défaut du projet | Dev | [Dev] Réglages par défaut | `claude/project-thread-7yvhih`, PR #15 | fusionné | — | Dans le dossier de jeu (v31.4) |
+| Widescreen en mode Classic | Dev | [Dev] Bugs signalés | `dev/widescreen-classic`, PR #16 | fusionné | — | Dans le dossier de jeu (v31.4) |
+| Rapport de bug F10 | Dev | [Dev] Bugs signalés | `dev/rapport-f10`, PR #17 | fusionné | — | Dans le dossier de jeu (v31.4) |
+| Modern : vitesse des combats x2/x3, monstres sur la carte, copies de sauvegarde, correctif farm d'or | Dev | [Dev] Idées QoL inspirées de Final Fantasy | `claude/project-thread-vewvl8`, PR #19 | fusionné | — | Dans le dossier de jeu (v31.4) |
+| Menu Cheats Action Replay, valeurs personnalisées | Dev | [Dev] Menu de cheats Action Replay | `claude/project-thread-yv3b7m`, PR #20 et #22 | fusionné | PR #19 | Dans le dossier de jeu (v31.4) |
+| Mini-carte, touche M/R3 | Dev | [Dev] Mini-carte | `claude/project-thread-6h3zvz`, PR #21, #23, #28 | fusionné | — | #28 pas encore dans le dossier de jeu |
+| Carte : plan des pièces à l'intérieur des bâtiments | Dev | [Dev] Mini-carte | `claude/project-thread-6h3zvz`, PR #26 et #27 | fusionné | — | Pas encore dans le dossier de jeu |
 | Polices PC dans les dialogues (9 polices) | Langues | [Graph] Textures HD et interface (ex « Moderniser ») | `dialogues-police-pc`, PR #3 | fusionné | — | Retour de Romuald en jeu |
 | Menu Langue EN/FR/DE/IT/ES | Langues | à créer | — | à faire | — | Vérifier ce que fait déjà le menu Langue du commit EU |
 | Wi-Fi / DQVC avec la ROM EU | Dev | à créer | — | à faire (non testé) | — | Tester avec la ROM EU |
 | BUILD : « cmp: commande introuvable » (`tools/build-game.sh:99`) | Intégration | à créer | — | à faire | — | Installer `diffutils` dans MSYS2 ou éviter `cmp` ; le build réussit quand même |
 | `tests/gpu3d/t3d.c` ne compile plus (`gpu3d_init` non déclaré) | Dev | à créer | — | à faire | — | Mettre le test à jour avec l'API actuelle de `gpu3d.c` |
-| Releases GitHub hebdomadaires (v31.1, v31.2...) | Intégration | [Intégration] Releases hebdomadaires | `claude/project-thread-on5r0q`, PR #6 et #11 (notes v31.1) (touche `runtime/update.c/.h`, `version.h` : fichiers Dev, accord du coordinateur) | fusionné | — | Tag `v31.1` + branche `stable` + release, avec l'accord de Romuald |
+| Releases GitHub hebdomadaires (v31.1, v31.2...) | Intégration | [Intégration] Releases hebdomadaires | `claude/project-thread-on5r0q`, PR #6 et #11 (notes v31.1) (touche `runtime/update.c/.h`, `version.h` : fichiers Dev, accord du coordinateur) | fusionné | — | v31.1 à v31.4 publiées (PR #14, #18, #25), branche `stable` |
 | Réorganisation Claude Code | Intégration | [Orga] Réorganisation | `orga/claude-config`, PR #4 | fusionné | — | — |
 
 ## Fichiers partagés touchés par des branches
@@ -36,11 +46,13 @@ jour : 2026-10-22.
 | `runtime/gpu2d.c` | #5, #7 | Fenêtres et HUD Minimal |
 | `runtime/update.c/.h`, `version.h` | `claude/project-thread-on5r0q` #6 | Releases GitHub |
 | `runtime/mapmarks.c/.h` (nouveau) | `claude/project-thread-6dtla9` #8, #9, #10 | Marqueurs de carte |
-| `runtime/gl_render.c`, `build.mk`, `tools/build-game.sh` | `graph/icones-metiers` (pas encore poussée) | `draw_sprites` dans `gl_compose` et crochet de sprites dans le pack de textures (`dump-2d/` ignoré par le scan) ; dépendance `runtime/hdsprite.h` ; appel de `tools/job_icons.py` vers `game/textures/jobs` |
-| `runtime/frontend_sdl.c` | `graph/combat-disposition` (pas encore poussée) | Disposition du HUD de combat, fenêtres d'expérience et de montée de niveau |
-| `runtime/gl_render.c`, `runtime/gpu2d.c` | `graph/contour-blanc` (pas encore poussée) | Style Minimal : contour blanc conservé |
-| `runtime/frontend_sdl.c` | future `dev/widescreen-classic` (locale) | Bug d'affichage widescreen en mode Classic. Attention : `graph/combat-disposition` touche aussi ce fichier |
-| `runtime/frontend_sdl.c`, `runtime/gpu2d.c`, bientôt `runtime/menu_win32.c` | `claude/project-thread-7yvhih` (réglages par défaut, locale) | Valeurs initiales, `settings_load/save`, `settings_version` ; `g_winstyle = 1` par défaut. Conflits probables avec `dev/widescreen-classic` et les branches `graph/` : fusionner l'une après l'autre en résolvant les conflits |
+| `runtime/gl_render.c`, `gpu2d.c`, `build.mk`, `tools/build-game.sh` | `graph/icones-metiers` #12 | `draw_sprites` dans `gl_compose`, sprites HD du pack de textures (`runtime/hdsprite.h`), `tools/job_icons.py` vers `game/textures/jobs` |
+| `runtime/frontend_sdl.c` | #13, #15, #16, #17, #19, #20, #21, #22, #23, #24, #26, #28 | Presque toutes les fonctionnalités passent par ce fichier : à fusionner une branche à la fois, en reprenant `main` avant chaque PR |
+| `runtime/menu_win32.c`, `menu.h` | #15, #19, #20, #21, #22, #23, #26 | Entrées des menus Modern, Cheats et carte |
+| `runtime/gpu2d.c` | #15 (`g_winstyle = 1` par défaut), #24 (contour blanc) | Style des fenêtres |
+| `runtime/gpu3d.c`, `gpu3d.h`, `controls.c/.h` | #21, #23 | Mini-carte et touche M/R3 |
+| `runtime/mapmarks.c/.h` | #19, #26, #27 | Monstres sur la carte, plans des pièces |
+| `runtime/version.h` | #14, #18, #25 | Numéros de version des releases |
 
 ## Décisions
 
