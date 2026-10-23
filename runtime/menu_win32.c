@@ -170,7 +170,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
         item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
     }
     sep(modern);
-    item(modern, MI_MINIMAP, L"Map in the top right co&rner (one window, gone during battles)");
+    item(modern, MI_MINIMAP, L"Map in the top right co&rner (one window, gone during battles)\tM");
     HMENU ms = sub(modern, L"Map si&ze");
     item(ms, MI_SSIZE0, L"Small");
     item(ms, MI_SSIZE0 + 1, L"Medium");

@@ -2222,6 +2222,7 @@ static void hotkey(int a) {
     switch (a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;
+    case CA_MINIMAP: do_action(MI_MINIMAP); notice(g_map_shown ? "Map shown" : "Map hidden"); break;
     case CA_WINSIZE: do_action(MI_SIZE1 + g_scale % 4); break;
     case CA_RES3D:
         if (g_gl && !g_classic) {                                /* 1x 2x 3x 4x 6x 8x Auto */
