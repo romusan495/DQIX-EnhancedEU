@@ -295,6 +295,7 @@ DQIX_MODE=enhanced / DQIX_NO_SETTINGS=1        window build: force a mode / igno
 DQIX_CHEATS=gold,hp                            turn those cheats on (keys as in settings.ini, cheats.c)
 DQIX_SKIP_INTRO=0/1/2                          Modern > Start: logos as on a DS / skipped / the opening movie too (bootskip.c)
 DQIX_CHEAT_CODE="94000130 FDFF0000 ..."        one more Action Replay code, run after the cheats every frame
+DQIX_MENU_TEST=frame,keys                      in-game menu test: open it at that frame, keys U D O B, ',' saves menuN.ppm
 ```
 
 ## Layout
@@ -327,7 +328,8 @@ tools/dqvc_build.py    builds wfc/YDQE/dqvc.txt (DQVC's weekly stock) from saved
 third_party/libslirp   user-mode network stack (BSD licence, as vendored by melonDS)
 runtime/input.c        DS buttons / touch from the frontend or a script
 runtime/frontend_sdl.c window, input, audio, pacing, settings (SDL2)
-runtime/menu_win32.c   the menu bar (Windows)
+runtime/menu_win32.c   the menu tree (menu.h, every platform) and the menu bar (Windows)
+runtime/gamemenu.c     the in-game menu (Esc / PS button): the same tree drawn over the game
 runtime/gl_render.c    OpenGL: Enhanced 3D, composition, the DS Lite screen + console
 runtime/frontend_none.c headless frontend (tests)
 runtime/report.c       F10 / crash reports (inputs, saves, screenshot, log)
