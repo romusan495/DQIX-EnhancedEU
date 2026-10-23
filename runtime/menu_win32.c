@@ -38,6 +38,8 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(game, MI_MUTE, L"&Mute");
     item(game, MI_CONTROLS_EDIT, L"&Controls...");
     sep(game);
+    item(game, MI_SAVEBAK, L"&Keep a copy of every save (save-backups folder)");
+    sep(game);
     item(game, MI_SHOT, L"Save &screenshot\tF12");
     item(game, MI_REPORT, L"Save &bug report\tF10");
     sep(game);
@@ -199,6 +201,12 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     sep(modern);
     item(modern, MI_MAPMARKS, L"&Map: mark the chests, bookshelves and quests (the mouse over one: what it holds)");
     item(modern, MI_MAPMARKS_OPENED, L"Map: also mark the ones already &emptied or done (greyed)");
+    item(modern, MI_MAPMONSTERS, L"Map: show the m&onsters walking nearby (red dots)");
+    sep(modern);
+    HMENU bsp = sub(modern, L"&Battle speed");
+    item(bsp, MI_BSPEED1, L"&Normal");
+    item(bsp, MI_BSPEED1 + 1, L"&2x");
+    item(bsp, MI_BSPEED1 + 2, L"&3x");
     sep(modern);
     HMENU farm = sub(modern, L"Farm &gold by itself");
     item(farm, MI_FARM, L"&Farm here now\tCtrl+G");

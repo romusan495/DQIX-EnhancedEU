@@ -79,6 +79,8 @@ int sound_chan_busy(int n);
 uint32_t sound_read(int16_t* dst, uint32_t frames);
 uint32_t sound_buffered(void);
 void sound_discard(void);                   /* GXFIFO interrupt condition (level) */          /* 3D registers 0x600-0x6A3 */
+extern int g_save_backups;               /* keep a copy of every save (card.c) */
+void sound_set_speed(int n);             /* Modern > Battle speed: the game runs n times faster */
 void gx_write(uint32_t off, uint32_t v); /* geometry FIFO / command ports 0x400-0x5FF, GXSTAT */
 uint32_t vram_bank_size(int b);
 uint8_t  vram_bank_cnt(int b);           /* its VRAMCNT value */
