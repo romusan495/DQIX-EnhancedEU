@@ -56,6 +56,7 @@ jour : 2026-10-23.
 | `runtime/frontend_sdl.c` | PR #29 (confirmation avant de quitter) | Fusionnée |
 | `runtime/frontend_sdl.c`, `menu_win32.c`, `card.c`, `input.c`, `menu.h`, nouveau `bootskip.c` | `claude/project-thread-9e00md` ([Dev] Vers un vrai jeu PC, démarrage direct), en cours | Conflit probable sur `frontend_sdl.c` avec [Dev] Mini-carte (fiches d'objets, en cours) |
 | `runtime/frontend_sdl.c`, `mapmarks.c`, `mapmarks.h` | `claude/project-thread-6h3zvz` ([Dev] Mini-carte, correctif des fiches d'objets, 7cd0b23), pas encore poussée | Conflit probable sur `frontend_sdl.c` avec `claude/project-thread-9e00md` |
+| `runtime/frontend_sdl.c`, `menu_win32.c` (le menu devient un arbre portable, la barre Windows est construite depuis lui), `gl_render.c` (`gl_set_menu`, dessin par-dessus l'image), `build.mk` (nouveau `runtime/gamemenu.c`) | `claude/project-thread-9e00md` ([Dev] Vers un vrai jeu PC : menu d'options en jeu, Échap + bouton PS, 0747191), pas encore poussée | Gros changement de `menu_win32.c` : conflits probables avec toute branche qui ajoute des entrées de menu ; la fusionner tôt et faire reprendre `main` aux autres |
 
 ## Décisions
 
