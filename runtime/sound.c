@@ -260,6 +260,19 @@ static u32 g_mix_cycles;
 static int16_t g_out[OUT_N * 2];
 static volatile uint32_t g_out_w, g_out_r;
 
+/* Modern > Battle speed: the game runs N times faster, so N times the sound
+ * comes out. One piece in N is kept (62 ms each), each fading into the next
+ * over 8 ms: the music keeps its pitch and skips ahead. */
+#define GRAIN 2048
+#define FADE  256
+static volatile int g_speed = 1;
+static uint32_t g_grain_at;                                         /* where in the N pieces this sample falls */
+static int32_t g_tail[FADE][2]; static int g_have_tail;            /* the end of the last piece kept, to fade from */
+void sound_set_speed(int n) {
+    if (n < 1) n = 1;
+    if (n != g_speed) { g_speed = n; g_grain_at = 0; g_have_tail = 0; }
+}
+
 static void mix_one(void) {
     s32 left = 0, right = 0, lo = 0, ro = 0;
     u32 cnt = IO7_32_(0x500);
@@ -296,6 +309,16 @@ static void mix_one(void) {
     ro = (s32)(((int64_t)ro * mv) >> 7) >> 8;
     if (lo < -0x8000) lo = -0x8000; else if (lo > 0x7FFF) lo = 0x7FFF;
     if (ro < -0x8000) ro = -0x8000; else if (ro > 0x7FFF) ro = 0x7FFF;
+    if (g_speed > 1) {
+        uint32_t t = g_grain_at++;
+        if (g_grain_at >= (uint32_t)GRAIN * (uint32_t)g_speed) g_grain_at = 0;
+        if (t >= GRAIN + FADE) return;                              /* skipped */
+        if (t >= GRAIN) { g_tail[t - GRAIN][0] = lo; g_tail[t - GRAIN][1] = ro; g_have_tail = t == GRAIN + FADE - 1; return; }
+        if (t < FADE && g_have_tail) {
+            lo = (lo * (s32)t + g_tail[t][0] * (s32)(FADE - t)) / FADE;
+            ro = (ro * (s32)t + g_tail[t][1] * (s32)(FADE - t)) / FADE;
+        }
+    }
     static int bits16 = -1; if (bits16 < 0) bits16 = getenv("DQIX_AUDIO16") != NULL;
     if (!bits16) { lo &= ~0x3F; ro &= ~0x3F; }                     /* the DS's DAC is 10-bit */
     uint32_t w = g_out_w;

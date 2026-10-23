@@ -2,7 +2,16 @@
  * Registers 0x040001A0-0x040001AF live in g_io and are shared by the CPUs. */
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "nds.h"
+#ifdef _WIN32
+#include <direct.h>
+#define make_dir(d) _mkdir(d)
+#else
+#define make_dir(d) mkdir(d, 0755)
+#endif
 
 /* ---------------------------------------------------------------- ROM */
 static uint8_t g_card_buf[0x4000];
@@ -131,8 +140,63 @@ void backup_write_now(FILE* f) { fwrite(g_backup, 1, g_backup_size, f); }
 
 const uint8_t* backup_image(uint32_t* size) { *size = g_backup_size; return g_backup; }
 
+/* Game > Keep a copy of every save: when the game starts writing a new save
+ * (nothing written for 10 seconds before), the file as it was (the last
+ * whole save) is copied to save-backups next to it, named by when it was
+ * made; the last BACKUPS_KEPT are kept. */
+int g_save_backups;
+#define BACKUPS_KEPT 20
+static time_t g_last_write;
+
+static int by_name(const void* a, const void* b) { return strcmp(*(char* const*)a, *(char* const*)b); }
+
+static void backup_copy(void) {
+    struct stat st;
+    if (stat(g_backup_path, &st) != 0 || st.st_size <= 0) return;   /* nothing saved yet */
+    char dir[1100], name[64], path[1200];
+    const char* slash = strrchr(g_backup_path, '/'), *bs = strrchr(g_backup_path, '\\');
+    if (bs > slash) slash = bs;
+    snprintf(dir, sizeof dir, "%.*ssave-backups", slash ? (int)(slash - g_backup_path + 1) : 0, g_backup_path);
+    make_dir(dir);
+    const char* base = slash ? slash + 1 : g_backup_path;
+    const char* dot = strrchr(base, '.');
+    int blen = dot ? (int)(dot - base) : (int)strlen(base);
+    struct tm* tm = localtime(&st.st_mtime);
+    char when[32] = "unknown";
+    if (tm) strftime(when, sizeof when, "%Y-%m-%d_%H-%M-%S", tm);
+    snprintf(name, sizeof name, "%.*s %s.sav", blen > 30 ? 30 : blen, base, when);
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    FILE* in = fopen(g_backup_path, "rb");
+    if (!in) return;
+    FILE* out = fopen(path, "wb");
+    if (!out) { fclose(in); LOG_WARN("save: cannot write the copy %s\n", path); return; }
+    char buf[8192]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, out);
+    fclose(in); fclose(out);
+    LOG_INFO("save: kept a copy of the last save in %s\n", path);
+    /* only the newest: the names sort by date */
+    DIR* d = opendir(dir);
+    if (!d) return;
+    char* list[256]; int nl = 0;
+    struct dirent* e;
+    while ((e = readdir(d)) && nl < 256) {
+        size_t l = strlen(e->d_name);
+        if (l > (size_t)blen + 5 && !strncmp(e->d_name, base, (size_t)blen) && e->d_name[blen] == ' ' && !strcmp(e->d_name + l - 4, ".sav"))
+            list[nl++] = strdup(e->d_name);
+    }
+    closedir(d);
+    qsort(list, (size_t)nl, sizeof list[0], by_name);
+    for (int i = 0; i < nl; i++) {
+        if (i < nl - BACKUPS_KEPT) { snprintf(path, sizeof path, "%s/%s", dir, list[i]); remove(path); }
+        free(list[i]);
+    }
+}
+
 void backup_flush(void) {
     if (!g_backup_dirty || !g_backup_path[0]) return;
+    time_t now = time(NULL);
+    if (g_save_backups && now - g_last_write >= 10) backup_copy();
+    g_last_write = now;
     FILE* f = fopen(g_backup_path, "wb");
     if (!f) { LOG_WARN("save: cannot write %s\n", g_backup_path); return; }
     fwrite(g_backup, 1, g_backup_size, f);
