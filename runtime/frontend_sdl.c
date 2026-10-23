@@ -67,6 +67,9 @@ static int g_wide_pop = 0;                                        /* widescreen:
 static int g_minimap = 1;                                         /* widescreen: the map small in a corner of the one window (no second window), not in battles */
 static int g_map_shown = 1;                                       /* ...shown (Modern > Map in the top right corner) */
 static float g_mini_vis = 1.0f;                                   /* ...1 shown, 0 gone (the game's 2D under it: a menu) */
+/* An adventure is loaded (the field's characters, farm.c): before it (the
+ * logos, the opening movie, the title) the minimap isn't shown. */
+static int in_adventure(void) { uint32_t v; memcpy(&v, &g_main_ram[0x0F33E0], 4); return v != 0; }
 #define MINIMAP_GAP 0                                             /* ...right in the corner (the field's "X Menu" sign moves to the bottom: g_sign_dy) */
 static int g_smooth = 1;                                          /* Enhanced: smooth (filtered) textures */
 static int g_smooth2d = 1, g_texup = 1, g_outline = 1;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
@@ -292,6 +295,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (which == 0) { small[2] = 128; small[3] = 96; small[0] = small[1] = 2; }   /* battles: top left, over the sky */
         else { small[0] = small[1] = 2 * t; small[2] = 256.0f / 3; small[3] = 64; }
         if (g_small_blank && t > 0.99f) small[2] = small[3] = 0;   /* black (battle intros, fades): leave the field whole */
+        if (g_minimap && !in_adventure()) small[2] = small[3] = 0;
         v->front = small == v->bot;                               /* the small one in front */
         v->alpha = 1.0f + (g_small_alpha - 1.0f) * t;            /* see-through (O) while it is over the field */
         if (g_minimap && which != 0) {                            /* the minimap: fades out while a menu is under it */
