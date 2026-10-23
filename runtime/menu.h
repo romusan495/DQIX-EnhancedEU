@@ -31,6 +31,8 @@ enum {
     MI_MAPMARKS = 340, MI_MAPMARKS_OPENED, MI_MAPMONSTERS,              /* the map: chests, pots and barrels marked, the monsters nearby (mapmarks.c) */
     MI_BSPEED1 = 350,                                                   /* battle speed: normal, 2x, 3x (+0..2) */
     MI_SAVEBAK = 360,                                                   /* keep a copy of every save (card.c) */
+    MI_CHEATS_HELP = 370,                                               /* Cheats > About these cheats */
+    MI_CHEAT0 = 700,                                                    /* Cheats: one per code (+0..cheats_count()-1, cheats.c) */
 };
 #define N_FONTS 15                                                      /* MI_FONT0 + i */
 

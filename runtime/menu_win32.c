@@ -1,6 +1,7 @@
 /* Menu bar for the game window on Windows (see menu.h). */
 #include "menu.h"
 #include "controls.h"
+#include "cheats.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -216,6 +217,15 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(farm, MI_FARM_HELP, L"&How does it work?");
     sep(modern);
     item(modern, MI_MODERN_HELP, L"&What is this?");
+    HMENU cheat = sub(g_bar, L"&Cheats");                  /* Action Replay codes for this ROM's version (cheats.c) */
+    AppendMenuW(cheat, MF_STRING | MF_GRAYED, 0, cheats_european() ? L"Codes for the European version" : L"Codes for the USA version");
+    sep(cheat);
+    for (int i = 0; i < cheats_count(); i++) {
+        wchar_t w[160];
+        if (MultiByteToWideChar(CP_UTF8, 0, cheats_name(i), -1, w, 160)) item(cheat, MI_CHEAT0 + i, w);
+    }
+    sep(cheat);
+    item(cheat, MI_CHEATS_HELP, L"&About these cheats");
     HMENU lang = sub(g_bar, L"&Language");
     item(lang, MI_LANG1, L"&English");
     item(lang, MI_LANG1 + 1, L"&Fran\u00e7ais");

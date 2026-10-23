@@ -34,6 +34,7 @@
 #include "gl_render.h"
 #include "menu.h"
 #include "farm.h"
+#include "cheats.h"
 #include "mapmarks.h"
 #include "version.h"
 #include "session.h"
@@ -501,6 +502,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "farm_fast_forward")) g_farm_fast = atoi(val) != 0;
         else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 3) g_battle_speed = v; }
         else if (!strcmp(key, "save_backups")) g_save_backups = atoi(val) != 0;
+        else if (!strcmp(key, "cheats")) cheats_from_list(val);
         else if (!strcmp(key, "map_monsters")) g_mapmarks_monsters = atoi(val) != 0;
         else if (!strcmp(key, "walk_any_direction")) g_analog_walk = atoi(val) != 0;   /* (the older analog_walk, off by default then, is ignored) */
         else if (!strcmp(key, "fullscreen")) g_fullscreen = atoi(val) != 0;
@@ -609,6 +611,9 @@ static void settings_save(void) {
     fprintf(f, "battle_speed = %d\n", g_battle_speed);
     fprintf(f, "# Game > Keep a copy of every save: the save as it was before each new one, in save-backups (the last 20): 0 or 1\n");
     fprintf(f, "save_backups = %d\n", g_save_backups);
+    {   char on[400]; cheats_to_list(on, sizeof on);
+        fprintf(f, "# Cheats: the ones turned on, by name (empty: none)\n");
+        fprintf(f, "cheats = %s\n", on); }
     fprintf(f, "# Modern > Map: the monsters walking nearby, as red dots: 0 or 1\n");
     fprintf(f, "map_monsters = %d\n", g_mapmarks_monsters);
     fprintf(f, "# 0 or 1 (F11)\n");
@@ -1449,6 +1454,7 @@ static void menu_sync(void) {
     menu_check(MI_MAPMONSTERS, g_mapmarks_monsters); menu_enable(MI_MAPMONSTERS, g_gl && g_mapmarks);
     for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
     menu_check(MI_SAVEBAK, g_save_backups);
+    for (int i = 0; i < cheats_count(); i++) { menu_check(MI_CHEAT0 + i, cheats_on(i)); menu_enable(MI_CHEAT0 + i, !session_requested()); }
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
@@ -2121,6 +2127,16 @@ static void do_action(int id) {
             "or when the game stays in a menu or conversation too long. Ctrl+G, or any button you press, stops it at once.\n\n"
             "With Fast forward while farming on, it runs as fast as your PC can.", g_win);
         break;
+    case MI_CHEATS_HELP:
+        info_box(SDL_MESSAGEBOX_INFORMATION, "Cheats",
+            "Action Replay codes, the ones made for this ROM's version (USA or European): tick one to turn it on, tick it again to turn it off. "
+            "They are all off at first, and never run while playing with friends.\n\n"
+            "What they change goes into your adventure log when you save (gold, skill points, vocations...): "
+            "save to another slot first, or keep Game > Keep a copy of every save on.\n\n"
+            "Only the codes that change the game's data are here: on PC the game's code is compiled, so the codes that rewrite "
+            "the game's instructions (walk faster, more experience...) can't work.\n\n"
+            "The codes are the public ones from Almar's Guides (almarsguides.com, Dragon Quest IX, Action Replay).", g_win);
+        break;
     case MI_LANG1: case MI_LANG1 + 1: case MI_LANG1 + 2: case MI_LANG1 + 3: case MI_LANG1 + 4: {
         int lang = id - MI_LANG1 + 1;
         if (lang == g_fw_language) break;
@@ -2185,6 +2201,7 @@ static void do_action(int id) {
     default:
         if (id >= MI_FONT0 && id < MI_FONT0 + N_FONTS) { snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont); }
         else if (id >= MI_SHELLC0 && id < MI_SHELLC0 + N_SHELLS) { g_opt.shell_color = id - MI_SHELLC0; g_color_chosen = 1; relayout = 1; }
+        else if (id >= MI_CHEAT0 && id < MI_CHEAT0 + cheats_count()) cheats_set(id - MI_CHEAT0, !cheats_on(id - MI_CHEAT0));
         else return;
     }
     if (relayout && g_win) {                                   /* a new window size only when one was asked for */
