@@ -22,7 +22,7 @@ static HMENU sub(HMENU parent, const wchar_t* text) {
     return m;
 }
 
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) {
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
     if (!SDL_GetWindowWMInfo(win, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return;
@@ -43,110 +43,126 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     sep(game);
     item(game, MI_EXIT, L"E&xit\tEsc");
 
+    /* all = 0 (the usual): only what the project's own setup uses; the rest
+     * keeps working from settings.ini (all_options = 1 shows it again) */
     HMENU gfx = sub(g_bar, L"G&raphics");
-    item(gfx, MI_CLASSIC, L"&Classic: exactly like the DS\tF5");
-    item(gfx, MI_ENHANCED, L"&Enhanced: sharper 3D\tF5");
-    sep(gfx);
-    HMENU res = sub(gfx, L"3D &resolution (Enhanced)\tF4");
-    item(res, MI_RES1, L"1x (DS)");
-    item(res, MI_RES2, L"2x");
-    item(res, MI_RES3, L"3x");
-    item(res, MI_RES4, L"4x");
-    item(res, MI_RES6, L"6x");
-    item(res, MI_RES8, L"8x");
-    sep(res);
-    item(res, MI_RES_AUTO, L"&Auto: as sharp as your screen (up to 12x)");
+    if (all) {
+        item(gfx, MI_CLASSIC, L"&Classic: exactly like the DS\tF5");
+        item(gfx, MI_ENHANCED, L"&Enhanced: sharper 3D\tF5");
+        sep(gfx);
+        HMENU res = sub(gfx, L"3D &resolution (Enhanced)\tF4");
+        item(res, MI_RES1, L"1x (DS)");
+        item(res, MI_RES2, L"2x");
+        item(res, MI_RES3, L"3x");
+        item(res, MI_RES4, L"4x");
+        item(res, MI_RES6, L"6x");
+        item(res, MI_RES8, L"8x");
+        sep(res);
+        item(res, MI_RES_AUTO, L"&Auto: as sharp as your screen (up to 12x)");
+    }
     item(gfx, MI_SMOOTH, L"&Smooth textures (Enhanced)");
     item(gfx, MI_TEXUP, L"&Upscaled textures, xBR (Enhanced)");
     item(gfx, MI_SMOOTH2D, L"Smooth &2D: menus, maps, sprites (Enhanced)");
-    HMENU oln = sub(gfx, L"Character &outlines (Enhanced)");
-    item(oln, MI_OUTLINE0, L"Like the &DS");
-    item(oln, MI_OUTLINE0 + 1, L"&Thin");
-    item(oln, MI_OUTLINE0 + 2, L"&None");
-    HMENU wst = sub(gfx, L"&Window style (Enhanced)");
-    item(wst, MI_WINSTYLE0, L"Like the &DS");
-    item(wst, MI_WINSTYLE0 + 1, L"&Minimal: no frame, more see-through");
+    if (all) {
+        HMENU oln = sub(gfx, L"Character &outlines (Enhanced)");
+        item(oln, MI_OUTLINE0, L"Like the &DS");
+        item(oln, MI_OUTLINE0 + 1, L"&Thin");
+        item(oln, MI_OUTLINE0 + 2, L"&None");
+        HMENU wst = sub(gfx, L"&Window style (Enhanced)");
+        item(wst, MI_WINSTYLE0, L"Like the &DS");
+        item(wst, MI_WINSTYLE0 + 1, L"&Minimal: no frame, more see-through");
+    }
     sep(gfx);
     item(gfx, MI_TEXPACK, L"&HD textures from the textures folder (Enhanced)");
     item(gfx, MI_TEXRELOAD, L"&Reload the HD textures");
-    item(gfx, MI_TEXDUMP, L"&Dump textures to textures\\dump (for making a pack)");
+    if (all) item(gfx, MI_TEXDUMP, L"&Dump textures to textures\\dump (for making a pack)");
     sep(gfx);
     item(gfx, MI_HDTEXT, L"HD te&xt (Enhanced)");
     HMENU fnt = sub(gfx, L"Text &font");
     item(fnt, MI_FONT0, L"The game's own letters, &smoothed");
-    item(fnt, MI_FONT0 + 1, L"&Georgia");
-    item(fnt, MI_FONT0 + 2, L"&Palatino Linotype");
-    item(fnt, MI_FONT0 + 3, L"&Constantia");
-    item(fnt, MI_FONT0 + 4, L"&Times New Roman");
-    item(fnt, MI_FONT0 + 5, L"Segoe &UI");
+    if (all) {
+        item(fnt, MI_FONT0 + 1, L"&Georgia");
+        item(fnt, MI_FONT0 + 2, L"&Palatino Linotype");
+        item(fnt, MI_FONT0 + 3, L"&Constantia");
+        item(fnt, MI_FONT0 + 4, L"&Times New Roman");
+        item(fnt, MI_FONT0 + 5, L"Segoe &UI");
+    }
     sep(fnt);                                                   /* these come with the game (fonts/) */
-    item(fnt, MI_FONT0 + 6, L"&Lora");
-    item(fnt, MI_FONT0 + 7, L"C&rimson Pro");
-    item(fnt, MI_FONT0 + 8, L"&Alegreya");
-    item(fnt, MI_FONT0 + 9, L"Spectral");
-    item(fnt, MI_FONT0 + 10, L"&EB Garamond");
-    item(fnt, MI_FONT0 + 11, L"P&hilosopher");
+    if (all) {
+        item(fnt, MI_FONT0 + 6, L"&Lora");
+        item(fnt, MI_FONT0 + 7, L"C&rimson Pro");
+        item(fnt, MI_FONT0 + 8, L"&Alegreya");
+        item(fnt, MI_FONT0 + 9, L"Spectral");
+        item(fnt, MI_FONT0 + 10, L"&EB Garamond");
+        item(fnt, MI_FONT0 + 11, L"P&hilosopher");
+    }
     item(fnt, MI_FONT0 + 12, L"&Marcellus");
-    item(fnt, MI_FONT0 + 13, L"&Nunito (rounded)");
-    item(fnt, MI_FONT0 + 14, L"&Fredoka (rounded, bold)");
+    if (all) {
+        item(fnt, MI_FONT0 + 13, L"&Nunito (rounded)");
+        item(fnt, MI_FONT0 + 14, L"&Fredoka (rounded, bold)");
+    }
     sep(gfx);
     item(gfx, MI_HDMOVIE, L"HD &movies from the movies folder (Enhanced)");
 
-    HMENU scr = sub(g_bar, L"&Screen");
-    item(scr, MI_LCD, L"&DS Lite screen\tF6");
-    sep(scr);
-    item(scr, MI_LCDCOL, L"LCD &colours");
-    item(scr, MI_GRID, L"&Pixel grid (at 3x and larger)");
-    item(scr, MI_GHOST, L"&Motion blur");
-    HMENU bl = sub(scr, L"&Backlight");
-    item(bl, MI_BL1, L"&Low");
-    item(bl, MI_BL2, L"&Medium");
-    item(bl, MI_BL3, L"&High");
-    item(bl, MI_BL4, L"Ma&x");
+    if (all) {
+        HMENU scr = sub(g_bar, L"&Screen");
+        item(scr, MI_LCD, L"&DS Lite screen\tF6");
+        sep(scr);
+        item(scr, MI_LCDCOL, L"LCD &colours");
+        item(scr, MI_GRID, L"&Pixel grid (at 3x and larger)");
+        item(scr, MI_GHOST, L"&Motion blur");
+        HMENU bl = sub(scr, L"&Backlight");
+        item(bl, MI_BL1, L"&Low");
+        item(bl, MI_BL2, L"&Medium");
+        item(bl, MI_BL3, L"&High");
+        item(bl, MI_BL4, L"Ma&x");
+    }
 
     HMENU view = sub(g_bar, L"&View");
-    item(view, MI_SHELL, L"Show the DS &Lite\tF7");
-    HMENU col = sub(view, L"Console &colour");
-    for (int i = 0; i < n_shells; i++) {
-        wchar_t w[64];
-        MultiByteToWideChar(CP_UTF8, 0, shell_names[i], -1, w, 64);
-        item(col, MI_SHELLC0 + i, w);
+    if (all) {
+        item(view, MI_SHELL, L"Show the DS &Lite\tF7");
+        HMENU col = sub(view, L"Console &colour");
+        for (int i = 0; i < n_shells; i++) {
+            wchar_t w[64];
+            MultiByteToWideChar(CP_UTF8, 0, shell_names[i], -1, w, 64);
+            item(col, MI_SHELLC0 + i, w);
+        }
+        item(view, MI_GAP, L"&Gap between the screens");
+        item(view, MI_ACTUAL, L"&Actual size (as big as a real DS Lite)\tF8");
+        sep(view);
+        item(view, MI_STACKED, L"S&tacked\tF2");
+        item(view, MI_SIDE, L"&Side by side\tF2");
+        item(view, MI_CORNER, L"Top screen in the &corner\tF2");
+        item(view, MI_WIDE, L"&Widescreen (the action wide, the other screen in a corner)\tF2");
+        item(view, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental: makes room for menus)\tF2");
+        item(view, MI_TWO, L"Two wi&ndows (one screen in each, for two monitors)\tF2");
+        sep(view);
+        item(view, MI_SINGLE, L"Single scr&een (widescreen: hide the small screen)\tU");
+        item(view, MI_SWAP, L"Swa&p the screens (widescreen: hold to see the other)\tF9");
+        HMENU sm = sub(view, L"Widescreen: the small scr&een");
+        item(sm, MI_CORNER0, L"Top left\tK");
+        item(sm, MI_CORNER0 + 1, L"Top right\tK");
+        item(sm, MI_CORNER0 + 2, L"Bottom right\tK");
+        item(sm, MI_CORNER0 + 3, L"Bottom left\tK");
+        sep(sm);
+        item(sm, MI_SSIZE0, L"Small\tI");
+        item(sm, MI_SSIZE0 + 1, L"Medium\tI");
+        item(sm, MI_SSIZE0 + 2, L"Large\tI");
+        sep(sm);
+        item(sm, MI_OPACITY1, L"100% (solid)\tO");
+        item(sm, MI_OPACITY1 + 1, L"75%\tO");
+        item(sm, MI_OPACITY1 + 2, L"50%\tO");
+        item(sm, MI_OPACITY1 + 3, L"25%\tO");
+        sep(sm);
+        item(sm, MI_POPOUT, L"In its own &window (a clean field)");
+        sep(view);
     }
-    item(view, MI_GAP, L"&Gap between the screens");
-    item(view, MI_ACTUAL, L"&Actual size (as big as a real DS Lite)\tF8");
-    sep(view);
-    item(view, MI_STACKED, L"S&tacked\tF2");
-    item(view, MI_SIDE, L"&Side by side\tF2");
-    item(view, MI_CORNER, L"Top screen in the &corner\tF2");
-    item(view, MI_WIDE, L"&Widescreen (the action wide, the other screen in a corner)\tF2");
-    item(view, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental: makes room for menus)\tF2");
-    item(view, MI_TWO, L"Two wi&ndows (one screen in each, for two monitors)\tF2");
-    sep(view);
-    item(view, MI_SINGLE, L"Single scr&een (widescreen: hide the small screen)\tU");
-    item(view, MI_SWAP, L"Swa&p the screens (widescreen: hold to see the other)\tF9");
-    HMENU sm = sub(view, L"Widescreen: the small scr&een");
-    item(sm, MI_CORNER0, L"Top left\tK");
-    item(sm, MI_CORNER0 + 1, L"Top right\tK");
-    item(sm, MI_CORNER0 + 2, L"Bottom right\tK");
-    item(sm, MI_CORNER0 + 3, L"Bottom left\tK");
-    sep(sm);
-    item(sm, MI_SSIZE0, L"Small\tI");
-    item(sm, MI_SSIZE0 + 1, L"Medium\tI");
-    item(sm, MI_SSIZE0 + 2, L"Large\tI");
-    sep(sm);
-    item(sm, MI_OPACITY1, L"100% (solid)\tO");
-    item(sm, MI_OPACITY1 + 1, L"75%\tO");
-    item(sm, MI_OPACITY1 + 2, L"50%\tO");
-    item(sm, MI_OPACITY1 + 3, L"25%\tO");
-    sep(sm);
-    item(sm, MI_POPOUT, L"In its own &window (a clean field)");
-    sep(view);
     HMENU size = sub(view, L"&Window size\tF3");
     item(size, MI_SIZE1, L"1x");
     item(size, MI_SIZE2, L"2x");
     item(size, MI_SIZE3, L"3x");
     item(size, MI_SIZE4, L"4x");
-    item(view, MI_INTEGER, L"&Integer scaling");
+    if (all) item(view, MI_INTEGER, L"&Integer scaling");
     item(view, MI_FULL, L"&Fullscreen\tF11");
 
     HMENU wl = sub(g_bar, L"&Wireless");
@@ -173,11 +189,13 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
 
     HMENU modern = sub(g_bar, L"&Modern");
     item(modern, MI_ANALOG, L"Walk in any &direction with the left stick");
-    item(modern, MI_WIDE, L"&Widescreen: the action wide, the other screen in a corner");
-    item(modern, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental)");
-    item(modern, MI_CORNER, L"Top screen in the &corner (the field as on the DS)");
-    item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
-    item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
+    if (all) {
+        item(modern, MI_WIDE, L"&Widescreen: the action wide, the other screen in a corner");
+        item(modern, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental)");
+        item(modern, MI_CORNER, L"Top screen in the &corner (the field as on the DS)");
+        item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
+        item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
+    }
     sep(modern);
     item(modern, MI_MAPMARKS, L"&Map: mark the chests, bookshelves and quests (the mouse over one: what it holds)");
     item(modern, MI_MAPMARKS_OPENED, L"Map: also mark the ones already &emptied or done (greyed)");
@@ -770,7 +788,7 @@ int choice_box(SDL_Window* win, const char* title, const char* text, const char*
                const char* check, int* checked) { (void)win; (void)title; (void)text; (void)buttons; (void)n; (void)def; (void)cancel; (void)check; (void)checked; return -1; }
 char* ask_text(SDL_Window* win, const char* title, const char* prompt) { (void)win; (void)title; (void)prompt; return NULL; }
 float display_mm_per_pixel(SDL_Window* win) { (void)win; return 0; }
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) { (void)win; (void)shell_names; (void)n_shells; }
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) { (void)win; (void)shell_names; (void)n_shells; (void)all; }
 void menu_show(int on) { (void)on; }
 void menu_init_second(SDL_Window* win) { (void)win; }
 void menu_show_second(int on) { (void)on; }

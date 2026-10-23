@@ -54,27 +54,27 @@ static SDL_Renderer* g_ren;
 static SDL_Texture* g_tex;
 static SDL_AudioDeviceID g_audio;
 static SDL_GameController* g_pad;
-static int g_side_by_side, g_corner, g_scale = 2, g_fullscreen;   /* g_corner: the top screen small, beside the bottom one */
-static int g_wide;                                                /* widescreen: the 3D screen wider than the DS's, the other small in its corner */
+static int g_side_by_side, g_corner, g_scale = 3, g_fullscreen;   /* g_corner: the top screen small, beside the bottom one */
+static int g_wide = 1;                                            /* widescreen: the 3D screen wider than the DS's, the other small in its corner */
 static float g_wide_mix = 1.0f;                                   /* widescreen: 1 = the field wide, 0 = beside the small screen (2D under its corner) */
 static int g_small_blank;                                         /* widescreen: the small screen shows nothing (all black): not drawn */
 static int g_swap;                                                /* the screens trade places (F9) */
 static int g_two;                                                 /* two windows, one screen in each (two monitors) */
 static SDL_Window* g_win2;                                        /* ...the second one (the top screen, or the bottom one when swapped) */
 static int g_win2_full, g_win2_rect[4];                           /* ...fullscreen; where it was as a window (w = 0: not yet) */
-static int g_wide_pop;                                            /* widescreen: the small screen in its own window (the field alone) */
-static int g_smooth = 0;                                          /* Enhanced: smooth (filtered) textures */
-static int g_smooth2d = 0, g_texup = 0, g_outline = 0;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
+static int g_wide_pop = 1;                                        /* widescreen: the small screen in its own window (the field alone) */
+static int g_smooth = 1;                                          /* Enhanced: smooth (filtered) textures */
+static int g_smooth2d = 1, g_texup = 1, g_outline = 1;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
 static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
 static int g_hdtext = 1;                                          /* Enhanced: the game's text drawn at full resolution (hdtext.h) */
 static int g_hdmovie = 1;                                         /* Enhanced: the movies from movies/ in HD (hdmovie.h) */
-static char g_hdfont[256] = "georgia.ttf";                        /* ...with this font ("original": the game's letters, smoothed) */
+static char g_hdfont[256] = "Marcellus.ttf";                      /* ...with this font ("original": the game's letters, smoothed) */
 static const char* const g_fonts[N_FONTS] = { "original", "georgia.ttf", "pala.ttf", "constan.ttf", "times.ttf", "segoeui.ttf",   /* MI_FONT0 + i: Windows' */
     "Lora.ttf", "CrimsonPro.ttf", "Alegreya.ttf", "Spectral.ttf", "EBGaramond.ttf", "Philosopher.ttf", "Marcellus.ttf", "Nunito.ttf", "Fredoka.ttf" };   /* ours (fonts/) */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
-static int g_small_opacity = 50;                                  /* widescreen: how solid the small screen over the field is (O), % */
-static int g_wide_dyn;                                            /* widescreen: 0 basic (the corner stays), 1 dynamic (experimental: slides for menus) */
-static int g_small_corner;                                        /* basic widescreen: 0 top left, 1 top right, 2 bottom right, 3 bottom left */
+static int g_small_opacity = 25;                                  /* widescreen: how solid the small screen over the field is (O), % */
+static int g_wide_dyn = 1;                                        /* widescreen: 0 basic (the corner stays), 1 dynamic (experimental: slides for menus) */
+static int g_small_corner = 1;                                    /* basic widescreen: 0 top left, 1 top right, 2 bottom right, 3 bottom left */
 static int g_small_size = 1;                                      /* ...0 small, 1 medium, 2 large */
 static int g_small_hide;                                          /* widescreen: no small screen (left trigger / U) */
 static int g_peek;                                                /* widescreen: the other screen big while the swap button is held */
@@ -96,10 +96,11 @@ static int g_scale3d = 2;
 extern void (*g_report_capture)(uint32_t out[2][256 * 192]);
 extern void (*g_report_perf)(FILE* f);
 static void perf_write(FILE* f);
-static int g_classic = 1;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
+static int g_classic = 0;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
 extern int g_comp_gl;
 extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
+static int g_all_options;       /* every option in the menus and on the keys (settings.ini all_options), else only the project's own setup */
 
 /* How the screens are shown (View and Screen menus). The DS Lite parts need OpenGL. */
 static struct {
@@ -113,7 +114,7 @@ static struct {
     int actual;                  /* screens as big as a real DS Lite's */
     float monitor_width_mm;      /* settings.ini override for the monitor's width (0 = ask the monitor) */
     int dlc;                     /* switch on the downloadable quests and special guests when the save loads */
-} g_opt = { 1, 1, 1, 1, 4, 0, 1, 0, 0, 0, 0, 0 };   /* a new install: the DS Lite screen inside the console photo (settings.ini keeps each player's choice) */
+} g_opt = { 0, 1, 0, 0, 4, 0, 0, 0, 1, 0, 0, 1 };   /* a new install: plain screens, whole-number scaling, the downloads on */
 
 /* Actual size: a DS Lite pixel is 0.238 mm (a 3-inch 4:3 screen, 256 pixels
  * across = 60.96 mm). Window pixels per DS pixel on the current monitor. */
@@ -419,21 +420,42 @@ static void default_console_color(void) {
 /* settings.ini's names for g_fw_language (1-5), and the menu's */
 static const char* const LANGUAGE_KEY[6] = { "", "english", "french", "german", "italian", "spanish" };
 static const char* const LANGUAGE_NAME[6] = { "", "English", "Fran\xc3\xa7" "ais", "Deutsch", "Italiano", "Espa\xc3\xb1ol" };
+/* settings_version 2: a new install looks like the project's own setup (Enhanced,
+ * dynamic widescreen with the map in its own window, the battle HUD, the map
+ * markers...). An older settings.ini keeps the player's own things (volume,
+ * language, wireless, controls, gold farm) but takes these looks once. */
+#define SETTINGS_VERSION 2
+static const char* const LOOK_KEYS[] = {
+    "mode", "render_scale", "resolution_3d", "window_scale", "layout", "single_screen", "swap_screens",
+    "small_screen_corner", "small_screen_size", "small_screen_hidden", "small_screen_opacity", "small_screen_opacity_chosen",
+    "widescreen_popout", "widescreen_battle_hud", "map_markers", "map_markers_opened",
+    "smooth_textures", "smooth_2d", "upscale_textures", "outlines", "window_style", "hd_textures", "hd_text", "hd_text_font", "hd_movies",
+    "dslite_filter", "lcd_colors", "pixel_grid", "motion_blur", "backlight", "screen_gap", "console", "console_color",
+    "console_color_chosen", "integer_scaling", "actual_size", "downloadable_content" };
+static int look_key(const char* key) {
+    for (unsigned i = 0; i < sizeof LOOK_KEYS / sizeof LOOK_KEYS[0]; i++) if (!strcmp(key, LOOK_KEYS[i])) return 1;
+    return 0;
+}
 static void settings_load(void) {
     FILE* f = fopen(SETTINGS, "r");
     if (!f) return;
     char line[200], color[64] = "";
+    int version = 0;
+    while (fgets(line, sizeof line, f)) sscanf(line, " settings_version = %d", &version);
+    rewind(f);
     int seen_rs = 0;                                              /* render_scale (v29) wins over the older resolution_3d */
     int opacity_chosen = 0, opacity_saved = 0;                    /* v31: the small screen's opacity counts once picked (before, 100 was saved either way) */
     while (fgets(line, sizeof line, f)) {
         char key[64]; char val[64];
         if (line[0] == '#' || sscanf(line, " %63[^= ] = %63s", key, val) != 2) continue;
+        if (version < SETTINGS_VERSION && look_key(key)) continue;
         if (!strcmp(key, "player_name")) {                       /* the whole rest of the line (may have spaces) */
             const char* v = strchr(line, '=') + 1; while (*v == ' ') v++;
             snprintf(g_player_name, sizeof g_player_name, "%s", v);
             g_player_name[strcspn(g_player_name, "\r\n")] = 0;
             continue;
         }
+        if (!strcmp(key, "all_options")) { g_all_options = atoi(val) != 0; continue; }
         if (!strcmp(key, "update_check")) { g_update_auto = atoi(val) != 0; continue; }
         if (!strcmp(key, "update_skip")) { snprintf(g_update_skip, sizeof g_update_skip, "%s", val); continue; }
         if (!strcmp(key, "session_port")) { int v = atoi(val); if (v > 0 && v < 65536) g_session_port = v; continue; }
@@ -509,6 +531,9 @@ static void settings_save(void) {
     FILE* f = fopen(SETTINGS, "w");
     if (!f) return;
     fprintf(f, "# Dragon Quest IX (PC) settings. The game saves this when you change something.\n");
+    fprintf(f, "settings_version = %d\n", SETTINGS_VERSION);
+    fprintf(f, "# every option in the menus and on the keys (other layouts, DS Lite screen, fonts...): 0 or 1\n");
+    fprintf(f, "all_options = %d\n", g_all_options);
     fprintf(f, "# mode: classic (exactly like the DS) or enhanced (sharper 3D on the graphics card). F5 switches.\n");
     fprintf(f, "mode = %s\n", g_classic ? "classic" : "enhanced");
     fprintf(f, "# 3D resolution in enhanced mode: 1 to 12, or auto (as sharp as the window shows it; F4)\n");
@@ -870,7 +895,7 @@ void frontend_init(int argc, char** argv) {
         const char* names[N_DRAWN + MAX_SKINS];
         for (int i = 0; i < N_DRAWN; i++) names[i] = SHELLS[i].name;
         for (int i = 0; i < g_nskins; i++) names[N_DRAWN + i] = g_skins[i].name;
-        menu_init(g_win, names, N_SHELLS);
+        menu_init(g_win, names, N_SHELLS, g_all_options);
         if (g_update_auto && !session_requested() && update_project_dir()) update_check_async();
         update_actual();
         menu_sync();
@@ -2123,6 +2148,10 @@ static void do_action(int id) {
 /* ---------------------------------------------------------------- hotkeys (Game > Controls) */
 static int wide_now(void) { return g_wide && g_gl && !g_side_by_side; }
 static void hotkey(int a) {
+    if (!g_all_options) switch (a) {                             /* their menu items are hidden too (menu_init) */
+    case CA_LAYOUT: case CA_SINGLE: case CA_SWAP: case CA_CORNER: case CA_SMALLSIZE: case CA_OPACITY:
+    case CA_RES3D: case CA_MODE: case CA_LCD: case CA_SHELL: case CA_ACTUAL: return;
+    }
     switch (a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;
