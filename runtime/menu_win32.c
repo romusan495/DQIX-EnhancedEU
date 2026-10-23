@@ -180,6 +180,11 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(modern, MI_MAPMONSTERS, L"Map: show the m&onsters walking nearby (red dots)");
     item(modern, MI_INTERIOR_MAPS, L"Map: a plan of the &rooms inside buildings (drawn from their walls)");
     sep(modern);
+    HMENU st = sub(modern, L"&Start (takes effect next launch)");
+    item(st, MI_SKIP0, L"&Logos and opening movie, as on a DS");
+    item(st, MI_SKIP0 + 1, L"Skip the &logos");
+    item(st, MI_SKIP0 + 2, L"Skip the logos and the opening &movie");
+    sep(modern);
     HMENU bsp = sub(modern, L"&Battle speed");
     item(bsp, MI_BSPEED1, L"&Normal");
     item(bsp, MI_BSPEED1 + 1, L"&2x");

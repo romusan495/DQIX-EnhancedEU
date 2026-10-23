@@ -15,6 +15,7 @@
 #include "nds.h"
 #include "session.h"
 #include "farm.h"
+#include "bootskip.h"
 #include "cheats.h"
 
 typedef struct { uint64_t frame; uint32_t keys; int touch; int tx, ty; uint32_t len; } Press;
@@ -240,6 +241,7 @@ void input_update(void) {
         since = g_walk_frames > 0 ? 0 : since + 1;
         g_gx_hide = since < 8 && !g_fe_touch ? (g_gx_hide | 1) : (g_gx_hide & ~1);
     }
+    g_keys_down |= bootskip_keys();                     /* Modern > Start: START skips the opening movie */
     farm_input(&g_keys_down, &g_touch_down);            /* Modern > Farm gold: the farm presses the buttons */
     if (session_running()) {                            /* lockstep: what was pressed `delay` frames ago, on every PC */
         uint32_t v = session_frame_input(g_frame, session_pack(g_keys_down, g_touch_down, g_touch_x, g_touch_y));
