@@ -248,6 +248,14 @@ void menu_enable(int id, int on) {
     if (g_bar) EnableMenuItem(g_bar, (UINT)id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
 }
 
+void menu_set_text(int id, const char* text) {
+    wchar_t w[200];
+    if (!g_bar || !MultiByteToWideChar(CP_UTF8, 0, text, -1, w, 200)) return;
+    MENUITEMINFOW mi = { sizeof mi };
+    mi.fMask = MIIM_STRING; mi.dwTypeData = w;
+    SetMenuItemInfoW(g_bar, (UINT)id, FALSE, &mi);
+}
+
 int menu_command(const SDL_Event* e) {
     if (e->type != SDL_SYSWMEVENT || (!g_bar && !g_bar2)) return 0;
     const SDL_SysWMmsg* m = e->syswm.msg;
@@ -787,6 +795,7 @@ void menu_init_second(SDL_Window* win) { (void)win; }
 void menu_show_second(int on) { (void)on; }
 void menu_check(int id, int on) { (void)id; (void)on; }
 void menu_enable(int id, int on) { (void)id; (void)on; }
+void menu_set_text(int id, const char* text) { (void)id; (void)text; }
 int menu_command(const SDL_Event* e) { (void)e; return 0; }
 int session_window_open(SDL_Window* win) { (void)win; return 0; }
 void volume_window_open(SDL_Window* win, int* volume, int* mute) { (void)win; (void)volume; (void)mute; }
