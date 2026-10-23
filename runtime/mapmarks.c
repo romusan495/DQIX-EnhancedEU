@@ -1214,22 +1214,114 @@ static int build_plan(const Place* pl) {
     return 1;
 }
 
-/* The plan as the picture's background: the floor light, the walls dark,
- * a shadow under the walls' top left; the outside dark blue. The game's
- * place name and party names stay seen. */
-static void draw_plan(void) {
+/* The plan in the town maps' style: a lighter plaque on mottled parchment,
+ * a soft shadow under it, a darker band along the walls inside, a thin
+ * brown line for the walls, the furniture (floor the room's main part
+ * doesn't reach) a shade darker. Drawn once per room into g_plan_img. */
+static uint8_t g_plan_img[MAPMARKS_W * MAPMARKS_H * 4];
+static float g_fa[MAPMARKS_W * MAPMARKS_H], g_fb[MAPMARKS_W * MAPMARKS_H];
+
+static float hash01(int x, int y, int seed) {
+    uint32_t h = (uint32_t)x * 374761393u + (uint32_t)y * 668265263u + (uint32_t)seed * 2246822519u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return (float)((h ^ (h >> 16)) & 0xFFFF) / 65535.0f;
+}
+/* Smooth value noise, about -0.5..0.5, features `cell` pixels wide. */
+static float vnoise(float x, float y, float cell, int seed) {
+    x /= cell; y /= cell;
+    int ix = (int)floorf(x), iy = (int)floorf(y);
+    float fx = x - (float)ix, fy = y - (float)iy;
+    fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+    float a = hash01(ix, iy, seed), b = hash01(ix + 1, iy, seed), c = hash01(ix, iy + 1, seed), d = hash01(ix + 1, iy + 1, seed);
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy - 0.5f;
+}
+
+/* A box blur of radius r over m (3 passes make it close to a Gaussian), using g_fb. */
+static void blur_box(float* m, int r) {
+    for (int pass = 0; pass < 3; pass++) {
+        for (int y = 0; y < MAPMARKS_H; y++) {                   /* rows into g_fb */
+            const float* row = &m[y * MAPMARKS_W];
+            float sum = 0;
+            for (int x = -r; x <= r; x++) sum += row[x < 0 ? 0 : x >= MAPMARKS_W ? MAPMARKS_W - 1 : x];
+            for (int x = 0; x < MAPMARKS_W; x++) {
+                g_fb[y * MAPMARKS_W + x] = sum / (float)(2 * r + 1);
+                int out = x - r, in = x + r + 1;
+                sum += row[in >= MAPMARKS_W ? MAPMARKS_W - 1 : in] - row[out < 0 ? 0 : out];
+            }
+        }
+        for (int x = 0; x < MAPMARKS_W; x++) {                   /* columns back into m */
+            float sum = 0;
+            for (int y = -r; y <= r; y++) sum += g_fb[(y < 0 ? 0 : y >= MAPMARKS_H ? MAPMARKS_H - 1 : y) * MAPMARKS_W + x];
+            for (int y = 0; y < MAPMARKS_H; y++) {
+                m[y * MAPMARKS_W + x] = sum / (float)(2 * r + 1);
+                int out = y - r, in = y + r + 1;
+                sum += g_fb[(in >= MAPMARKS_H ? MAPMARKS_H - 1 : in) * MAPMARKS_W + x] - g_fb[(out < 0 ? 0 : out) * MAPMARKS_W + x];
+            }
+        }
+    }
+}
+
+/* Marks 3 the floor (1) apart from the room's biggest part: furniture and the like. */
+static void plan_furniture(void) {
+    static int lab[MAPMARKS_W * MAPMARKS_H];
+    int n = 0, best = 0, best_size = 0;
+    memset(lab, 0, sizeof lab);
+    for (int s = 0; s < MAPMARKS_W * MAPMARKS_H; s++) {
+        if (g_plan[s] != 1 || lab[s]) continue;
+        int size = 0, top = 0;
+        lab[s] = ++n; g_fill[top++] = s;
+        while (top) {
+            int i = g_fill[--top], x = i % MAPMARKS_W, y = i / MAPMARKS_W;
+            size++;
+            int nb[4] = { x > 0 ? i - 1 : -1, x < MAPMARKS_W - 1 ? i + 1 : -1, y > 0 ? i - MAPMARKS_W : -1, y < MAPMARKS_H - 1 ? i + MAPMARKS_W : -1 };
+            for (int k = 0; k < 4; k++) if (nb[k] >= 0 && g_plan[nb[k]] == 1 && !lab[nb[k]]) { lab[nb[k]] = n; g_fill[top++] = nb[k]; }
+        }
+        if (size > best_size) { best_size = size; best = n; }
+    }
+    for (int i = 0; i < MAPMARKS_W * MAPMARKS_H; i++) if (lab[i] && lab[i] != best) g_plan[i] = 3;
+}
+
+static void paint_plan(void) {
+    const int N = MAPMARKS_W * MAPMARKS_H;
+    plan_furniture();
+    /* the shadow: the plan's shape moved down right, blurred, outside it only */
     for (int y = 0; y < MAPMARKS_H; y++)
         for (int x = 0; x < MAPMARKS_W; x++) {
-            uint8_t v = g_plan[y * MAPMARKS_W + x];
-            if (y >= PLAN_BOTTOM * MAPMARKS_R || (y < PLAN_TOP * MAPMARKS_R && x >= PLAN_NAME_X * MAPMARKS_R)) {
-                memset(&g_img[((size_t)y * MAPMARKS_W + x) * 4], 0, 4);
-                continue;
-            }
-            uint32_t c = v == 2 ? 0x4A3626 : v == 0 ? 0x1B2438 : 0xE9DCB0;
-            if (v == 1 && x >= 3 && y >= 3 && g_plan[(y - 3) * MAPMARKS_W + x - 3] == 2) c = 0xCDBE92;
-            uint8_t* p = &g_img[((size_t)y * MAPMARKS_W + x) * 4];
-            p[0] = (uint8_t)(c >> 16); p[1] = (uint8_t)(c >> 8); p[2] = (uint8_t)c; p[3] = 255;
+            int sx = x - 5, sy = y - 6;
+            g_fa[y * MAPMARKS_W + x] = sx >= 0 && sy >= 0 && g_plan[sy * MAPMARKS_W + sx] ? 1.0f : 0.0f;
         }
+    blur_box(g_fa, 3);
+    static float band[MAPMARKS_W * MAPMARKS_H];
+    for (int i = 0; i < N; i++) band[i] = g_plan[i] == 2 ? 1.0f : 0.0f;
+    blur_box(band, 2);
+    for (int y = 0; y < MAPMARKS_H; y++)
+        for (int x = 0; x < MAPMARKS_W; x++) {
+            int i = y * MAPMARKS_W + x;
+            uint8_t v = g_plan[i];
+            float fx = (float)x, fy = (float)y, r, g, b;
+            if (v == 2) { r = 120; g = 86; b = 46; }             /* the walls */
+            else if (v == 3) { r = 208; g = 164; b = 92; }       /* furniture */
+            else if (v == 1) {                                   /* the floor: light, a fine grain, darker along the walls */
+                float k = (1 + 0.05f * vnoise(fx, fy, 20, 3)) * (1 - 0.16f * band[i]);
+                r = 236 * k; g = 204 * k; b = 138 * k;
+            } else {                                             /* the parchment: mottled, stains, the shadow */
+                float n = 0.5f * vnoise(fx, fy, 96, 1) + 0.3f * vnoise(fx, fy, 32, 2) + 0.2f * vnoise(fx, fy, 8, 4);
+                float st = vnoise(fx, fy, 128, 5) * 3; st = st < 0 ? 0 : st > 1 ? 1 : st;
+                float k = (1 + 0.10f * n) * (1 - 0.10f * st) * (1 - 0.30f * g_fa[i]);
+                r = 214 * k; g = 163 * k; b = 70 * k;
+            }
+            uint8_t* p = &g_plan_img[(size_t)i * 4];
+            p[0] = (uint8_t)(r > 255 ? 255 : r); p[1] = (uint8_t)(g > 255 ? 255 : g); p[2] = (uint8_t)(b > 255 ? 255 : b); p[3] = 255;
+        }
+}
+
+/* The plan as the picture's background; the game's place name and party names stay seen. */
+static void draw_plan(void) {
+    memcpy(g_img, g_plan_img, sizeof g_img);
+    for (int y = 0; y < MAPMARKS_H; y++)
+        for (int x = 0; x < MAPMARKS_W; x++)
+            if (y >= PLAN_BOTTOM * MAPMARKS_R || (y < PLAN_TOP * MAPMARKS_R && x >= PLAN_NAME_X * MAPMARKS_R))
+                memset(&g_img[((size_t)y * MAPMARKS_W + x) * 4], 0, 4);
 }
 
 /* ---------------------------------------------------------------- once a frame */
@@ -1278,6 +1370,7 @@ int mapmarks_update(const uint8_t** rgba) {
             if (!own && g_interior_maps) {
                 if (g_plan_of != pi) {
                     g_plan_of = pi; g_plan_ok = build_plan(pl);
+                    if (g_plan_ok) paint_plan();
                     LOG_INFO("mapmarks: %s, %s\n", pl->code, g_plan_ok ? "plan drawn from its walls" : "no plan");
                 }
                 g_plan_on = g_plan_ok;
