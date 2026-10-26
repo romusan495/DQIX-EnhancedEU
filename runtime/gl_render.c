@@ -256,9 +256,11 @@ static const char* FS_COMP =
     "  if (side) {\n"
     /* Beyond the DS's picture there are no 2D layers: show the 3D there on lines
      * where the edge of the DS's picture shows it (the field), with that
-     * pixel's effects (fades); elsewhere (2D menus, text boxes at the edge) black. */
+     * pixel's effects (fades); elsewhere (2D menus, text boxes at the edge) black.
+     * (32 pixels in: a small sign at the edge - the wireless icon at the top
+     * left - doesn't black out the side beside it) */
     "    int found = -1;\n"
-    "    for (int k = 0; k < 8; k++) { int x = dsx < 0.0 ? k : 255 - k;\n"
+    "    for (int k = 0; k < 32; k++) { int x = dsx < 0.0 ? k : 255 - k;\n"
     "      if ((texelFetch(u_info, ivec2(x, p2.y), 0).r & 3u) != 0u) { found = x; break; } }\n"
     "    if (found < 0) {\n"
     "      int mb0 = int(texelFetch(u_c2, ivec2(dsx < 0.0 ? 0 : 255, p2.y), 0).a * 255.0 + 0.5);\n"
