@@ -714,6 +714,15 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                         uint32_t tq = bl->tag[q];
                         if (tq && HDT_INST(tq) == HDT_INST(t) && !HDT_INK(tq) && (bl->col[q] & PX_OPAQUE)) { paper = bl->col[q]; paperw = bl->win[q]; paperL = skipL; skipL = -1; break; }
                     }
+            /* a row the letter inks from side to side (the foot of a "1"): the
+             * box's colour from the nearest pixel beside it that isn't ink */
+            if (HDT_INK(t) && paperL < 0)
+                for (int d = 1; d <= 4 && paperL < 0; d++)
+                    for (int s = -1; s <= 1; s += 2) {
+                        int q = x + s * d;
+                        if (q < 0 || q > 255) continue;
+                        if (!HDT_INK(bl->tag[q]) && (bl->col[q] & PX_OPAQUE)) { paper = bl->col[q]; paperw = bl->win[q]; paperL = skipL; skipL = -1; break; }
+                    }
         }
         for (int k = 0; k < norder; k++) {
             int L = order[k];
