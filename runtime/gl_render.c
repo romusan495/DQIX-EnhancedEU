@@ -240,6 +240,10 @@ static const char* FS_COMP =
     "  float wd2 = dd(H, D) + dd(H, I5) + dd(F, I4) + dd(F, B) + 4.0 * dd(E, I);\n"
     "  float eF = dd(E, F), eH = dd(E, H);\n"
     "  if (!(wd1 < wd2 && eF > 0.01 && eH > 0.01)) return E;\n"
+    "  ivec2 pn = eF <= eH ? p + ivec2(1, 0) * s : p + ivec2(0, 1) * s;\n"
+    /* (not toward a pixel where the 3D shows: its 2D colour there is the
+     * backdrop - the magenta round the quill of the save box) */
+    "  if (u_has3d != 0 && (texelFetch(u_info, clamp(pn, ivec2(0), ivec2(255, 191)), 0).r & 3u) != 0u) return E;\n"
     "  vec3 N = eF <= eH ? F : H;\n"
     "  float k = max(u_s2d, 0.05);\n"
     "  return mix(E, N, smoothstep(0.5 - k, 0.5 + k, a.x + a.y));\n"
@@ -252,9 +256,11 @@ static const char* FS_COMP =
     "  if (side) {\n"
     /* Beyond the DS's picture there are no 2D layers: show the 3D there on lines
      * where the edge of the DS's picture shows it (the field), with that
-     * pixel's effects (fades); elsewhere (2D menus, text boxes at the edge) black. */
+     * pixel's effects (fades); elsewhere (2D menus, text boxes at the edge) black.
+     * (32 pixels in: a small sign at the edge - the wireless icon at the top
+     * left - doesn't black out the side beside it) */
     "    int found = -1;\n"
-    "    for (int k = 0; k < 8; k++) { int x = dsx < 0.0 ? k : 255 - k;\n"
+    "    for (int k = 0; k < 32; k++) { int x = dsx < 0.0 ? k : 255 - k;\n"
     "      if ((texelFetch(u_info, ivec2(x, p2.y), 0).r & 3u) != 0u) { found = x; break; } }\n"
     "    if (found < 0) {\n"
     "      int mb0 = int(texelFetch(u_c2, ivec2(dsx < 0.0 ? 0 : 255, p2.y), 0).a * 255.0 + 0.5);\n"

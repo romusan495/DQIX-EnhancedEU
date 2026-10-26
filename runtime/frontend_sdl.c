@@ -31,6 +31,7 @@
 #include "frontend.h"
 #include "hdtext.h"
 #include "hdmovie.h"
+#include "bootskip.h"
 #include "gl_render.h"
 #include "menu.h"
 #include "farm.h"
@@ -58,6 +59,7 @@ static SDL_GameController* g_pad;
 static int g_side_by_side, g_corner, g_scale = 3, g_fullscreen;   /* g_corner: the top screen small, beside the bottom one */
 static int g_wide = 1;                                            /* widescreen: the 3D screen wider than the DS's, the other small in its corner */
 static float g_wide_mix = 1.0f;                                   /* widescreen: 1 = the field wide, 0 = beside the small screen (2D under its corner) */
+static int g_top_menu;                                            /* widescreen: a menu with a 3D model on the top screen (wide_update) */
 static int g_small_blank;                                         /* widescreen: the small screen shows nothing (all black): not drawn */
 static int g_swap;                                                /* the screens trade places (F9) */
 static int g_two;                                                 /* two windows, one screen in each (two monitors) */
@@ -117,6 +119,7 @@ extern int g_win_outline;       /* ...minimal: the commands screen's windows wit
 extern int g_dlg_outline;       /* ...and the 3D screen's (the text box in battles) */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
 static int g_battle_speed = 1;  /* Modern > Battle speed: 1, 2 or 3 times as fast (not in a session) */
+static int g_skip_intro = BOOTSKIP_LOGOS;   /* Modern > Start: skip the logos (1), and the opening movie (2) */
 static int g_all_options;       /* every option in the menus and on the keys (settings.ini all_options), else only the project's own setup */
 
 /* How the screens are shown (View and Screen menus). The DS Lite parts need OpenGL. */
@@ -304,6 +307,19 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
+        int top_menu = g_minimap && which == 0 && !pop && g_top_menu && in_adventure() && !g_hud_n && !g_hud_win[2];
+        int no3d_menu = g_minimap && which < 0 && !pop && in_adventure() && mapmarks_top_page() && !g_small_blank;
+        if ((g_minimap && which == 1 && !pop && mapmarks_top_page()) || top_menu || no3d_menu) {
+            /* an item's card on the top screen (Items, Equipment...), a menu
+             * with its 3D model there (the monster list), or menus on both
+             * screens without 3D (skill points): both screens whole, side by
+             * side, the top one on the left, until it closes */
+            v->cw = 512; v->ch = 192;
+            v->top[0] = 0; v->top[1] = 0; v->top[2] = 256; v->top[3] = 192;
+            v->bot[0] = 256; v->bot[1] = 0; v->bot[2] = 256; v->bot[3] = 192;
+            v->topx[0] = v->botx[0] = (float)side; v->topx[1] = v->botx[1] = 256;
+            v->alpha = 1.0f; v->front = 0;
+        }
         if (pop) {                                                /* first window: the field alone; second: the small screen, whole */
             v->alpha = 1.0f;
             if (second) { v->cw = 256; v->ch = 192; big[0] = big[1] = big[2] = big[3] = 0; small[0] = small[1] = 0; small[2] = 256; small[3] = 192; }
@@ -508,6 +524,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "hd_text_font")) snprintf(g_hdfont, sizeof g_hdfont, "%s", val);
         else if (!strcmp(key, "farm_gold_target")) { long v = atol(val); if (v > 0 && v <= 9999999) g_farm_target = (int)v; }
         else if (!strcmp(key, "farm_fast_forward")) g_farm_fast = atoi(val) != 0;
+        else if (!strcmp(key, "skip_intro")) { int v = atoi(val); if (v >= 0 && v <= 2) g_skip_intro = v; }
         else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 3) g_battle_speed = v; }
         else if (!strcmp(key, "save_backups")) g_save_backups = atoi(val) != 0;
         else if (!strcmp(key, "cheats")) cheats_from_list(val);
@@ -598,6 +615,8 @@ static void settings_save(void) {
     fprintf(f, "# Modern > Farm gold by itself: stop once the party has this much gold, and fast forward while farming (0 or 1)\n");
     fprintf(f, "farm_gold_target = %d\n", g_farm_target);
     fprintf(f, "farm_fast_forward = %d\n", g_farm_fast);
+    fprintf(f, "# Modern > Start: 0 the logos and the opening movie as on a DS, 1 skip the logos, 2 skip the opening movie too\n");
+    fprintf(f, "skip_intro = %d\n", g_skip_intro);
     fprintf(f, "# Modern > Battle speed: battles go 1, 2 or 3 times as fast (not while playing with friends)\n");
     fprintf(f, "battle_speed = %d\n", g_battle_speed);
     fprintf(f, "# Game > Keep a copy of every save: the save as it was before each new one, in save-backups (the last 20): 0 or 1\n");
@@ -877,6 +896,9 @@ void frontend_init(int argc, char** argv) {
     wireless_apply(1);                                          /* read by firmware_init */
     if (g_opt.dlc) backup_unlock_dlc();                        /* before the game reads the save */
     if (getenv("DQIX_MODE")) g_classic = strcmp(getenv("DQIX_MODE"), "enhanced") != 0;   /* tests */
+    /* Modern > Start: not in a session (every console starts alike) nor a replay (its inputs hold the presses) */
+    if (getenv("DQIX_SKIP_INTRO")) bootskip_start(atoi(getenv("DQIX_SKIP_INTRO")));   /* tests */
+    else bootskip_start(getenv("DQIX_SESSION") || getenv("DQIX_INPUT") || getenv("DQIX_INPUT_FILE") ? BOOTSKIP_OFF : g_skip_intro);
     /* real pixels on high-DPI Windows setups (not stretched by the system), so
      * the pixel grid and actual size are drawn on the monitor's own pixels */
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
@@ -1180,7 +1202,7 @@ static void report_window(const char* path) {
  * field again. From the 3D screen's last picture: pixels where no 2D layer
  * covers the 3D are the field. */
 extern uint8_t g_comp_info[256 * 192 * 4];
-extern int g_comp_has3d;
+extern int g_comp_has3d, g_comp_3d_on2d;
 extern uint32_t g_engine_out[2][256 * 192];
 static void wide_update(int a_on_top) {
     if (!g_wide || !WIDE_GL || g_wide_pop) { g_wide_mix = 1.0f; if (!g_wide || !WIDE_GL) return; }
@@ -1209,6 +1231,9 @@ static void wide_update(int a_on_top) {
         if (under) g_mini_vis = fmaxf(0.0f, g_mini_vis - 1.0f / 6);
         else if (clear >= 20) g_mini_vis = fminf(1.0f, g_mini_vis + 1.0f / 12);
     }
+    /* 3D on the top screen in a menu (the monster list, battle records: a model
+     * over a 2D page), not a battle (the 3D over the backdrop) */
+    g_top_menu = which == 0 && g_comp_has3d && g_comp_3d_on2d * 4 > 256 * 192;
     int covered = 1;
     if (which == 0) covered = 0;                                  /* 3D on the top screen: no sliding */
     else if (which == 1 && g_comp_has3d) {
@@ -1252,11 +1277,11 @@ static void hud_update(int a_on_top) {
         sep[y] = n > 200; nsep += sep[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
-        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles */
+        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
         for (int y = 0; y < 192; y++)
             for (int x = 0; x < 256; x++)
                 if ((px[y * 256 + x] & 0xFFFFFF) == 0x303030) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-        if (x1 - x0 < 100 || y1 - y0 < 40 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
+        if (x1 - x0 < 100 || y1 - y0 < 24 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
         x0 = x0 < 3 ? 0 : x0 - 3; y0 = y0 < 3 ? 0 : y0 - 3; x1 = x1 > 252 ? 255 : x1 + 3; y1 = y1 > 188 ? 191 : y1 + 3;   /* its frame */
         g_hud_win[0] = x0; g_hud_win[1] = y0; g_hud_win[2] = x1 - x0 + 1; g_hud_win[3] = y1 - y0 + 1;
         return;
@@ -1310,7 +1335,7 @@ static void auto_scale(void) {
 static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
     const float* t = v->top;
     float least = g_minimap ? 48 : 128;                          /* the minimap: small, but it's the map */
-    if (t[2] < least || t[3] < least * 0.75f || v->topx[1] != 256 || (a_on_top && !v->held) || (g_minimap && g_mini_vis < 0.99f)) return;
+    if (t[2] < least || t[3] < least * 0.75f || v->topx[1] != 256 || (a_on_top && !v->held) || (g_minimap && g_mini_vis < 0.99f) || mapmarks_top_page()) return;
     memcpy(v->overlay, t, sizeof v->overlay);
     const char* test = getenv("DQIX_MAPMARKS_MOUSE");            /* tests: "x,y" on the top screen */
     if (test) { float x, y; if (sscanf(test, "%f,%f", &x, &y) == 2) mapmarks_hover(x, y); return; }
@@ -1470,6 +1495,7 @@ static void menu_sync(void) {
     menu_check(MI_MAPMARKS_OPENED, g_mapmarks_opened); menu_enable(MI_MAPMARKS_OPENED, g_gl && g_mapmarks);
     menu_check(MI_MAPMONSTERS, g_mapmarks_monsters); menu_enable(MI_MAPMONSTERS, g_gl && g_mapmarks);
     menu_check(MI_INTERIOR_MAPS, g_interior_maps); menu_enable(MI_INTERIOR_MAPS, g_gl);
+    for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
     for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
     menu_check(MI_SAVEBAK, g_save_backups);
     for (int i = 0; i < cheats_count(); i++) {
@@ -2075,6 +2101,7 @@ static void do_action(int id) {
     case MI_MAPMARKS_OPENED: g_mapmarks_opened = !g_mapmarks_opened; break;
     case MI_MAPMONSTERS: g_mapmarks_monsters = !g_mapmarks_monsters; break;
     case MI_INTERIOR_MAPS: g_interior_maps = !g_interior_maps; break;
+    case MI_SKIP0: case MI_SKIP0 + 1: case MI_SKIP0 + 2: g_skip_intro = id - MI_SKIP0; break;
     case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
     case MI_FULL2: second_window_fullscreen(); break;
@@ -2421,7 +2448,7 @@ void frontend_frame(void) {
         const Uint8* ks = SDL_GetKeyboardState(NULL);
         g_fe_keys = key_bits(ks) | pad_bits();
         static int always_fast = -1; if (always_fast < 0) always_fast = getenv("DQIX_FAST") != NULL;   /* tests */
-        g_fast = controls_key_held(CA_FAST, ks) || controls_pad_held(CA_FAST, g_pad) || always_fast || g_turbo || (g_farm_on && g_farm_fast);
+        g_fast = controls_key_held(CA_FAST, ks) || controls_pad_held(CA_FAST, g_pad) || always_fast || g_turbo || (g_farm_on && g_farm_fast) || bootskip_active();
         {   /* the controller's own shortcuts (stick clicks, triggers...): when pressed */
             static uint8_t was[CA_N];
             for (int a = CA_N_DS; a < CA_N; a++) {
@@ -2452,7 +2479,8 @@ void frontend_frame(void) {
         dragging = g_fe_touch;
         if (g_fe_touch) { g_fe_tx = tx; g_fe_ty = ty; }
         uint64_t tp = SDL_GetPerformanceCounter();
-        present();
+        static int shown;                                     /* Modern > Start: the logos run unseen (the window stays as first drawn: black) */
+        if (!shown || !bootskip_active()) { present(); shown = 1; }
         pr->present = (float)ticks_ms(SDL_GetPerformanceCounter() - tp);
         if (g_farm_stopped) {                                 /* Modern > Farm gold: it stopped by itself: pause and say why */
             g_farm_stopped = 0;

@@ -293,6 +293,7 @@ DQIX_WIFILOG=1 / DQIX_NETLOG=1 / DQIX_NETHEX=1 log the wireless chip / network /
 DQIX_DUMP_AT=100,200                           with DQIX_DUMP=dir,1: only those frames
 DQIX_MODE=enhanced / DQIX_NO_SETTINGS=1        window build: force a mode / ignore settings.ini
 DQIX_CHEATS=gold,hp                            turn those cheats on (keys as in settings.ini, cheats.c)
+DQIX_SKIP_INTRO=0/1/2                          Modern > Start: logos as on a DS / skipped / the opening movie too (bootskip.c)
 DQIX_CHEAT_CODE="94000130 FDFF0000 ..."        one more Action Replay code, run after the cheats every frame
 ```
 
@@ -331,6 +332,7 @@ runtime/gl_render.c    OpenGL: Enhanced 3D, composition, the DS Lite screen + co
 runtime/frontend_none.c headless frontend (tests)
 runtime/report.c       F10 / crash reports (inputs, saves, screenshot, log)
 runtime/cheats.c       the Cheats menu: Action Replay DS codes (data codes only), per ROM version
+runtime/bootskip.c     Modern > Start: the logos fast forward unseen, the opening movie skipped (START)
 patches.txt            instruction overrides applied when recompiling
 build-pc.bat           one-click Windows build (installs MSYS2 first time)
 build-windows.sh       the build itself (runs inside MSYS2)
