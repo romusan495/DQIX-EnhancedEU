@@ -53,6 +53,7 @@ jour : 2026-10-23.
 | `runtime/gpu3d.c`, `gpu3d.h`, `controls.c/.h` | #21, #23 | Mini-carte et touche M/R3 |
 | `runtime/mapmarks.c/.h` | #19, #26, #27 | Monstres sur la carte, plans des pièces |
 | `runtime/version.h` | #14, #18, #25 | Numéros de version des releases |
+| `runtime/gpu3d.c`, `gl_render.c`, `frontend_sdl.c`, `gpu2d.c`, `mapmarks.c` | PR #34 (bugs de Dr.Stone + bestiaire, 618ff9a) | Fusionnée le 26/10 ; pas encore dans le dossier de jeu |
 | `runtime/frontend_sdl.c` | PR #29 (confirmation avant de quitter) | Fusionnée |
 | `runtime/frontend_sdl.c`, `menu_win32.c`, `card.c`, `input.c`, `menu.h`, nouveau `bootskip.c` | `claude/project-thread-9e00md` ([Dev] Vers un vrai jeu PC, démarrage direct), en cours | Conflit probable sur `frontend_sdl.c` avec [Dev] Mini-carte (fiches d'objets, en cours) |
 | `runtime/frontend_sdl.c`, `mapmarks.c`, `mapmarks.h` | `claude/project-thread-6h3zvz` ([Dev] Mini-carte, correctif des fiches d'objets, 7cd0b23), pas encore poussée | Conflit probable sur `frontend_sdl.c` avec `claude/project-thread-9e00md` |
