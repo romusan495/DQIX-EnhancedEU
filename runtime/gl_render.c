@@ -240,6 +240,10 @@ static const char* FS_COMP =
     "  float wd2 = dd(H, D) + dd(H, I5) + dd(F, I4) + dd(F, B) + 4.0 * dd(E, I);\n"
     "  float eF = dd(E, F), eH = dd(E, H);\n"
     "  if (!(wd1 < wd2 && eF > 0.01 && eH > 0.01)) return E;\n"
+    "  ivec2 pn = eF <= eH ? p + ivec2(1, 0) * s : p + ivec2(0, 1) * s;\n"
+    /* (not toward a pixel where the 3D shows: its 2D colour there is the
+     * backdrop - the magenta round the quill of the save box) */
+    "  if (u_has3d != 0 && (texelFetch(u_info, clamp(pn, ivec2(0), ivec2(255, 191)), 0).r & 3u) != 0u) return E;\n"
     "  vec3 N = eF <= eH ? F : H;\n"
     "  float k = max(u_s2d, 0.05);\n"
     "  return mix(E, N, smoothstep(0.5 - k, 0.5 + k, a.x + a.y));\n"
