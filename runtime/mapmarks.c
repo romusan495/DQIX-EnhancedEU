@@ -717,7 +717,8 @@ typedef struct {
     float sx, sy;
     int door;                       /* -1: a spot of this place (spot), -2: a monster, -3: the hero, else a building's door on the picture */
     int spot, opened;               /* a spot: which, emptied */
-    int closed, emptied, shelves, recipes, quests;   /* a door: what its rooms hold */
+    int closed, emptied, shelves, recipes, quests;   /* a door: what its rooms hold (closed, emptied: chests) */
+    int jars, jars_done, barrels;   /* a door: its pots and barrels, closed, emptied, how many are barrels */
 } Mark;
 #define MAX_MARKS 256
 static Mark g_mark[MAX_MARKS]; static int g_nmark;
@@ -807,6 +808,17 @@ static void glyph_chest(float cx, float cy, float R, uint32_t body, uint32_t ban
     rbox(cx, cy - 0.5f * R, 3.2f * R - 1.5f, 0.3f * R, 0, band, a);
     rbox(cx, cy + 0.3f * R, 0.55f * R, 0.75f * R, 0.25f * R, band, a);
 }
+static void glyph_pot(float cx, float cy, float R, int opened, float a) {
+    rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, EDGE, a);
+    rbox(cx, cy, 2.4f * R - 1.5f, 2.4f * R - 1.5f, 2.4f * R - 1.5f, opened ? 0x8A8A8A : 0xC07A44, a);
+    rbox(cx, cy - 1.6f * R, 1.1f * R, 0.5f * R, 0.4f * R, opened ? 0x5A5A5A : 0x6A3A1A, a);   /* the mouth */
+}
+static void glyph_barrel(float cx, float cy, float R, int opened, float a) {
+    rbox(cx, cy, 2.2f * R, 2.7f * R, 1.0f * R, EDGE, a);
+    rbox(cx, cy, 2.2f * R - 1.5f, 2.7f * R - 1.5f, 1.0f * R - 1, opened ? 0x8A8A8A : 0xB98A4E, a);
+    rbox(cx, cy - 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);   /* the hoops */
+    rbox(cx, cy + 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);
+}
 static void glyph_book(float cx, float cy, float R, uint32_t cover, float a) {   /* cover, pages, spine */
     rbox(cx, cy, 2.7f * R, 3.0f * R, 0.5f * R, EDGE, a);
     rbox(cx, cy, 2.7f * R - 1.5f, 3.0f * R - 1.5f, 0.5f * R - 1, cover, a);
@@ -851,7 +863,7 @@ static void draw_mark(const Mark* m, int hover) {
         return;
     }
     if (m->door >= 0) {                                          /* a building: its contents on a dark badge */
-        int box = m->closed || m->emptied, n = (box > 0) + (m->shelves > 0) + (m->quests > 0);
+        int box = m->closed || m->emptied, jar = m->jars || m->jars_done, n = box + jar + (m->shelves > 0) + (m->quests > 0);
         float k = 0.75f, step = 5.6f * R, hw = (1.0f + 2.8f * (float)n) * R, hh = 3.4f * R;
         if (hover) rbox(cx, cy, hw + 0.8f * R, hh + 0.8f * R, 1.8f * R, 0xFFFFFF, 0.95f);
         rbox(cx, cy, hw, hh, 1.4f * R, 0xFFF8E0, 0.9f);
@@ -859,6 +871,11 @@ static void draw_mark(const Mark* m, int hover) {
         float x = cx - step * (float)(n - 1) / 2;
         if (m->quests) { glyph_quest(x, cy, R * k, m->opened, 1); x += step; }
         if (box) { glyph_chest(x, cy, R * k, m->closed ? 0xD0402E : 0x8A8A8A, m->closed ? 0xF2C94C : 0xB0B0B0, 1); x += step; }
+        if (jar) {                                               /* the most common of the two */
+            if (m->barrels * 2 >= m->jars + m->jars_done) glyph_barrel(x, cy, R * k, !m->jars, 1);
+            else glyph_pot(x, cy, R * k, !m->jars, 1);
+            x += step;
+        }
         if (m->shelves) glyph_book(x, cy, R * k, book_color(m->recipes > 0, 0), 1);
         return;
     }
@@ -872,15 +889,10 @@ static void draw_mark(const Mark* m, int hover) {
     else rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);
     switch (b->kind) {
     case K_POT:
-        rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, EDGE, a);
-        rbox(cx, cy, 2.4f * R - 1.5f, 2.4f * R - 1.5f, 2.4f * R - 1.5f, m->opened ? 0x8A8A8A : 0xC07A44, a);
-        rbox(cx, cy - 1.6f * R, 1.1f * R, 0.5f * R, 0.4f * R, m->opened ? 0x5A5A5A : 0x6A3A1A, a);   /* the mouth */
+        glyph_pot(cx, cy, R, m->opened, a);
         break;
     case K_BARREL:
-        rbox(cx, cy, 2.2f * R, 2.7f * R, 1.0f * R, EDGE, a);
-        rbox(cx, cy, 2.2f * R - 1.5f, 2.7f * R - 1.5f, 1.0f * R - 1, m->opened ? 0x8A8A8A : 0xB98A4E, a);
-        rbox(cx, cy - 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);   /* the hoops */
-        rbox(cx, cy + 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);
+        glyph_barrel(cx, cy, R, m->opened, a);
         break;
     case K_SHELF:
         glyph_book(cx, cy, R, book_color(bk && bk->recipes, !bk || bk->dull), a);
@@ -1417,12 +1429,15 @@ int mapmarks_update(const uint8_t** rgba) {
                         } else if (b->kind == K_QUEST) {
                             int st = quest_state(b->idx);
                             if (st == 1 || st == 2) { m.quests++; if (!m.opened || st < m.opened) m.opened = st; }   /* a door's opened: its best quest state */
+                        } else if (!is_box(b->kind)) {                       /* a pot or a barrel */
+                            if (flag_set(b->flag)) m.jars_done++; else m.jars++;
+                            if (b->kind == K_BARREL) m.barrels++;
                         } else if (flag_set(b->flag)) m.emptied++;
                         else m.closed++;
                     }
                 }
-                if (!g_mapmarks_opened) m.emptied = 0;
-                if (m.closed || m.emptied || m.shelves || m.quests) add_mark(&m);
+                if (!g_mapmarks_opened) m.emptied = m.jars_done = 0;
+                if (m.closed || m.emptied || m.jars || m.jars_done || m.shelves || m.quests) add_mark(&m);
             }
             /* on a plan, the hero: field character 0 (farm.c) */
             uint32_t a = rd32(FIELD_PTR);
@@ -1458,8 +1473,8 @@ int mapmarks_update(const uint8_t** rgba) {
     uint32_t key = 2166136261u;
     for (int i = 0; i < g_nmark; i++) {
         const Mark* m = &g_mark[i];
-        int v[9] = { (int)lroundf(m->sx * MAPMARKS_R), (int)lroundf(m->sy * MAPMARKS_R), m->door, m->spot, m->opened, m->closed, m->emptied, m->shelves, m->quests };
-        for (int k = 0; k < 9; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
+        int v[11] = { (int)lroundf(m->sx * MAPMARKS_R), (int)lroundf(m->sy * MAPMARKS_R), m->door, m->spot, m->opened, m->closed, m->emptied, m->shelves, m->quests, m->jars, m->jars_done };
+        for (int k = 0; k < 11; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
     }
     key = (key ^ (uint32_t)(g_hover + 2)) * 16777619u;
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;

@@ -59,6 +59,7 @@ static SDL_GameController* g_pad;
 static int g_side_by_side, g_corner, g_scale = 3, g_fullscreen;   /* g_corner: the top screen small, beside the bottom one */
 static int g_wide = 1;                                            /* widescreen: the 3D screen wider than the DS's, the other small in its corner */
 static float g_wide_mix = 1.0f;                                   /* widescreen: 1 = the field wide, 0 = beside the small screen (2D under its corner) */
+static int g_top_menu;                                            /* widescreen: a menu with a 3D model on the top screen (wide_update) */
 static int g_small_blank;                                         /* widescreen: the small screen shows nothing (all black): not drawn */
 static int g_swap;                                                /* the screens trade places (F9) */
 static int g_two;                                                 /* two windows, one screen in each (two monitors) */
@@ -306,9 +307,13 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
-        if (g_minimap && which == 1 && !pop && mapmarks_top_page()) {
-            /* an item's card on the top screen (Items, Equipment...): both
-             * screens whole, side by side, the card on the left, until it closes */
+        int top_menu = g_minimap && which == 0 && !pop && g_top_menu && in_adventure() && !g_hud_n && !g_hud_win[2];
+        int no3d_menu = g_minimap && which < 0 && !pop && in_adventure() && mapmarks_top_page() && !g_small_blank;
+        if ((g_minimap && which == 1 && !pop && mapmarks_top_page()) || top_menu || no3d_menu) {
+            /* an item's card on the top screen (Items, Equipment...), a menu
+             * with its 3D model there (the monster list), or menus on both
+             * screens without 3D (skill points): both screens whole, side by
+             * side, the top one on the left, until it closes */
             v->cw = 512; v->ch = 192;
             v->top[0] = 0; v->top[1] = 0; v->top[2] = 256; v->top[3] = 192;
             v->bot[0] = 256; v->bot[1] = 0; v->bot[2] = 256; v->bot[3] = 192;
@@ -1197,7 +1202,7 @@ static void report_window(const char* path) {
  * field again. From the 3D screen's last picture: pixels where no 2D layer
  * covers the 3D are the field. */
 extern uint8_t g_comp_info[256 * 192 * 4];
-extern int g_comp_has3d;
+extern int g_comp_has3d, g_comp_3d_on2d;
 extern uint32_t g_engine_out[2][256 * 192];
 static void wide_update(int a_on_top) {
     if (!g_wide || !WIDE_GL || g_wide_pop) { g_wide_mix = 1.0f; if (!g_wide || !WIDE_GL) return; }
@@ -1226,6 +1231,9 @@ static void wide_update(int a_on_top) {
         if (under) g_mini_vis = fmaxf(0.0f, g_mini_vis - 1.0f / 6);
         else if (clear >= 20) g_mini_vis = fminf(1.0f, g_mini_vis + 1.0f / 12);
     }
+    /* 3D on the top screen in a menu (the monster list, battle records: a model
+     * over a 2D page), not a battle (the 3D over the backdrop) */
+    g_top_menu = which == 0 && g_comp_has3d && g_comp_3d_on2d * 4 > 256 * 192;
     int covered = 1;
     if (which == 0) covered = 0;                                  /* 3D on the top screen: no sliding */
     else if (which == 1 && g_comp_has3d) {
@@ -1269,11 +1277,11 @@ static void hud_update(int a_on_top) {
         sep[y] = n > 200; nsep += sep[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
-        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles */
+        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
         for (int y = 0; y < 192; y++)
             for (int x = 0; x < 256; x++)
                 if ((px[y * 256 + x] & 0xFFFFFF) == 0x303030) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-        if (x1 - x0 < 100 || y1 - y0 < 40 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
+        if (x1 - x0 < 100 || y1 - y0 < 24 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
         x0 = x0 < 3 ? 0 : x0 - 3; y0 = y0 < 3 ? 0 : y0 - 3; x1 = x1 > 252 ? 255 : x1 + 3; y1 = y1 > 188 ? 191 : y1 + 3;   /* its frame */
         g_hud_win[0] = x0; g_hud_win[1] = y0; g_hud_win[2] = x1 - x0 + 1; g_hud_win[3] = y1 - y0 + 1;
         return;

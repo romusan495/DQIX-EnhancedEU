@@ -284,17 +284,19 @@ static void wide_submit(int nverts, int facing) {
     if (n_wpoly >= WPOLY_MAX || n_wvtx + 10 > WVTX_MAX) return;
     int widen = viewport[0] == 0 && viewport[4] == 256;
     /* A backdrop that fills the DS's screen from edge to edge (every corner on
-     * its left or right edge: a sky gradient, a fade) fills the wide picture
-     * too, instead of leaving the sides bare - if it is plain colour or far
-     * away (a far picture stretched a little; nearer pictures keep their shape). */
+     * or past its left or right edge: a sky gradient, a fade - the church's
+     * black after saving is a big quad reaching far past the left edge) fills
+     * the wide picture too, instead of leaving the sides bare - if it is plain
+     * colour or far away (a far picture stretched a little; nearer pictures
+     * keep their shape). */
     int stretch = widen && side > 0 && nverts >= 3;
     if (stretch) {
         int left = 0, right = 0, far = 1;
         for (int i = 0; i < nverts && stretch; i++) {
             s64 x = tmp_vtx[i].pos[0], w = tmp_vtx[i].pos[3], tol = (w < 0 ? -w : w) / 256 + 1;
             if (w <= 0) stretch = 0;
-            else if (x >= w - tol && x <= w + tol) right++;
-            else if (x <= -w + tol && x >= -w - tol) left++;
+            else if (x >= w - tol) right++;
+            else if (x <= -w + tol) left++;
             else stretch = 0;
             if (w > 0 && (s64)tmp_vtx[i].pos[2] * 100 < w * 98) far = 0;   /* z/w under 0.98 */
         }
