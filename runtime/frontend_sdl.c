@@ -326,10 +326,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             else small[0] = small[1] = small[2] = small[3] = 0;
         }
         if (which == 0 && (g_hud_n > 0 || g_hud_win[2]) && !g_peek && !(g_small_hide && !pop)) {
-            /* Battle HUD: the commands screen cut into its panels, over the 3D,
-             * stacked in the bottom left at half size: the one whose turn it
-             * is (the tall panel, with the commands) on top, the others below
-             * it in the party's order.
+            /* Battle HUD: the commands screen cut into its panels, over the 3D.
+             * The party's panels in a row along the top; the one whose turn it
+             * is (the tall panel, with the commands) bigger in the bottom left.
              * The map window keeps the last map (gl_hold() in present_gl). */
             if (second) {
                 if (pop) { v->held = 1; v->bot[0] = v->bot[1] = v->bot[2] = v->bot[3] = 0; v->top[0] = v->top[1] = 0; v->top[2] = 256; v->top[3] = 192; v->topx[0] = (float)side; v->topx[1] = 256; v->front = 0; }
@@ -340,19 +339,19 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[4] = 1; q[5] = (float)g_hud_win[0]; q[6] = (float)g_hud_win[1]; q[7] = w; q[8] = h;
                     q[2] = w * kw; q[3] = h * kw; q[0] = (v->cw - q[2]) / 2; q[1] = 6;
                 }
-                const float k = 0.5f, gap = 2;
-                float total = 0;
-                for (int i = 0; i < g_hud_n; i++) total += (float)(g_hud_band[i][1] - g_hud_band[i][0]) * k + gap;
-                float y = 192 - total;
-                for (int pass = 0; pass < 2; pass++)              /* the tall one first */
-                    for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
-                        float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]);
-                        if ((h >= 50) == pass) continue;
-                        float* q = v->piece[v->npiece++];
-                        q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
-                        q[0] = 4; q[1] = y; q[2] = 244 * k; q[3] = h * k;
-                        y += q[3] + gap;
+                int nrow = 0;
+                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50;
+                float slot = (v->cw - 4) / (float)(nrow > 4 ? nrow : 4), k = fminf((slot - 2) / 244.0f, 0.5f);
+                float x = (v->cw - slot * (float)nrow) / 2;               /* the row centred */
+                for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
+                    float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]), *q = v->piece[v->npiece++];
+                    q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
+                    if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
+                    else {                                                /* at most half the picture's height */
+                        float kb = fminf(0.62f, 90.0f / h);
+                        q[2] = 244 * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
                     }
+                }
             }
         }
     } else if (two || single) {
@@ -1295,6 +1294,8 @@ static void hud_update(int a_on_top) {
         /* a member's panel: 30-45 rows (the one whose turn it is: up to 80), framed in white */
         int h = y - y0, mid = (y0 + y) / 2, framed = 0;
         for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) framed = 1;
+        if (!framed && n == 0) continue;                          /* above the panels (while the turn plays out): the backdrop */
+        if (!framed && n >= 2) break;                             /* below them: nothing more */
         if (n == 8 || h < 30 || h > 80 || !framed || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
