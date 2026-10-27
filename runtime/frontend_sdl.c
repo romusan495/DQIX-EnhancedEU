@@ -348,7 +348,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
                     if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
                     else {                                                /* at most half the picture's height */
-                        float kb = fminf(0.62f, 90.0f / h);
+                        float kb = fminf(0.62f, 110.0f / h);
                         q[2] = 244 * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
                     }
                 }
@@ -1269,11 +1269,12 @@ static void hud_update(int a_on_top) {
     }
     if (which != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the bottom screen's engine */
-    int sep[192], nsep = 0;
+    int sep[192], cut[192], nsep = 0;                             /* cut: a line the list's description box covers on the right (Spells, Items...) */
     for (int y = 0; y < 192; y++) {
-        int n = 0;
-        for (int x = 10; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
-        sep[y] = n > 200; nsep += sep[y];
+        int n = 0, nr = 0;
+        for (int x = 10; x < 120; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
+        for (int x = 130; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) nr++;
+        sep[y] = n > 100; cut[y] = sep[y] && nr < 50; nsep += sep[y] && !cut[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
         int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
@@ -1299,7 +1300,21 @@ static void hud_update(int a_on_top) {
         if (n == 8 || h < 30 || h > 80 || !framed || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
-    if (n >= 2) g_hud_n = n;
+    if (n < 2) return;
+    /* a list open (Spells, Items...): its description box covers the right of
+     * the panels under the one whose turn it is. Those and the tall one in
+     * one piece, as on the DS; the others in the row. */
+    int a = -1, b = -1;
+    for (int i = 0; i < n; i++) if (g_hud_band[i][1] - g_hud_band[i][0] >= 50) a = b = i;
+    for (int i = 0; a >= 0 && i + 1 < n; i++)
+        for (int y = g_hud_band[i][1]; y < g_hud_band[i + 1][0]; y++)
+            if (cut[y]) { if (i < a) a = i; if (i + 1 > b) b = i + 1; break; }
+    if (a >= 0 && b > a) {
+        g_hud_band[a][1] = g_hud_band[b][1];
+        for (int i = b + 1; i < n; i++) { g_hud_band[i - (b - a)][0] = g_hud_band[i][0]; g_hud_band[i - (b - a)][1] = g_hud_band[i][1]; }
+        n -= b - a;
+    }
+    if (n >= 1) g_hud_n = n;
 }
 
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at
