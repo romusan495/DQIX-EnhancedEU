@@ -1343,10 +1343,12 @@ static int on_screen(float sx, float sy) { return sx >= -4 && sx <= 260 && sy >=
 
 /* The top screen shows a page instead of the map: an item's card (Items,
  * Equipment...). The map (towns: BG0CNT 4E01, BG1CNT 0D02; the fields:
- * 0F01, 1002) leaves BG2CNT at 0; the cards set it (0F00, 0E03, 0002). */
+ * 0F01, 1002) leaves BG2CNT at 0; the cards set it (0F00, 0E03, 0002).
+ * A battle leaves BG2CNT set (0704) once back on the map: the map's BG0 is
+ * the one at priority 1, a card's at 0. */
 int mapmarks_top_page(void) {
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000;
-    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0;
+    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0 && (IO16(top + 0x08) & 3) != 1;
 }
 
 int mapmarks_update(const uint8_t** rgba) {
