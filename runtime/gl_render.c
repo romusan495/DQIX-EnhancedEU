@@ -946,6 +946,16 @@ static int win_frame_tile(const uint8_t* rgba, int w, int h) {
     return any;
 }
 
+/* A piece of a sprite cut into several textures (a far character's head and
+ * body, a speech bubble's corners, an item on the ground): small, with
+ * see-through pixels. Upscaled one by one (pack or xBR), the pieces no
+ * longer meet ("cut and glued back" heads): they stay at the DS's size. */
+static int sprite_piece(const uint8_t* rgba, int w, int h) {
+    if (w > 32 || h > 32) return 0;
+    for (int i = 0; i < w * h; i++) if (!rgba[i * 4 + 3]) return 1;
+    return 0;
+}
+
 static int g_tex_frame;                                        /* texture_for's last texture: TexEntry.frame */
 static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
     TexEntry* e = tex_lookup(ti, pl);
@@ -966,13 +976,14 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
             if (g_hdtext_on && ((ti >> 26) & 7) == 3 && hdtext_texture(gpu3d_texels(ti), *w, *h, g_decode, g_upbuf))
                 f = HDT_R;                                              /* letters drawn into it: again at full resolution (hdtext.c) */
             else {
+                int piece = sprite_piece(g_decode, *w, *h);
                 if (g_pack_on || g_dump_on) {
                     if (g_pack_on) pack_load_list();
                     uint64_t key = tex_key(g_decode, *w, *h);
                     if (g_dump_on) dump_texture(key, g_decode, *w, *h);
-                    if (g_pack_on && g_pack_n) e->hd = pack_texture(key);
+                    if (g_pack_on && g_pack_n && !piece) e->hd = pack_texture(key);
                 }
-                if (!e->hd && g_texup && *w * *h <= 256 * 256) {   /* upscaled: 4x (2x for the big ones) */
+                if (!e->hd && g_texup && *w * *h <= 256 * 256 && !piece) {   /* upscaled: 4x (2x for the big ones) */
                     f = *w * *h <= 128 * 128 ? 4 : 2;
                     bleed(g_decode, *w, *h);
                     xbr_upscale(g_decode, *w, *h, f, g_upbuf);
