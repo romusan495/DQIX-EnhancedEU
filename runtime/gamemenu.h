@@ -22,3 +22,6 @@ void gamemenu_wheel(int dy);
 /* The picture to draw over the whole window (premultiplied RGBA, w x h, rows
  * top-down): *changed says whether it differs from the last call's. */
 const uint8_t* gamemenu_picture(int w, int h, int* changed);
+/* ...and where its window is, for the renderer to draw it under the picture:
+ * x0 y0 x1 y1 and the frame's line width (drawable pixels); NULL when closed. */
+const float* gamemenu_box(void);
