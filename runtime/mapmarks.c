@@ -717,7 +717,8 @@ typedef struct {
     float sx, sy;
     int door;                       /* -1: a spot of this place (spot), -2: a monster, -3: the hero, else a building's door on the picture */
     int spot, opened;               /* a spot: which, emptied */
-    int closed, emptied, shelves, recipes, quests;   /* a door: what its rooms hold */
+    int closed, emptied, shelves, recipes, quests;   /* a door: what its rooms hold (closed, emptied: chests) */
+    int jars, jars_done, barrels;   /* a door: its pots and barrels, closed, emptied, how many are barrels */
 } Mark;
 #define MAX_MARKS 256
 static Mark g_mark[MAX_MARKS]; static int g_nmark;
@@ -807,6 +808,17 @@ static void glyph_chest(float cx, float cy, float R, uint32_t body, uint32_t ban
     rbox(cx, cy - 0.5f * R, 3.2f * R - 1.5f, 0.3f * R, 0, band, a);
     rbox(cx, cy + 0.3f * R, 0.55f * R, 0.75f * R, 0.25f * R, band, a);
 }
+static void glyph_pot(float cx, float cy, float R, int opened, float a) {
+    rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, EDGE, a);
+    rbox(cx, cy, 2.4f * R - 1.5f, 2.4f * R - 1.5f, 2.4f * R - 1.5f, opened ? 0x8A8A8A : 0xC07A44, a);
+    rbox(cx, cy - 1.6f * R, 1.1f * R, 0.5f * R, 0.4f * R, opened ? 0x5A5A5A : 0x6A3A1A, a);   /* the mouth */
+}
+static void glyph_barrel(float cx, float cy, float R, int opened, float a) {
+    rbox(cx, cy, 2.2f * R, 2.7f * R, 1.0f * R, EDGE, a);
+    rbox(cx, cy, 2.2f * R - 1.5f, 2.7f * R - 1.5f, 1.0f * R - 1, opened ? 0x8A8A8A : 0xB98A4E, a);
+    rbox(cx, cy - 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);   /* the hoops */
+    rbox(cx, cy + 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);
+}
 static void glyph_book(float cx, float cy, float R, uint32_t cover, float a) {   /* cover, pages, spine */
     rbox(cx, cy, 2.7f * R, 3.0f * R, 0.5f * R, EDGE, a);
     rbox(cx, cy, 2.7f * R - 1.5f, 3.0f * R - 1.5f, 0.5f * R - 1, cover, a);
@@ -851,7 +863,7 @@ static void draw_mark(const Mark* m, int hover) {
         return;
     }
     if (m->door >= 0) {                                          /* a building: its contents on a dark badge */
-        int box = m->closed || m->emptied, n = (box > 0) + (m->shelves > 0) + (m->quests > 0);
+        int box = m->closed || m->emptied, jar = m->jars || m->jars_done, n = box + jar + (m->shelves > 0) + (m->quests > 0);
         float k = 0.75f, step = 5.6f * R, hw = (1.0f + 2.8f * (float)n) * R, hh = 3.4f * R;
         if (hover) rbox(cx, cy, hw + 0.8f * R, hh + 0.8f * R, 1.8f * R, 0xFFFFFF, 0.95f);
         rbox(cx, cy, hw, hh, 1.4f * R, 0xFFF8E0, 0.9f);
@@ -859,6 +871,11 @@ static void draw_mark(const Mark* m, int hover) {
         float x = cx - step * (float)(n - 1) / 2;
         if (m->quests) { glyph_quest(x, cy, R * k, m->opened, 1); x += step; }
         if (box) { glyph_chest(x, cy, R * k, m->closed ? 0xD0402E : 0x8A8A8A, m->closed ? 0xF2C94C : 0xB0B0B0, 1); x += step; }
+        if (jar) {                                               /* the most common of the two */
+            if (m->barrels * 2 >= m->jars + m->jars_done) glyph_barrel(x, cy, R * k, !m->jars, 1);
+            else glyph_pot(x, cy, R * k, !m->jars, 1);
+            x += step;
+        }
         if (m->shelves) glyph_book(x, cy, R * k, book_color(m->recipes > 0, 0), 1);
         return;
     }
@@ -872,15 +889,10 @@ static void draw_mark(const Mark* m, int hover) {
     else rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);
     switch (b->kind) {
     case K_POT:
-        rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, EDGE, a);
-        rbox(cx, cy, 2.4f * R - 1.5f, 2.4f * R - 1.5f, 2.4f * R - 1.5f, m->opened ? 0x8A8A8A : 0xC07A44, a);
-        rbox(cx, cy - 1.6f * R, 1.1f * R, 0.5f * R, 0.4f * R, m->opened ? 0x5A5A5A : 0x6A3A1A, a);   /* the mouth */
+        glyph_pot(cx, cy, R, m->opened, a);
         break;
     case K_BARREL:
-        rbox(cx, cy, 2.2f * R, 2.7f * R, 1.0f * R, EDGE, a);
-        rbox(cx, cy, 2.2f * R - 1.5f, 2.7f * R - 1.5f, 1.0f * R - 1, m->opened ? 0x8A8A8A : 0xB98A4E, a);
-        rbox(cx, cy - 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);   /* the hoops */
-        rbox(cx, cy + 1.1f * R, 2.0f * R, 0.25f * R, 0, EDGE, a * 0.8f);
+        glyph_barrel(cx, cy, R, m->opened, a);
         break;
     case K_SHELF:
         glyph_book(cx, cy, R, book_color(bk && bk->recipes, !bk || bk->dull), a);
@@ -1331,10 +1343,12 @@ static int on_screen(float sx, float sy) { return sx >= -4 && sx <= 260 && sy >=
 
 /* The top screen shows a page instead of the map: an item's card (Items,
  * Equipment...). The map (towns: BG0CNT 4E01, BG1CNT 0D02; the fields:
- * 0F01, 1002) leaves BG2CNT at 0; the cards set it (0F00, 0E03, 0002). */
+ * 0F01, 1002) leaves BG2CNT at 0; the cards set it (0F00, 0E03, 0002).
+ * A battle leaves BG2CNT set (0704) once back on the map: the map's BG0 is
+ * the one at priority 1, a card's at 0. */
 int mapmarks_top_page(void) {
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000;
-    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0;
+    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0 && (IO16(top + 0x08) & 3) != 1;
 }
 
 int mapmarks_update(const uint8_t** rgba) {
@@ -1417,12 +1431,15 @@ int mapmarks_update(const uint8_t** rgba) {
                         } else if (b->kind == K_QUEST) {
                             int st = quest_state(b->idx);
                             if (st == 1 || st == 2) { m.quests++; if (!m.opened || st < m.opened) m.opened = st; }   /* a door's opened: its best quest state */
+                        } else if (!is_box(b->kind)) {                       /* a pot or a barrel */
+                            if (flag_set(b->flag)) m.jars_done++; else m.jars++;
+                            if (b->kind == K_BARREL) m.barrels++;
                         } else if (flag_set(b->flag)) m.emptied++;
                         else m.closed++;
                     }
                 }
-                if (!g_mapmarks_opened) m.emptied = 0;
-                if (m.closed || m.emptied || m.shelves || m.quests) add_mark(&m);
+                if (!g_mapmarks_opened) m.emptied = m.jars_done = 0;
+                if (m.closed || m.emptied || m.jars || m.jars_done || m.shelves || m.quests) add_mark(&m);
             }
             /* on a plan, the hero: field character 0 (farm.c) */
             uint32_t a = rd32(FIELD_PTR);
@@ -1458,8 +1475,8 @@ int mapmarks_update(const uint8_t** rgba) {
     uint32_t key = 2166136261u;
     for (int i = 0; i < g_nmark; i++) {
         const Mark* m = &g_mark[i];
-        int v[9] = { (int)lroundf(m->sx * MAPMARKS_R), (int)lroundf(m->sy * MAPMARKS_R), m->door, m->spot, m->opened, m->closed, m->emptied, m->shelves, m->quests };
-        for (int k = 0; k < 9; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
+        int v[11] = { (int)lroundf(m->sx * MAPMARKS_R), (int)lroundf(m->sy * MAPMARKS_R), m->door, m->spot, m->opened, m->closed, m->emptied, m->shelves, m->quests, m->jars, m->jars_done };
+        for (int k = 0; k < 11; k++) key = (key ^ (uint32_t)v[k]) * 16777619u;
     }
     key = (key ^ (uint32_t)(g_hover + 2)) * 16777619u;
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;
@@ -1474,5 +1491,158 @@ int mapmarks_update(const uint8_t** rgba) {
         for (int i = 0; i < g_nmark; i++) if (i != g_hover && (g_mark[i].door == -2) == !pass) draw_mark(&g_mark[i], 0);
     if (g_hover >= 0) { draw_mark(&g_mark[g_hover], 1); draw_tooltip(&g_mark[g_hover]); }
     *rgba = g_img;
+    return 1;
+}
+
+/* ---------------------------------------------------------------- a shop's list
+ * Widescreen (one screen): a shop's buy list shows each item's own colour
+ * icon before its name, instead of its kind's white sign.
+ *  - main RAM: the shop (0x021155CC points at it, USA and Europe alike): its
+ *    items (u16, the names' keys) at +0x70, how many at +0x5D, the page shown
+ *    at +0x83C (u16, 6 lines a page).
+ *  - data/prm/itemdt.gp2, itemdt_en.nat: 32 bytes an item from +0x0C, its key
+ *    at +0x18; at +0x10 its icon: the letter (bits 20..27) and the number
+ *    (bits 0..9; 999: bits 10..19) of data/ani/d_<letter><number>.spr.
+ *  - .spr: u16 1, 3, width, height, cells, 0; per cell u16 x, y, and its
+ *    width and height (8 << n), then its pixels (4 bits each, by rows); then
+ *    u32 colours and the palette (RGB555; colour 0 see-through).
+ *  - the list on the bottom screen: line i from y 22 + 14 i, 14 high; the
+ *    kind's sign in x 20..33. */
+#define SHOP_PTR    0x1155CC
+#define SHOP_LINES  6
+#define SHOP_Y0     22
+#define SHOP_DY     14
+#define SHOP_X0     20
+#define SHOP_X1     34
+
+static uint8_t* g_itemdt; static uint32_t g_itemdt_n;
+static uint8_t g_icons[MAPMARKS_W * MAPMARKS_H * 4];
+
+static int icon_of(uint16_t key, char* letter, int* num) {
+    if (!g_itemdt) {
+        uint32_t n = 0;
+        const uint8_t* pack = rom_file("data/prm/itemdt.gp2", &n);
+        g_itemdt = gpc_file(pack, n, "itemdt_en.nat", &g_itemdt_n);
+        if (!g_itemdt) g_itemdt = gpc_file(pack, n, "itemdt.nat", &g_itemdt_n);
+        if (!g_itemdt) { g_itemdt_n = 0; g_itemdt = malloc(1); }
+    }
+    for (uint32_t o = 12; o + 32 <= g_itemdt_n; o += 32) {
+        if (le16(g_itemdt + o + 0x18) != key) continue;
+        uint32_t w = le32(g_itemdt + o + 0x10);
+        int c = (int)((w >> 20) & 0xFF), k = (int)(w & 0x3FF);
+        if (!c || !strchr("bcgimprsw", c)) continue;
+        if (k == 999) k = (int)((w >> 10) & 0x3FF);
+        *letter = (char)c; *num = k;
+        return 1;
+    }
+    return 0;
+}
+
+/* An item's icon into g_icons, in the square (x, y, size) of overlay pixels. */
+static void draw_icon(uint16_t key, int x0, int y0, int size) {
+    char c, path[32]; int num;
+    if (!icon_of(key, &c, &num)) return;
+    snprintf(path, sizeof path, "data/ani/d_%c%03d.spr", c, num);
+    uint32_t n = 0;
+    const uint8_t* b = rom_file(path, &n);
+    if (!b || n < 12 || le16(b) != 1) return;
+    int W = le16(b + 4), H = le16(b + 6), cells = le16(b + 8);
+    if (W <= 0 || H <= 0 || W > 64 || H > 64) return;
+    uint8_t idx[64 * 64] = { 0 };
+    uint32_t p = 12;
+    for (int i = 0; i < cells; i++) {
+        if (p + 8 > n) return;
+        int cx = le16(b + p), cy = le16(b + p + 2), cw = 8 << (le16(b + p + 4) & 3), ch = 8 << (le16(b + p + 6) & 3);
+        p += 8;
+        if (p + (uint32_t)(cw * ch / 2) > n) return;
+        for (int j = 0; j < cw * ch; j++) {
+            int x = cx + j % cw, y = cy + j / cw, v = (b[p + j / 2] >> ((j & 1) * 4)) & 15;
+            if (x < W && y < H) idx[y * 64 + x] = (uint8_t)v;
+        }
+        p += (uint32_t)(cw * ch / 2);
+    }
+    if (p + 4 > n) return;
+    uint32_t ncol = le32(b + p); p += 4;
+    if (ncol > 16) ncol = 16;
+    if (p + ncol * 2 > n) return;
+    /* each overlay pixel: the average of the icon's pixels under it (premultiplied) */
+    for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++) {
+            float sx0 = (float)x * W / size, sx1 = (float)(x + 1) * W / size, sy0 = (float)y * H / size, sy1 = (float)(y + 1) * H / size;
+            float acc[4] = { 0 }, area = 0;
+            for (int v = (int)sy0; v < H && v < sy1; v++)
+                for (int u = (int)sx0; u < W && u < sx1; u++) {
+                    float a = (fminf(sx1, (float)u + 1) - fmaxf(sx0, (float)u)) * (fminf(sy1, (float)v + 1) - fmaxf(sy0, (float)v));
+                    int i = idx[v * 64 + u];
+                    area += a;
+                    if (!i || (uint32_t)i >= ncol) continue;
+                    uint16_t col = le16(b + p + 2 * i);
+                    acc[0] += a * (float)(col & 31) / 31; acc[1] += a * (float)((col >> 5) & 31) / 31; acc[2] += a * (float)((col >> 10) & 31) / 31; acc[3] += a;
+                }
+            int X = x0 + x, Y = y0 + y;
+            if (area <= 0 || acc[3] <= 0 || X < 0 || Y < 0 || X >= MAPMARKS_W || Y >= MAPMARKS_H) continue;
+            uint8_t* d = &g_icons[(Y * MAPMARKS_W + X) * 4];
+            for (int k = 0; k < 4; k++) d[k] = (uint8_t)(acc[k] / area * 255 + 0.5f);
+        }
+}
+
+int mapmarks_shop(uint32_t* px, uint8_t* info, int desc_y, const uint8_t** rgba, int* changed) {
+    static uint32_t last_key;
+    static int sel;                                               /* the line the hand points at (it blinks: kept while hidden) */
+    *rgba = g_icons; *changed = 0;
+    uint32_t shop = rd32(SHOP_PTR);
+    int n = 0, page = 0, lines = 0;
+    if (px && rd32(FIELD_PTR) != 0 && mapmarks_top_page() && shop >= 0x02000000 && shop < 0x02400000) {
+        n = g_main_ram[(shop + 0x5D) & (MAIN_RAM_SIZE - 1)];
+        page = rd16(shop + 0x83C);
+        lines = n - page * SHOP_LINES;
+        if (lines > SHOP_LINES) lines = SHOP_LINES;
+    }
+    /* every line of the page shows its kind's sign (white) where it should */
+    for (int i = 0; i < lines; i++) {
+        int white = 0;
+        for (int y = SHOP_Y0 + SHOP_DY * i + 2; y < SHOP_Y0 + SHOP_DY * i + SHOP_DY - 1; y++)
+            for (int x = SHOP_X0 + 1; x < SHOP_X1 - 1; x++) {
+                uint32_t c = px[y * 256 + x];
+                white += ((c >> 16) & 255) > 200 && ((c >> 8) & 255) > 200 && (c & 255) > 200;
+            }
+        if (white < 6) { lines = 0; break; }
+    }
+    if (lines <= 0) { if (last_key) { last_key = 0; memset(g_icons, 0, sizeof g_icons); *changed = 1; } return 0; }
+    for (int i = 0; i < lines; i++) {
+        int yellow = 0;
+        for (int y = SHOP_Y0 + SHOP_DY * i; y < SHOP_Y0 + SHOP_DY * i + SHOP_DY; y++)
+            for (int x = 0; x < SHOP_X0; x++) {
+                uint32_t c = px[y * 256 + x];
+                yellow += ((c >> 16) & 255) > 180 && ((c >> 8) & 255) > 140 && (c & 255) < 100;
+            }
+        if (yellow >= 6) sel = i;
+    }
+    if (sel >= lines) sel = lines - 1;
+    uint32_t key = 2166136261u;
+    for (int i = 0; i < lines; i++) key = (key ^ rd16(shop + 0x70 + 2 * (page * SHOP_LINES + i))) * 16777619u;
+    key = (key ^ (uint32_t)lines) * 16777619u;
+    key = (key ^ (uint32_t)sel) * 16777619u;
+    key = (key ^ (uint32_t)(desc_y + 1)) * 16777619u;
+    if (!key) key = 1;
+    if (key != last_key) {
+        last_key = key; *changed = 1;
+        memset(g_icons, 0, sizeof g_icons);
+        for (int i = 0; i < lines; i++) {                         /* a little bigger than the sign, centred on it */
+            int s = (SHOP_DY + 1) * MAPMARKS_R, cx = (SHOP_X0 + SHOP_X1) * MAPMARKS_R / 2, cy = (SHOP_Y0 + SHOP_DY * i) * MAPMARKS_R + SHOP_DY * MAPMARKS_R / 2;
+            draw_icon(rd16(shop + 0x70 + 2 * (page * SHOP_LINES + i)), cx - s / 2, cy - s / 2, s);
+        }
+        if (desc_y >= 0)                                          /* the chosen one big, at the left of its description */
+            draw_icon(rd16(shop + 0x70 + 2 * (page * SHOP_LINES + sel)), SHOP_DESC_X * MAPMARKS_R, desc_y * MAPMARKS_R, SHOP_DESC_ICON * MAPMARKS_R);
+    }
+    /* the signs rubbed out: the window's own pixels from the line's first row */
+    for (int i = 0; i < lines; i++) {
+        int top = SHOP_Y0 + SHOP_DY * i;
+        for (int y = top + 1; y < top + SHOP_DY; y++)
+            for (int x = SHOP_X0; x < SHOP_X1; x++) {
+                px[y * 256 + x] = px[top * 256 + x];
+                if (info) memcpy(&info[(y * 256 + x) * 4], &info[(top * 256 + x) * 4], 4);
+            }
+    }
     return 1;
 }

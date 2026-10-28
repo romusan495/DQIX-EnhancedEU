@@ -61,6 +61,7 @@
     X(void, glBindFramebuffer, (GLenum, GLuint)) \
     X(void, glFramebufferTexture2D, (GLenum, GLenum, GLenum, GLuint, GLint)) \
     X(GLenum, glCheckFramebufferStatus, (GLenum)) \
+    X(void, glBlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
     X(void, glDrawBuffers, (GLsizei, const GLenum*)) \
     X(void, glReadBuffer, (GLenum)) \
     X(void, glReadPixels, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*)) \
@@ -224,6 +225,7 @@ static const char* FS_COMP =
     "uniform int u_wide; uniform float u_wtot, u_wside;\n"   /* widescreen: DS pixels across, added each side */
     "uniform float u_s2d;\n"                                    /* smooth 2D: the width of an output pixel in DS pixels (0: off) */
     "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
+    "uniform int u_only;\n"                                    /* the 3D screen apart: 1 its 2D alone (see-through where the 3D shows), 2 its 3D alone */
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     /* Smooth 2D: xBR's corner rule (the same as xbr_upscale below): at each
      * corner of a DS pixel, if the neighbours across that corner form an
@@ -240,6 +242,10 @@ static const char* FS_COMP =
     "  float wd2 = dd(H, D) + dd(H, I5) + dd(F, I4) + dd(F, B) + 4.0 * dd(E, I);\n"
     "  float eF = dd(E, F), eH = dd(E, H);\n"
     "  if (!(wd1 < wd2 && eF > 0.01 && eH > 0.01)) return E;\n"
+    "  ivec2 pn = eF <= eH ? p + ivec2(1, 0) * s : p + ivec2(0, 1) * s;\n"
+    /* (not toward a pixel where the 3D shows: its 2D colour there is the
+     * backdrop - the magenta round the quill of the save box) */
+    "  if (u_has3d != 0 && (texelFetch(u_info, clamp(pn, ivec2(0), ivec2(255, 191)), 0).r & 3u) != 0u) return E;\n"
     "  vec3 N = eF <= eH ? F : H;\n"
     "  float k = max(u_s2d, 0.05);\n"
     "  return mix(E, N, smoothstep(0.5 - k, 0.5 + k, a.x + a.y));\n"
@@ -249,12 +255,15 @@ static const char* FS_COMP =
     "  float dsx = u_wide != 0 ? uv.x * u_wtot - u_wside : uv.x * 256.0;\n"
     "  ivec2 p2 = ivec2(min(vec2(dsx, uv.y * 192.0), vec2(255.0, 191.0)));\n"
     "  bool side = u_wide != 0 && (dsx < 0.0 || dsx >= 256.0);\n"
+    "  if (side && u_only == 1) { o_color = vec4(0.0); return; }\n"
     "  if (side) {\n"
     /* Beyond the DS's picture there are no 2D layers: show the 3D there on lines
      * where the edge of the DS's picture shows it (the field), with that
-     * pixel's effects (fades); elsewhere (2D menus, text boxes at the edge) black. */
+     * pixel's effects (fades); elsewhere (2D menus, text boxes at the edge) black.
+     * (32 pixels in: a small sign at the edge - the wireless icon at the top
+     * left - doesn't black out the side beside it) */
     "    int found = -1;\n"
-    "    for (int k = 0; k < 8; k++) { int x = dsx < 0.0 ? k : 255 - k;\n"
+    "    for (int k = 0; k < 32; k++) { int x = dsx < 0.0 ? k : 255 - k;\n"
     "      if ((texelFetch(u_info, ivec2(x, p2.y), 0).r & 3u) != 0u) { found = x; break; } }\n"
     "    if (found < 0) {\n"
     "      int mb0 = int(texelFetch(u_c2, ivec2(dsx < 0.0 ? 0 : 255, p2.y), 0).a * 255.0 + 0.5);\n"
@@ -275,6 +284,14 @@ static const char* FS_COMP =
     "  uvec4 info = texelFetch(u_info, p2, 0);\n"
     "  int mode = int(info.r & 3u);\n"
     "  if (u_s2d > 0.0 && !side && mode == 0) col = smooth2d(p2, fr);\n"
+    /* (premultiplied: a window blended over the 3D keeps its part, EVA, and lets EVB of what is under through) */
+    "  if (u_only == 1 && mode != 0) { float a = mode == 2 ? clamp(1.0 - float(info.b) / 16.0, 0.0, 1.0) : 0.0;\n"
+    "    o_color = vec4(mode == 2 ? min(col * float(info.g) / 16.0, vec3(1.0)) : vec3(0.0), a); return; }\n"
+    "  if (u_only == 1 || (u_only == 2 && mode != 1)) {\n"
+    "    if (u_only == 1) { o_color = vec4(col, 1.0); return; }\n"
+    "    ivec2 sz0 = textureSize(u_3d, 0); vec4 s0 = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz0)), sz0 - 1), 0);\n"
+    "    o_color = vec4(s0.a > 0.0 ? s0.rgb : vec3(0.0), 1.0); return;\n"
+    "  }\n"
 
     "  if (mode == 0) { o_color = vec4(col, 1.0); return; }\n"
     "  vec4 c2t = texelFetch(u_c2, p2, 0);\n"
@@ -334,7 +351,20 @@ static const char* FS_MOVIE =
 static const char* FS_COPY =
     "#version 330 core\n"
     "in vec2 v_uv; out vec4 o_color; uniform sampler2D u_src;\n"
-    "void main() { o_color = texture(u_src, v_uv); }\n";
+    /* u_mode (draw_pieces): 1 dark letters on a light page become light letters on
+     * nothing (premultiplied); 2 no picture: a window of the minimal style,
+     * u_px its size and u_line one DS pixel, in window pixels */
+    "uniform int u_mode; uniform vec2 u_px; uniform float u_line;\n"
+    "void main() {\n"
+    "  if (u_mode == 2) {\n"
+    "    vec2 p = v_uv * u_px; float d = min(min(p.x, p.y), min(u_px.x - p.x, u_px.y - p.y)) / u_line;\n"
+    "    o_color = d < 0.6 ? vec4(vec3(0.08), 0.8) : d < 1.6 ? vec4(vec3(0.5), 1.0) : vec4(0.0, 0.0, 0.0, 0.55); return;\n"
+    "  }\n"
+    "  vec4 c = texture(u_src, v_uv);\n"
+    "  if (u_mode == 1) { float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114)), t = smoothstep(0.52, 0.32, L) * c.a;\n"
+    "    o_color = vec4(vec3(0.93) * t, t); return; }\n"
+    "  o_color = c;\n"
+    "}\n";
 
 /* Showing the screens in the window: exact pixels, or the DS Lite screen
  * (its LCD colours, pixel grid, backlight), optionally inside a drawn DS Lite.
@@ -614,11 +644,15 @@ static int g_fb_w, g_fb_h;                                     /* one DS screen 
 static int g_wside, g_fb3_w;                                   /* widescreen: DS pixels added each side; 3D / final width at scale */
 static int g_wide_shown = -1;                                  /* the screen composed wide last: 0 top, 1 bottom, -1 none */
 static int g_cut;                                               /* gl_set_hud_cut() */
+static int g_cut_top;                                           /* gl_set_top_cut() */
+static int g_split;                                             /* gl_set_split() */
+static GLuint only2d_fbo, only2d_tex;                           /* the 3D screen's 2D alone (gl_set_split()), as final_tex */
+static float g_dlg_box[4];                                      /* gl_dialog_box() */
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
-static GLuint overlay_tex; static int overlay_on;   /* gl_set_overlay() */
+static GLuint overlay_tex[2]; static int overlay_on[2];   /* gl_set_overlay(), gl_set_icons() */
 static GLuint menu_tex; static int menu_on;         /* gl_set_menu() */
 static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
 static int g_ready;
@@ -941,6 +975,16 @@ static int win_frame_tile(const uint8_t* rgba, int w, int h) {
     return any;
 }
 
+/* A piece of a sprite cut into several textures (a far character's head and
+ * body, a speech bubble's corners, an item on the ground): small, with
+ * see-through pixels. Upscaled one by one (pack or xBR), the pieces no
+ * longer meet ("cut and glued back" heads): they stay at the DS's size. */
+static int sprite_piece(const uint8_t* rgba, int w, int h) {
+    if (w > 32 || h > 32) return 0;
+    for (int i = 0; i < w * h; i++) if (!rgba[i * 4 + 3]) return 1;
+    return 0;
+}
+
 static int g_tex_frame;                                        /* texture_for's last texture: TexEntry.frame */
 static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
     TexEntry* e = tex_lookup(ti, pl);
@@ -961,13 +1005,14 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
             if (g_hdtext_on && ((ti >> 26) & 7) == 3 && hdtext_texture(gpu3d_texels(ti), *w, *h, g_decode, g_upbuf))
                 f = HDT_R;                                              /* letters drawn into it: again at full resolution (hdtext.c) */
             else {
+                int piece = sprite_piece(g_decode, *w, *h);
                 if (g_pack_on || g_dump_on) {
                     if (g_pack_on) pack_load_list();
                     uint64_t key = tex_key(g_decode, *w, *h);
                     if (g_dump_on) dump_texture(key, g_decode, *w, *h);
-                    if (g_pack_on && g_pack_n) e->hd = pack_texture(key);
+                    if (g_pack_on && g_pack_n && !piece) e->hd = pack_texture(key);
                 }
-                if (!e->hd && g_texup && *w * *h <= 256 * 256) {   /* upscaled: 4x (2x for the big ones) */
+                if (!e->hd && g_texup && *w * *h <= 256 * 256 && !piece) {   /* upscaled: 4x (2x for the big ones) */
                     f = *w * *h <= 128 * 128 ? 4 : 2;
                     bleed(g_decode, *w, *h);
                     xbr_upscale(g_decode, *w, *h, f, g_upbuf);
@@ -1030,6 +1075,10 @@ static void make_fbs(void) {
     p_glGenFramebuffers(1, &final_fbo);
     p_glBindFramebuffer(GL_FRAMEBUFFER, final_fbo);
     p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, final_tex, 0);
+    only2d_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h * 2, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+    p_glGenFramebuffers(1, &only2d_fbo);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, only2d_fbo);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, only2d_tex, 0);
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
     g_fb_latest = g_fb_shown = -1;
 }
@@ -1041,7 +1090,27 @@ static void free_fbs(void) {
         p_glDeleteTextures(4, t); p_glDeleteFramebuffers(2, b);
     }
     p_glDeleteTextures(1, &final_tex); p_glDeleteFramebuffers(1, &final_fbo);
+    p_glDeleteTextures(1, &only2d_tex); p_glDeleteFramebuffers(1, &only2d_fbo);
     if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); held_tex = held_fbo = 0; held_w = held_h = 0; }
+}
+
+/* Widescreen on/off (a frame drawn narrower, after a side by side layout):
+ * buffers of the new width, holding the picture on screen at its place, so
+ * the next frame doesn't show the 2D backdrop instead (pink in shops). */
+static void resize_fbs(int side) {
+    int keep = g_fb_shown >= 0 && g_fb[g_fb_shown].valid ? g_fb_shown : -1, oside = g_wside, ow = g_fb3_w;
+    GLuint old_fbo = 0, old_tex = 0;
+    if (keep >= 0) { old_fbo = g_fb[keep].post_fbo; old_tex = g_fb[keep].post; g_fb[keep].post_fbo = g_fb[keep].post = 0; }
+    free_fbs(); g_wside = side; make_fbs();
+    if (keep < 0) return;
+    p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_fb[0].post_fbo);
+    p_glClearColor(0, 0, 0, 0); p_glClear(GL_COLOR_BUFFER_BIT);
+    p_glBindFramebuffer(GL_READ_FRAMEBUFFER, old_fbo);
+    int dx = (side - oside) * g_scale;
+    p_glBlitFramebuffer(0, 0, ow, g_fb_h, dx, 0, dx + ow, g_fb_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    p_glDeleteTextures(1, &old_tex); p_glDeleteFramebuffers(1, &old_fbo);
+    g_fb[0].valid = 1; g_fb_shown = g_fb_latest = 0;
 }
 
 /* The largest 3D resolution this GPU can hold: widescreen up to 512 DS
@@ -1197,12 +1266,13 @@ static void gl_render_(const Frame3D* f) {
         }
     }
     int side = f->width > 256 ? (f->width - 256) / 2 : 0;
-    if (side != g_wside) { free_fbs(); g_wside = side; make_fbs(); }   /* widescreen on/off: buffers of the new width */
+    if (side != g_wside) resize_fbs(side);                     /* widescreen on/off: buffers of the new width */
     g_half_w = (float)(256 + 2 * side) / 2.0f;
     uint16_t disp3d = IO16_(0x060);
     int textures_on = disp3d & 1;
     /* vertices + batches */
     int nv = 0, nb = 0;
+    float dlg[4] = { 256, 192, 0, 0 };                           /* the dialogue window's panel, this frame (gl_dialog_box) */
     for (int i = 0; i < f->n; i++) {
         const Poly* p = f->order[i];
         int fmt = (p->teximg >> 26) & 7;
@@ -1242,19 +1312,21 @@ static void gl_render_(const Frame3D* f) {
             }
         }
         b.count = nv - b.first;
-        if (g_winstyle && !wire && ((p->attr >> 4) & 3) == 0) {     /* minimal windows (gpu2d.c): the dialogue window, drawn in 3D in front of all */
+        if (!wire && ((p->attr >> 4) & 3) == 0) {                   /* the dialogue window, drawn in 3D in front of all */
             int front = 1, black = 1;
-            float y0 = 192.0f, y1 = 0.0f;
+            float x0 = 256.0f, x1 = 0.0f, y0 = 192.0f, y1 = 0.0f;
             for (int k = 0; k < p->n; k++) {
                 if (p->v[k].zn > 1e-4f) front = 0;
                 if (p->v[k].r + p->v[k].g + p->v[k].b > 0.0f) black = 0;
+                x0 = fminf(x0, p->v[k].x); x1 = fmaxf(x1, p->v[k].x);
                 y0 = fminf(y0, p->v[k].y); y1 = fmaxf(y1, p->v[k].y);
             }
             if (y1 - y0 > 144.0f) black = 0;                        /* (not a fade over the whole screen) */
+            if (front && !textured && black && b.translucent) { dlg[0] = fminf(dlg[0], x0); dlg[1] = fminf(dlg[1], y0); dlg[2] = fmaxf(dlg[2], x1); dlg[3] = fmaxf(dlg[3], y1); }
             float* o = g_verts + (size_t)b.first * VTX_FLOATS;
-            if (front && !textured && black && b.translucent)       /* its panel: fainter */
+            if (g_winstyle && front && !textured && black && b.translucent)   /* minimal windows (gpu2d.c): its panel fainter */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);
-            else if (front && textured && fmt == 3 && g_tex_frame)  /* its frame: a thin grey edge */
+            else if (g_winstyle && front && textured && fmt == 3 && g_tex_frame)   /* its frame: a thin grey edge */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) { o[4] *= 0.4f; o[5] *= 0.4f; o[6] *= 0.4f; }
         }
         if (nb > 0) {
@@ -1266,6 +1338,7 @@ static void gl_render_(const Frame3D* f) {
         if (nb == g_bcap) { g_bcap = g_bcap ? g_bcap * 2 : 1024; g_batches = realloc(g_batches, sizeof(Batch) * (size_t)g_bcap); }
         g_batches[nb++] = b;
     }
+    memcpy(g_dlg_box, dlg, sizeof dlg);
 
     int target = g_fb_latest < 0 ? 0 : (g_fb_latest ^ 1);
     if (target == g_fb_shown) target ^= 1;
@@ -1659,6 +1732,8 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_3d"), 3);
     GLint loc_rect = p_glGetUniformLocation(prog_comp, "u_rect"), loc_has3d = p_glGetUniformLocation(prog_comp, "u_has3d");
     GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
+    GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only");
+    p_glUniform1i(loc_only, 0);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
     p_glUniform4f(p_glGetUniformLocation(prog_comp, "u_uv"), 0, 0, 1, 1);
@@ -1671,7 +1746,7 @@ void gl_compose(int a_on_top, int lcd_on) {
         p_glActiveTexture(GL_TEXTURE2); p_glBindTexture(GL_TEXTURE_2D, tex_info);
         p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, has3d ? g_fb[g_fb_shown].post : white_tex);
         p_glUniform1i(loc_has3d, eng == 0 && has3d);
-        p_glUniform1i(loc_cut, g_cut && !top);                     /* the commands screen (the HUD's pieces) */
+        p_glUniform1i(loc_cut, (g_cut && !top) || (g_cut_top && top));   /* the commands screen (the HUD's pieces), the top screen's page (its pop-up) */
         if (g_cut && !top) {
             float t[8 * 3];
             for (int i = 0; i < 8 * 3; i++) t[i] = (float)((g_hud_tint[i / 3] >> (16 - 8 * (i % 3))) & 255) / 255.0f;
@@ -1682,10 +1757,22 @@ void gl_compose(int a_on_top, int lcd_on) {
         if (wide) g_wide_shown = top ? 0 : 1;
         if (wide) p_glUniform4f(loc_rect, -1.0f, top ? 0.0f : -1.0f, 2.0f, 1.0f);   /* top screen = upper half of NDC */
         else p_glUniform4f(loc_rect, -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f);
+        int split = wide && g_split;                                 /* the 3D alone here; its 2D apart, in only2d_tex */
+        p_glUniform1i(loc_only, split ? 2 : 0);
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
+        if (split) {
+            p_glUseProgram(prog_comp);
+            p_glBindFramebuffer(GL_FRAMEBUFFER, only2d_fbo);
+            p_glClearColor(0, 0, 0, 0); p_glClear(GL_COLOR_BUFFER_BIT);
+            p_glUniform1i(loc_only, 1);
+            p_glDrawArrays(GL_TRIANGLES, 0, 6);
+            p_glUniform1i(loc_only, 0);
+        }
         if (g_hdmovie_on && !wide) { const float r[4] = { -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f }; draw_movie(eng, r); }
         if (g_hdtext_on) draw_text(eng, top, W, (float)g_wside);
         if (g_hdsprite_n[eng]) draw_sprites(eng, top, W, (float)g_wside);
+        if (split) { p_glBindFramebuffer(GL_FRAMEBUFFER, final_fbo); p_glDisable(GL_BLEND); }
+        p_glUseProgram(prog_comp); p_glBindVertexArray(vao_quad);
     }
     p_glActiveTexture(GL_TEXTURE0);
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1754,35 +1841,51 @@ void gl_hold(void) {
 static void draw_pieces(const GlPresent* v, GLuint src) {
     float W = (float)(256 + 2 * g_wside);
     p_glUseProgram(prog_copy);
-    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, src); p_glBindSampler(0, 0);
-    p_glGenerateMipmap(GL_TEXTURE_2D);                           /* drawn smaller than rendered: averaged, not shimmering */
-    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindSampler(0, 0);
+    GLuint texs[2] = { src, g_split ? only2d_tex : 0 };
+    for (int t = 0; t < 2; t++) {
+        if (!texs[t]) continue;
+        p_glBindTexture(GL_TEXTURE_2D, texs[t]);
+        p_glGenerateMipmap(GL_TEXTURE_2D);                       /* drawn smaller than rendered: averaged, not shimmering */
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
+    GLint loc_mode = p_glGetUniformLocation(prog_copy, "u_mode");
+    p_glUniform1f(p_glGetUniformLocation(prog_copy, "u_line"), v->sc);
     p_glBindVertexArray(vao_quad);
-    if (g_cut) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
+    int restyled = 0;
+    for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) restyled |= v->piece[i][9] > 0.5f;
+    if (g_cut || g_cut_top || g_split || restyled) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
     for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) {
         const float* q = v->piece[i];
         if (q[2] <= 0 || q[3] <= 0) continue;
+        p_glBindTexture(GL_TEXTURE_2D, q[4] > 1.5f && texs[1] ? texs[1] : src);   /* 2, 3: the 3D screen's 2D alone */
         /* canvas (DS pixels, y down) -> window pixels -> NDC (y up); the rect's origin is its bottom left */
         float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
         p_glUniform4f(loc_rect, x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
                       q[2] * v->sc / (float)v->win_w * 2, q[3] * v->sc / (float)v->win_h * 2);
         /* the screen in the composed picture: the top one in the upper half, the DS's 256 columns after the sides */
-        float vtop = q[4] < 0.5f ? 1.0f : 0.5f;
+        float vtop = ((int)(q[4] + 0.5f) & 1) ? 0.5f : 1.0f;
         p_glUniform4f(loc_uv, ((float)g_wside + q[5]) / W, vtop - (q[6] + q[8]) / 384.0f, q[7] / W, q[8] / 384.0f);
+        int mode = (int)(q[9] + 0.5f);
+        p_glUniform1i(loc_mode, mode);
+        if (mode == 2) {
+            p_glUniform4f(loc_uv, 0, 0, 1, 1);
+            p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_px"), q[2] * v->sc, q[3] * v->sc);
+        }
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
     }
+    p_glUniform1i(loc_mode, 0);
     p_glDisable(GL_BLEND);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 }
 
-/* gl_set_overlay()'s picture (the map's markers) over the canvas rect v->overlay. */
-static void draw_overlay(const GlPresent* v) {
-    const float* q = v->overlay;
+/* gl_set_overlay()'s picture (the map's markers) or gl_set_icons()' over the canvas rect q. */
+static void draw_overlay(const GlPresent* v, const float* q, GLuint tex) {
     p_glUseProgram(prog_copy);
-    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, overlay_tex); p_glBindSampler(0, 0);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, tex); p_glBindSampler(0, 0);
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
     p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
@@ -1892,7 +1995,8 @@ void gl_present(const GlPresent* v) {
     p_glBindVertexArray(vao_quad);
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
     if (v->npiece) draw_pieces(v, final_tex);
-    if (overlay_on && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v);
+    if (overlay_on[0] && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v, v->overlay, overlay_tex[0]);
+    if (overlay_on[1] && v->icons[2] > 0 && v->icons[3] > 0) draw_overlay(v, v->icons, overlay_tex[1]);
     if (menu_on && !v->again) draw_menu();
 }
 
@@ -1912,11 +2016,11 @@ void gl_set_skin(const uint8_t* rgba, int w, int h) {
 
 /* A picture drawn over the screens where GlPresent.overlay says (premultiplied
  * RGBA, rows top-down); NULL: none. */
-void gl_set_overlay(const uint8_t* rgba, int w, int h) {
-    overlay_on = rgba != NULL;
+static void set_overlay(int i, const uint8_t* rgba, int w, int h) {
+    overlay_on[i] = rgba != NULL;
     if (!rgba) return;
-    if (!overlay_tex) p_glGenTextures(1, &overlay_tex);
-    p_glBindTexture(GL_TEXTURE_2D, overlay_tex);
+    if (!overlay_tex[i]) p_glGenTextures(1, &overlay_tex[i]);
+    p_glBindTexture(GL_TEXTURE_2D, overlay_tex[i]);
     p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1924,6 +2028,8 @@ void gl_set_overlay(const uint8_t* rgba, int w, int h) {
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
+void gl_set_overlay(const uint8_t* rgba, int w, int h) { set_overlay(0, rgba, w, h); }
+void gl_set_icons(const uint8_t* rgba, int w, int h) { set_overlay(1, rgba, w, h); }
 
 /* The window as shown (for tests): top-down RGB, caller frees. */
 uint8_t* gl_read_window(int w, int h) {
@@ -1991,4 +2097,12 @@ int gl_read_3d(uint8_t* out, int* w, int* h) {
 /* Widescreen: which screen was composed wide last (0 top, 1 bottom, -1
  * none) and the DS pixels added each side. */
 int gl_wide_shown(int* side) { *side = g_wside; return g_wide_shown; }
+int gl_3d_ready(void) { return g_comp_has3d && g_fb_shown >= 0 && g_fb[g_fb_shown].valid; }
 void gl_set_hud_cut(int on) { g_cut = on != 0; }
+void gl_set_top_cut(int on) { g_cut_top = on != 0; }
+void gl_set_split(int on) { g_split = on != 0; }
+int gl_dialog_box(int r[4]) {
+    if (g_dlg_box[2] <= g_dlg_box[0] || g_dlg_box[3] <= g_dlg_box[1]) return 0;
+    for (int i = 0; i < 4; i++) r[i] = (int)lroundf(g_dlg_box[i]);
+    return 1;
+}

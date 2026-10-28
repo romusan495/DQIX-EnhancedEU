@@ -13,6 +13,7 @@ extern int g_comp_gl;                                           /* (below) GL co
 
 uint32_t g_screen[2][256 * 192];
 uint32_t g_engine_out[2][256 * 192];
+uint8_t g_engine_layer[2][256 * 192];
 
 /* 3D layer of engine A for the current line (gpu3d.c fills it later). */
 uint32_t g_3d_line32[256];     /* 6-bit colour | alpha << 24 (alpha 0 = transparent) */
@@ -478,6 +479,8 @@ static uint32_t color_composite(uint32_t v1, uint32_t v2, uint16_t bldcnt, int f
 /* GL mode outputs (engine A): see gl_render.c */
 int g_comp_gl;
 int g_comp_has3d;
+int g_comp_3d_on2d;                                                 /* last frame: pixels where the 3D is over a 2D page, not the backdrop (a menu's 3D model) */
+static int g_comp_3d_on2d_n;
 uint32_t g_comp_c2[256 * 192];
 uint8_t g_comp_info[256 * 192 * 4];
 
@@ -549,7 +552,7 @@ static void render_engine_line(int eng, int y) {
     Engine* e = &g_eng[eng];
     uint32_t* dst = &g_engine_out[eng][y * 256];
     uint32_t disp = R32(e, 0);
-    if (eng == 0 && y == 0) g_comp_has3d = 0;
+    if (eng == 0 && y == 0) { g_comp_has3d = 0; g_comp_3d_on2d = g_comp_3d_on2d_n; g_comp_3d_on2d_n = 0; }
     if (eng == 1 && y == 0) g_hud_ntint = 0;                       /* set again below if the 3D layer shows */
     if (eng == 0 && g_comp_gl) memset(&g_comp_info[y * 256 * 4], 0, 256 * 4);
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
@@ -677,6 +680,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     if (g_hdtext_on && dst && g_comp_gl) for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].tags && !(bg == 0 && bg_3d)) hdl = 1;
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
+        int front = LAYER_BACKDROP;                                 /* v1's layer (g_engine_layer) */
         int pan1 = 0;                                               /* v1 is a window's panel (minimal: fainter) */
         int win1 = 0;                                               /* v1's WIN_* (minimal) */
         uint8_t wm = winmask[x];
@@ -714,6 +718,15 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                         uint32_t tq = bl->tag[q];
                         if (tq && HDT_INST(tq) == HDT_INST(t) && !HDT_INK(tq) && (bl->col[q] & PX_OPAQUE)) { paper = bl->col[q]; paperw = bl->win[q]; paperL = skipL; skipL = -1; break; }
                     }
+            /* a row the letter inks from side to side (the foot of a "1"): the
+             * box's colour from the nearest pixel beside it that isn't ink */
+            if (HDT_INK(t) && paperL < 0)
+                for (int d = 1; d <= 4 && paperL < 0; d++)
+                    for (int s = -1; s <= 1; s += 2) {
+                        int q = x + s * d;
+                        if (q < 0 || q > 255) continue;
+                        if (!HDT_INK(bl->tag[q]) && (bl->col[q] & PX_OPAQUE)) { paper = bl->col[q]; paperw = bl->win[q]; paperL = skipL; skipL = -1; break; }
+                    }
         }
         for (int k = 0; k < norder; k++) {
             int L = order[k];
@@ -737,7 +750,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 v = to6(bgl[L].col[x]) | (1u << (24 + L));
                 }
             }
-            v3 = v2; v2 = v1; v1 = v;
+            v3 = v2; v2 = v1; v1 = v; front = L == 0 && bg_3d ? LAYER_3D : L >= 4 ? LAYER_OBJ : L;
             win1 = L < 4 && (winl & (1 << L)) ? (L == paperL ? paperw : bgl[L].win[x]) : 0;
             pan1 = win1 == WIN_PANEL;
         }
@@ -755,6 +768,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             fprintf(stderr, "PIXSRC f%llu eng %d (%d,%d): layer %d src %08x nib %u vram+%lx\n", (unsigned long long)g_frame, eng, x, y, L, sv >> 1, sv & 1,
                     vp ? (long)(vp - vram_bank(0)) : -1L);
         }
+        if (dst) g_engine_layer[eng][y * 256 + x] = (uint8_t)front;
         int fx = (wm & 0x20) != 0;
         if (!dst) { line6[x] = color_composite(v1, v2, bldcnt, fx, ea, eb, evy); continue; }
         if (gl3d && (v1 >> 24) == MARK3D) {                         /* 3D on top */
@@ -762,6 +776,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             uint32_t t2 = (f2 & 0x80) ? 0x1000 : (f2 & 0x40) ? 0x0100 : (f2 << 8);
             int sec = (bldcnt & t2) != 0;
             int eff = (fx && (bldcnt & 1)) ? (bldcnt >> 6) & 3 : 0;
+            if ((v2 >> 24) != 0x20) g_comp_3d_on2d_n++;
             line6[x] = color_composite(v2, v3, bldcnt, fx, eva, evb, evy);
             dst[x] = to_rgb6(line6[x]);                             /* where the 3D is clear (the shader applies master brightness) */
             c2out[x] = to_rgb6(v2) | mbbyte;

@@ -88,6 +88,8 @@ uint8_t  vram_bank_cnt(int b);           /* its VRAMCNT value */
 /* ---- graphics ---- */
 void gpu_render_line(int line);          /* both 2D engines, one scanline */
 void gpu_frame_start(void);              /* line 0: latch per-frame state */
+extern uint8_t g_engine_layer[2][256 * 192];   /* each pixel's front layer (gpu2d.c): 0-3 the BGs, or: */
+enum { LAYER_OBJ = 4, LAYER_BACKDROP, LAYER_3D };
 void gpu_frame_done(void);               /* VBlank: frame complete */
 void gpu_affine_written(int engine, int bg);
 extern uint32_t g_screen[2][256 * 192];  /* top, bottom: 0x00RRGGBB */
@@ -181,6 +183,9 @@ void backup_init(const char* save_path);
 void backup_flush(void);
 const uint8_t* backup_image(uint32_t* size);   /* the save as the game will see it */
 int backup_unlock_dlc(void);              /* downloadable quests + special guests (see card.c) */
+extern uint64_t g_backup_written;         /* the frame the game last wrote to its save chip */
+int backup_slot_valid(const uint8_t* slot);   /* a 32 KB save slot with its name and three CRC-32s right */
+void backup_store(uint32_t off, const uint8_t* p, uint32_t n);   /* write to the save chip; backup_flush writes the file (autosave.c) */
 void math_div(void);
 void math_sqrt(void);
 

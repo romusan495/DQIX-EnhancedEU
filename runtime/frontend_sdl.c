@@ -36,6 +36,7 @@
 #include "gl_render.h"
 #include "menu.h"
 #include "farm.h"
+#include "autosave.h"
 #include "cheats.h"
 #include "mapmarks.h"
 #include "version.h"
@@ -60,6 +61,7 @@ static SDL_GameController* g_pad;
 static int g_side_by_side, g_corner, g_scale = 3, g_fullscreen;   /* g_corner: the top screen small, beside the bottom one */
 static int g_wide = 1;                                            /* widescreen: the 3D screen wider than the DS's, the other small in its corner */
 static float g_wide_mix = 1.0f;                                   /* widescreen: 1 = the field wide, 0 = beside the small screen (2D under its corner) */
+static int g_top_menu;                                            /* widescreen: a menu with a 3D model on the top screen (wide_update) */
 static int g_small_blank;                                         /* widescreen: the small screen shows nothing (all black): not drawn */
 static int g_swap;                                                /* the screens trade places (F9) */
 static int g_two;                                                 /* two windows, one screen in each (two monitors) */
@@ -91,6 +93,11 @@ static int g_peek;                                                /* widescreen:
 static int g_single;                                              /* one screen only (the bottom one, or the top one swapped) */
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
+static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
+static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
+static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
+static int g_shop_cut = 118;                                      /* ...the row between the list and the panels under it */
+enum { SHOP_TX = 60, SHOP_TY = 33, SHOP_TW = 113, SHOP_TH = 58, SHOP_PAD = 3, SHOP_GAP = 3 };   /* the card's text, beside its icon; the description's window */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -252,6 +259,18 @@ static int wide_side_target(void) {
     return side < 0 ? 0 : side > 128 ? 128 : side;
 }
 
+/* Widescreen with the minimap, in the adventure: a page on the top screen
+ * instead of the map. 1: an item's card, a title... (the field on the bottom
+ * screen, or no 3D): its windows pop up over the big screen; 2: a menu with
+ * its 3D model on the top screen (the monster list): both screens side by
+ * side; 0: none. (Not while the other screen is black: a cutscene.) */
+static int top_page_mode(void) {
+    if (!(WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single)) || !g_minimap || g_small_blank || !in_adventure()) return 0;
+    int side = 0, which = g_gl ? gl_wide_shown(&side) : -1;
+    if (which == 0) return g_top_menu && !g_hud_n && !g_hud_win[2] ? 2 : 0;
+    return mapmarks_top_page() ? 1 : 0;
+}
+
 /* second: the layout of the second window (two windows) */
 static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
     memset(v, 0, sizeof *v);
@@ -307,14 +326,49 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
-        if (g_minimap && which == 1 && !pop && mapmarks_top_page()) {
-            /* an item's card on the top screen (Items, Equipment...): both
-             * screens whole, side by side, the card on the left, until it closes */
+        int page = top_page_mode();
+        if (page == 2) {
+            /* a menu with its 3D model on the top screen (the monster list):
+             * both screens whole, side by side, the top one on the left, until it closes */
             v->cw = 512; v->ch = 192;
             v->top[0] = 0; v->top[1] = 0; v->top[2] = 256; v->top[3] = 192;
             v->bot[0] = 256; v->bot[1] = 0; v->bot[2] = 256; v->bot[3] = 192;
             v->topx[0] = v->botx[0] = (float)side; v->topx[1] = v->botx[1] = 256;
             v->alpha = 1.0f; v->front = 0;
+        } else if (page == 1 && g_shop && !second) {
+            /* a shop's buy list (the field's screen): one column in the middle,
+             * the list (each item's icon before its name, mapmarks_shop()),
+             * the item's description (the text of its card on the top screen,
+             * in a window of the minimal style as wide as the list's), then
+             * the panels under the list (who can equip it, how many held);
+             * over the field, which stays whole */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            float L = (float)g_shop_cut, dh = g_pop_win[2] ? SHOP_TH + 2 * SHOP_PAD : 0, gap = SHOP_GAP;
+            float k = 192.0f / (192.0f + (dh > 0 ? dh + 2 * gap : 0)), x = (v->cw - 256 * k) / 2;
+            float* q = v->piece[v->npiece++];
+            q[4] = 3; q[5] = 0; q[6] = 0; q[7] = 256; q[8] = L;
+            q[0] = x; q[1] = 0; q[2] = 256 * k; q[3] = L * k;
+            q = v->piece[v->npiece++];
+            q[4] = 3; q[5] = 0; q[6] = L; q[7] = 256; q[8] = 192 - L;
+            q[0] = x; q[1] = 192 - (192 - L) * k; q[2] = 256 * k; q[3] = (192 - L) * k;
+            if (dh > 0) {
+                q = v->piece[v->npiece++];                        /* the window */
+                q[9] = 2; q[0] = x + 8 * k; q[1] = (L + gap) * k; q[2] = 240 * k; q[3] = dh * k;
+                q = v->piece[v->npiece++];                        /* its text */
+                q[4] = 0; q[5] = SHOP_TX; q[6] = SHOP_TY; q[7] = SHOP_TW; q[8] = SHOP_TH; q[9] = 1;   /* (the item's icon at its left: mapmarks_shop()) */
+                q[0] = x + (SHOP_DESC_X + SHOP_DESC_ICON + 8) * k; q[1] = (L + gap + SHOP_PAD) * k; q[2] = SHOP_TW * k; q[3] = SHOP_TH * k;
+            }
+            v->icons[0] = x; v->icons[1] = 0; v->icons[2] = 256 * k; v->icons[3] = 192 * k;
+        } else if (page == 1) {
+            /* a page on the top screen (an item's card in Items, Equipment or a
+             * shop, a title): its windows alone, without the page's backdrop,
+             * popped up in the middle over the big screen (pop_update()) */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
+                float* q = v->piece[v->npiece++], w = (float)g_pop_win[2], h = (float)g_pop_win[3];
+                q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
+                q[2] = w * g_pop_at[2]; q[3] = h * g_pop_at[2]; q[0] = g_pop_at[0]; q[1] = g_pop_at[1];
+            }
         }
         if (pop) {                                                /* first window: the field alone; second: the small screen, whole */
             v->alpha = 1.0f;
@@ -322,10 +376,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             else small[0] = small[1] = small[2] = small[3] = 0;
         }
         if (which == 0 && (g_hud_n > 0 || g_hud_win[2]) && !g_peek && !(g_small_hide && !pop)) {
-            /* Battle HUD: the commands screen cut into its panels, over the 3D,
-             * stacked in the bottom left at half size: the one whose turn it
-             * is (the tall panel, with the commands) on top, the others below
-             * it in the party's order.
+            /* Battle HUD: the commands screen cut into its panels, over the 3D.
+             * The party's panels in a row along the top; the one whose turn it
+             * is (the tall panel, with the commands) bigger in the bottom left.
              * The map window keeps the last map (gl_hold() in present_gl). */
             if (second) {
                 if (pop) { v->held = 1; v->bot[0] = v->bot[1] = v->bot[2] = v->bot[3] = 0; v->top[0] = v->top[1] = 0; v->top[2] = 256; v->top[3] = 192; v->topx[0] = (float)side; v->topx[1] = 256; v->front = 0; }
@@ -336,19 +389,19 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[4] = 1; q[5] = (float)g_hud_win[0]; q[6] = (float)g_hud_win[1]; q[7] = w; q[8] = h;
                     q[2] = w * kw; q[3] = h * kw; q[0] = (v->cw - q[2]) / 2; q[1] = 6;
                 }
-                const float k = 0.5f, gap = 2;
-                float total = 0;
-                for (int i = 0; i < g_hud_n; i++) total += (float)(g_hud_band[i][1] - g_hud_band[i][0]) * k + gap;
-                float y = 192 - total;
-                for (int pass = 0; pass < 2; pass++)              /* the tall one first */
-                    for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
-                        float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]);
-                        if ((h >= 50) == pass) continue;
-                        float* q = v->piece[v->npiece++];
-                        q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
-                        q[0] = 4; q[1] = y; q[2] = 244 * k; q[3] = h * k;
-                        y += q[3] + gap;
+                int nrow = 0;
+                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50;
+                float slot = (v->cw - 4) / (float)(nrow > 4 ? nrow : 4), k = fminf((slot - 2) / 244.0f, 0.5f);
+                float x = (v->cw - slot * (float)nrow) / 2;               /* the row centred */
+                for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
+                    float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]), *q = v->piece[v->npiece++];
+                    q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
+                    if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
+                    else {                                                /* at most half the picture's height */
+                        float kb = fminf(0.62f, 110.0f / h);
+                        q[2] = 244 * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
                     }
+                }
             }
         }
     } else if (two || single) {
@@ -523,6 +576,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "skip_intro")) { int v = atoi(val); if (v >= 0 && v <= 2) g_skip_intro = v; }
         else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 3) g_battle_speed = v; }
         else if (!strcmp(key, "save_backups")) g_save_backups = atoi(val) != 0;
+        else if (!strcmp(key, "autosave")) g_autosave = atoi(val) != 0;
         else if (!strcmp(key, "cheats")) cheats_from_list(val);
         else if (!strcmp(key, "map_monsters")) g_mapmarks_monsters = atoi(val) != 0;
         else if (!strcmp(key, "interior_maps")) g_interior_maps = atoi(val) != 0;
@@ -615,6 +669,8 @@ static void settings_save(void) {
     fprintf(f, "skip_intro = %d\n", g_skip_intro);
     fprintf(f, "# Modern > Battle speed: battles go 1, 2 or 3 times as fast (not while playing with friends)\n");
     fprintf(f, "battle_speed = %d\n", g_battle_speed);
+    fprintf(f, "# Modern > Save by itself every 10 minutes (on the field, while free to walk; not while playing with friends): 0 or 1\n");
+    fprintf(f, "autosave = %d\n", g_autosave);
     fprintf(f, "# Game > Keep a copy of every save: the save as it was before each new one, in save-backups (the last 20): 0 or 1\n");
     fprintf(f, "save_backups = %d\n", g_save_backups);
     {   char on[400]; cheats_to_list(on, sizeof on);
@@ -981,12 +1037,12 @@ static int to_touch_in(SDL_Window* win, int wx, int wy, int* tx, int* ty, int cl
         canvas_layout_for(&v, ww, wh, win == g_win2);
         lx = ((float)wx + 0.5f - v.ox) / v.sc; ly = ((float)wy + 0.5f - v.oy) / v.sc;
     } else { canvas_layout(&v, 1, 1); SDL_RenderWindowToLogical(g_ren, wx, wy, &lx, &ly); }
-    if (v.npiece) {                                               /* the battle HUD's panels: back to where they are on the touch screen */
+    if (v.npiece && v.piece[0][4] > 0.5f) {                       /* the battle HUD's panels: back to where they are on the touch screen */
         static int last;                                          /* the panel last touched: a drag off it stays on its edge */
         int hit = -1;
         for (int i = v.npiece - 1; i >= 0 && hit < 0; i--) {
             const float* q = v.piece[i];
-            if (lx >= q[0] && lx < q[0] + q[2] && ly >= q[1] && ly < q[1] + q[3]) hit = i;
+            if (q[4] > 0.5f && lx >= q[0] && lx < q[0] + q[2] && ly >= q[1] && ly < q[1] + q[3]) hit = i;   /* (not a piece of the top screen) */
         }
         if (hit < 0 && !(clamp && last < v.npiece)) return 0;   /* the rest of the commands screen isn't shown */
         if (hit >= 0) last = hit;
@@ -1206,7 +1262,7 @@ static void report_window(const char* path) {
  * field again. From the 3D screen's last picture: pixels where no 2D layer
  * covers the 3D are the field. */
 extern uint8_t g_comp_info[256 * 192 * 4];
-extern int g_comp_has3d;
+extern int g_comp_has3d, g_comp_3d_on2d;
 extern uint32_t g_engine_out[2][256 * 192];
 static void wide_update(int a_on_top) {
     if (!g_wide || !WIDE_GL || g_wide_pop) { g_wide_mix = 1.0f; if (!g_wide || !WIDE_GL) return; }
@@ -1219,22 +1275,26 @@ static void wide_update(int a_on_top) {
         for (int i = 0; i < 256 * 192 && blank; i += 7) if (px[i] & 0xFFFFFF) blank = 0;
         g_small_blank = blank;
     }
-    if (g_minimap) {   /* the minimap: is the game's 2D (a menu) under it? Then it fades out, and back once that's gone */
-        int under = 0;
-        if (which == 1 && g_comp_has3d) {
-            static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
-            int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
-            int x0 = c == 0 || c == 3 ? MINIMAP_GAP - S : 256 + S - SW[z] - MINIMAP_GAP, y0 = c < 2 ? MINIMAP_GAP : 192 - SH[z] - MINIMAP_GAP;   /* on the DS's picture (S more at the canvas' left) */
-            int n = 0, n2d = 0;
-            for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
-                for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) { n++; if ((g_comp_info[(y * 256 + x) * 4] & 3) == 0) n2d++; }
-            under = n > 0 && n2d * 20 > n;                       /* more than 5% */
-        }
+    if (g_minimap && which == 1 && g_comp_has3d) {   /* the minimap: is the game's 2D (a menu) under it? Then it fades out, and back once that's gone */
+        /* (only while it can show: no popping back over a shop's menu after its card) */
+        static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
+        int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
+        int x0 = c == 0 || c == 3 ? MINIMAP_GAP - S : 256 + S - SW[z] - MINIMAP_GAP, y0 = c < 2 ? MINIMAP_GAP : 192 - SH[z] - MINIMAP_GAP;   /* on the DS's picture (S more at the canvas' left) */
+        int n = 0, n2d = 0, nmix = 0;
+        for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
+            for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) {
+                int mode = g_comp_info[(y * 256 + x) * 4] & 3;
+                n++; n2d += mode == 0; nmix += mode == 2;
+            }
+        int under = n > 0 && (n2d * 20 > n || nmix * 8 > n);     /* more than 5%, or 12% of a see-through window (a shop's) */
         static int clear;                                         /* frames without 2D under it */
         clear = under ? 0 : clear + 1;
         if (under) g_mini_vis = fmaxf(0.0f, g_mini_vis - 1.0f / 6);
         else if (clear >= 20) g_mini_vis = fminf(1.0f, g_mini_vis + 1.0f / 12);
     }
+    /* 3D on the top screen in a menu (the monster list, battle records: a model
+     * over a 2D page), not a battle (the 3D over the backdrop) */
+    g_top_menu = which == 0 && g_comp_has3d && g_comp_3d_on2d * 4 > 256 * 192;
     int covered = 1;
     if (which == 0) covered = 0;                                  /* 3D on the top screen: no sliding */
     else if (which == 1 && g_comp_has3d) {
@@ -1271,18 +1331,19 @@ static void hud_update(int a_on_top) {
     }
     if (which != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the bottom screen's engine */
-    int sep[192], nsep = 0;
+    int sep[192], cut[192], nsep = 0;                             /* cut: a line the list's description box covers on the right (Spells, Items...) */
     for (int y = 0; y < 192; y++) {
-        int n = 0;
-        for (int x = 10; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
-        sep[y] = n > 200; nsep += sep[y];
+        int n = 0, nr = 0;
+        for (int x = 10; x < 120; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
+        for (int x = 130; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) nr++;
+        sep[y] = n > 100; cut[y] = sep[y] && nr < 50; nsep += sep[y] && !cut[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
-        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles */
+        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
         for (int y = 0; y < 192; y++)
             for (int x = 0; x < 256; x++)
                 if ((px[y * 256 + x] & 0xFFFFFF) == 0x303030) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-        if (x1 - x0 < 100 || y1 - y0 < 40 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
+        if (x1 - x0 < 100 || y1 - y0 < 24 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
         x0 = x0 < 3 ? 0 : x0 - 3; y0 = y0 < 3 ? 0 : y0 - 3; x1 = x1 > 252 ? 255 : x1 + 3; y1 = y1 > 188 ? 191 : y1 + 3;   /* its frame */
         g_hud_win[0] = x0; g_hud_win[1] = y0; g_hud_win[2] = x1 - x0 + 1; g_hud_win[3] = y1 - y0 + 1;
         return;
@@ -1296,10 +1357,26 @@ static void hud_update(int a_on_top) {
         /* a member's panel: 30-45 rows (the one whose turn it is: up to 80), framed in white */
         int h = y - y0, mid = (y0 + y) / 2, framed = 0;
         for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) framed = 1;
+        if (!framed && n == 0) continue;                          /* above the panels (while the turn plays out): the backdrop */
+        if (!framed && n >= 2) break;                             /* below them: nothing more */
         if (n == 8 || h < 30 || h > 80 || !framed || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
-    if (n >= 2) g_hud_n = n;
+    if (n < 2) return;
+    /* a list open (Spells, Items...): its description box covers the right of
+     * the panels under the one whose turn it is. Those and the tall one in
+     * one piece, as on the DS; the others in the row. */
+    int a = -1, b = -1;
+    for (int i = 0; i < n; i++) if (g_hud_band[i][1] - g_hud_band[i][0] >= 50) a = b = i;
+    for (int i = 0; a >= 0 && i + 1 < n; i++)
+        for (int y = g_hud_band[i][1]; y < g_hud_band[i + 1][0]; y++)
+            if (cut[y]) { if (i < a) a = i; if (i + 1 > b) b = i + 1; break; }
+    if (a >= 0 && b > a) {
+        g_hud_band[a][1] = g_hud_band[b][1];
+        for (int i = b + 1; i < n; i++) { g_hud_band[i - (b - a)][0] = g_hud_band[i][0]; g_hud_band[i - (b - a)][1] = g_hud_band[i][1]; }
+        n -= b - a;
+    }
+    if (n >= 1) g_hud_n = n;
 }
 
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at
@@ -1328,6 +1405,128 @@ static void auto_scale(void) {
     if (want == gl_render_scale()) { pending = 0; frames = 0; return; }
     if (want != pending) { pending = want; frames = 0; return; }
     if (++frames >= 30) { gl_render_set_scale(want); pending = frames = 0; }
+}
+
+/* Where the pop-up goes (g_pop_at): in the middle at 80%, unless that hides
+ * the game's menus or text on the field (2D in front of the 3D: g_comp_info,
+ * and the dialogue window, 3D: gl_dialog_box());
+ * then the place, as near the middle and as big (down to 55%) as hides least
+ * of them. It stays put until a place clearly better shows up. */
+static int g_pop_sum[193][257];                                   /* menu pixels above and left of each point of the DS's picture */
+static int g_pop_held;                                            /* g_pop_at is where the page was last frame */
+static float pop_cost(float x, float y, float k, float S, float w, float h, float k0) {
+    int a0 = (int)fmaxf(0, x - S), a1 = (int)fminf(256, x + w * k - S), b0 = (int)fmaxf(0, y), b1 = (int)fminf(192, y + h * k);   /* (canvas -> the DS's picture: S less) */
+    int n = a1 > a0 && b1 > b0 ? g_pop_sum[b1][a1] - g_pop_sum[b0][a1] - g_pop_sum[b1][a0] + g_pop_sum[b0][a0] : 0;
+    /* each step away from the middle, and each 5% smaller, counts as a few hidden pixels */
+    return (float)n + 2.0f * (fabsf(x + w * k / 2 - (128 + S)) + fabsf(y + h * k / 2 - 96)) + 400.0f * (k0 - k) / 0.05f;
+}
+static void pop_place(void) {
+    float S = (float)wide_side_target(), cw = 256 + 2 * S, w = (float)g_pop_win[2], h = (float)g_pop_win[3];
+    int side = 0, field = gl_wide_shown(&side) == 1 && g_comp_has3d, d[4], dlg = field && gl_dialog_box(d);
+    for (int y = 0; y < 192; y++)
+        for (int x = 0, row = 0; x < 256; x++) {
+            row += field && ((g_comp_info[(y * 256 + x) * 4] & 3) != 1 || (dlg && x >= d[0] && x < d[2] && y >= d[1] && y < d[3]));   /* (the dialogue window is 3D) */
+            g_pop_sum[y + 1][x + 1] = g_pop_sum[y][x + 1] + row;
+        }
+    float k0 = fminf(1.0f, fminf(0.8f * cw / w, 0.8f * 192.0f / h));
+    float bx = (cw - w * k0) / 2, by = (192 - h * k0) / 2, bk = k0, best = pop_cost(bx, by, bk, S, w, h, k0);
+    if (best > 0)
+        for (float k = k0; k >= 0.55f - 1e-3f; k -= 0.05f)
+            for (float y = 0; y + h * k <= 192.001f; y += 4)
+                for (float x = 0; x + w * k <= cw + 0.001f; x += 4) {
+                    float c = pop_cost(x, y, k, S, w, h, k0);
+                    if (c < best) { best = c; bx = x; by = y; bk = k; }
+                }
+    if (g_pop_held) {                                             /* where it was: still good enough? */
+        float px = g_pop_at[0], py = g_pop_at[1], pk = g_pop_at[2];
+        if (py + h * pk <= 192.5f && px + w * pk <= cw + 0.5f && pop_cost(px, py, pk, S, w, h, k0) <= best + 300.0f) return;
+    }
+    g_pop_at[0] = bx; g_pop_at[1] = by; g_pop_at[2] = bk;
+    g_pop_held = 1;
+}
+
+/* The top screen's page (top_page_mode() 1): which of its pixels are its
+ * backdrop, left out of the pop-up (tagged 1 in the top byte, gl_set_top_cut()),
+ * and the rest's bounds (g_pop_win). A backdrop of its own (the curtain behind
+ * a title: one layer under the windows' layers) goes whole; a page drawn as one
+ * picture (an item's card) is cut into its parts by colour: the parchment
+ * around them, and what touches the edge (the sky, the torn border), go. */
+static void pop_update(int a_on_top) {
+    if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
+    g_pop_win[2] = 0;
+    if (top_page_mode() != 1) return;
+    enum { N = 256 * 192 };
+    static uint8_t bg[N];
+    static int lab[N], q[N], size[N], ring[N];
+    static uint8_t flags[N];                                      /* 1 touches the edge, 2 reaches inside */
+    int eng = a_on_top ? 0 : 1;
+    uint32_t* px = g_engine_out[eng];
+    const uint8_t* ly = g_engine_layer[eng];
+    int n[8] = { 0 }, big = 0;
+    for (int i = 0; i < N; i++) n[ly[i] & 7]++;
+    for (int L = 1; L < 4; L++) if (n[L] > n[big]) big = L;
+    if (n[big] < N * 9 / 10) {
+        for (int i = 0; i < N; i++) bg[i] = ly[i] == big || ly[i] == LAYER_BACKDROP;
+    } else {
+        /* parts: neighbours within 24 levels of each other; the parchment is
+         * the part with most pixels in a ring a little inside the edge */
+        int ncomp = 0, best = -1;
+        for (int i = 0; i < N; i++) lab[i] = -1;
+        for (int i = 0; i < N; i++) {
+            if (lab[i] >= 0) continue;
+            int c = ncomp++, head = 0, tail = 0;
+            size[c] = ring[c] = 0; flags[c] = 0;
+            lab[i] = c; q[tail++] = i;
+            while (head < tail) {
+                int j = q[head++], x = j % 256, y = j / 256, d = x < y ? x : y;
+                if (255 - x < d) d = 255 - x;
+                if (191 - y < d) d = 191 - y;
+                size[c]++;
+                if (d == 0) flags[c] |= 1;
+                if (d > 8) flags[c] |= 2;
+                if (d >= 4 && d <= 14) ring[c]++;
+                uint32_t a = px[j];
+                int nb[4] = { x > 0 ? j - 1 : -1, x < 255 ? j + 1 : -1, y > 0 ? j - 256 : -1, y < 191 ? j + 256 : -1 };
+                for (int k = 0; k < 4; k++) {
+                    int m = nb[k];
+                    if (m < 0 || lab[m] >= 0) continue;
+                    uint32_t b = px[m];
+                    int dr = abs((int)((a >> 16) & 255) - (int)((b >> 16) & 255)), dg = abs((int)((a >> 8) & 255) - (int)((b >> 8) & 255)), db = abs((int)(a & 255) - (int)(b & 255));
+                    if (dr <= 24 && dg <= 24 && db <= 24) { lab[m] = c; q[tail++] = m; }
+                }
+            }
+            if (!(flags[c] & 1) && (best < 0 || ring[c] > ring[best])) best = c;
+        }
+        for (int i = 0; i < N; i++) { int c = lab[i]; bg[i] = c == best || (flags[c] & 1) || !(flags[c] & 2); }
+    }
+    if (g_shop)                                                   /* a shop: the card's description alone (its parchment box) */
+        for (int i = 0; i < N; i++) { int x = i % 256, y = i / 256; if (x < 8 || x > 184 || y < 25 || y > 101) bg[i] = 1; }
+    int x0 = 256, y0 = 192, x1 = -1, y1 = -1, kept = 0;
+    for (int i = 0; i < N; i++)
+        if (!bg[i]) { int x = i % 256, y = i / 256; kept++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (kept * (g_shop ? 400 : 50) < N) return;                   /* (nothing much left: not a page with windows) */
+    for (int i = 0; i < N; i++) px[i] = (px[i] & 0xFFFFFF) | (bg[i] ? 1u << 24 : 0);
+    g_pop_win[0] = x0; g_pop_win[1] = y0; g_pop_win[2] = x1 - x0 + 1; g_pop_win[3] = y1 - y0 + 1;
+    if (!g_shop) pop_place();
+}
+
+/* A shop's buy list on the field's screen (mapmarks_shop()): its signs
+ * become the items' icons, and the screen is laid out as one column
+ * (canvas_layout_for()); the row under the list: the first one below
+ * y 100 with nothing of the 2D across it (the page number is just above). */
+static void shop_update(int a_on_top) {
+    int side = 0, ok = top_page_mode() == 1 && !a_on_top && g_comp_has3d && gl_wide_shown(&side) == 1;
+    const uint8_t* rgba; int changed;
+    g_shop_cut = 118;
+    for (int y = 100; ok && y < 140; y++) {
+        int n = 0;
+        for (int x = 8; x < 248; x++) n += (g_comp_info[(y * 256 + x) * 4] & 3) == 1;
+        if (n == 240) { g_shop_cut = y; break; }
+    }
+    /* (the description's window, canvas_layout_for(), in the list's pixels; while the card shows) */
+    int desc_y = g_pop_win[2] ? g_shop_cut + SHOP_GAP + SHOP_PAD + (SHOP_TH - SHOP_DESC_ICON) / 2 : -1;
+    g_shop = mapmarks_shop(ok ? g_engine_out[0] : NULL, g_comp_info, desc_y, &rgba, &changed);
+    if (changed) gl_set_icons(g_shop ? rgba : NULL, MAPMARKS_W, MAPMARKS_H);
 }
 
 /* The map's markers (mapmarks.c) over the top screen, in whichever window
@@ -1363,8 +1562,18 @@ static void present_gl(void) {
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
     hud_update((pow >> 15) & 1);                                 /* (before composing: the minimal style cuts the cards out for it) */
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
+    shop_update((pow >> 15) & 1);
+    pop_update((pow >> 15) & 1);
+    gl_set_top_cut(g_pop_win[2] != 0);
+    gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */
+    {   /* the 3D gone for a single frame in widescreen (a shop's menu after an item's
+         * card): the game's backdrop would flash (pink); the last picture stays */
+        static int held, side;
+        if (!held && (pow & 1) && gl_wide_shown(&side) >= 0 && !gl_3d_ready()) { held = 1; return; }
+        held = 0;
+    }
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
     gl_dump_hook();
@@ -1504,6 +1713,7 @@ static void menu_sync(void) {
     for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
     for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
     menu_check(MI_SAVEBAK, g_save_backups);
+    menu_check(MI_AUTOSAVE, g_autosave); menu_enable(MI_AUTOSAVE, !session_requested());
     for (int i = 0; i < cheats_count(); i++) {
         menu_check(MI_CHEAT0 + i, cheats_on(i)); menu_enable(MI_CHEAT0 + i, !session_requested());
         if (cheats_max(i)) menu_set_text(MI_CHEAT0 + i, cheats_name(i));       /* with the chosen number */
@@ -2110,6 +2320,7 @@ static void do_action(int id) {
     case MI_SKIP0: case MI_SKIP0 + 1: case MI_SKIP0 + 2: g_skip_intro = id - MI_SKIP0; break;
     case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
+    case MI_AUTOSAVE: g_autosave = !g_autosave; break;
     case MI_FULL2: second_window_fullscreen(); break;
     case MI_LCD: if (g_gl) g_opt.lcd = !g_opt.lcd; g_fps_t0 = 0; break;
     case MI_LCDCOL: g_opt.lcd_color = !g_opt.lcd_color; break;
@@ -2232,6 +2443,10 @@ static void do_action(int id) {
             "Battle speed: battles (and their victory messages) go 2 or 3 times as fast; the music keeps its pitch and skips ahead. "
             "The rest of the game stays at its own speed. Off while playing with friends far away.\n\n"
             "Map: show the monsters walking nearby: red dots on the map, to go for them or around them.\n\n"
+            "Save by itself every 10 minutes: the game saves as the priest would, wherever the party is, once the hero is free to walk "
+            "(never during a battle, a dialogue, a menu or a cut scene); Continue takes you back there. The 10 minutes count from the last "
+            "save, the church's too. It needs a save made once at a church first, and is off while playing with friends. "
+            "Game > Keep a copy of every save keeps the earlier ones in save-backups.\n\n"
             "All are also under View; F2 goes through the layouts.", g_win);
         break;
     case MI_SIZE1: case MI_SIZE2: case MI_SIZE3: case MI_SIZE4: g_scale = id - MI_SIZE1 + 1; relayout = 1; break;
@@ -2600,6 +2815,7 @@ void frontend_frame(void) {
             info_box(SDL_MESSAGEBOX_INFORMATION, "Farm gold by itself", g_farm_why, g_win);
             g_paused = 0;
         }
+        if (g_autosave_done) { g_autosave_done = 0; notice("Saved"); }   /* Modern > Save by itself */
         if (gamemenu_is_open() && !session_requested()) {      /* the in-game menu: the game waits */
             update_title(0);
             while (gamemenu_is_open()) { handle_events(); game_menu_stick(); present(); SDL_Delay(15); }
