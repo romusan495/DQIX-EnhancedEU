@@ -55,6 +55,8 @@ jour : 2026-10-23.
 | `runtime/version.h` | #14, #18, #25 | Numéros de version des releases |
 | `runtime/gpu3d.c`, `gl_render.c`, `frontend_sdl.c`, `gpu2d.c`, `mapmarks.c` | PR #34 (bugs de Dr.Stone + bestiaire, 618ff9a) | Fusionnée le 26/10 ; dans le dossier de jeu depuis le 26/10 |
 | `runtime/frontend_sdl.c`, `mapmarks.c` | PR #36 (disposition de combat du début + 2 bugs de mise en page, 5733d56) | Fusionnée le 27/10 ; pas encore dans le dossier de jeu |
+| `runtime/frontend_sdl.c` | PR #38 (listes Sorts/Objets/Aptitudes en bas à gauche en combat, a1490e2) | Fusionnée le 27/10 ; pas encore dans le dossier de jeu |
+| `frontend_sdl.c`, `gl_render.c`, `gl_render.h` | PR #40 (cinématique, PNJ coupés, écran rose, mini-carte dans les magasins, 75d3804) | Fusionnée le 28/10 ; pas encore dans le dossier de jeu |
 | `runtime/frontend_sdl.c` | PR #29 (confirmation avant de quitter) | Fusionnée |
 | `runtime/frontend_sdl.c`, `menu_win32.c`, `card.c`, `input.c`, `menu.h`, nouveau `bootskip.c` | `claude/project-thread-9e00md` ([Dev] Vers un vrai jeu PC, démarrage direct), en cours | Conflit probable sur `frontend_sdl.c` avec [Dev] Mini-carte (fiches d'objets, en cours) |
 | `runtime/frontend_sdl.c`, `mapmarks.c`, `mapmarks.h` | `claude/project-thread-6h3zvz` ([Dev] Mini-carte, correctif des fiches d'objets, 7cd0b23), pas encore poussée | Conflit probable sur `frontend_sdl.c` avec `claude/project-thread-9e00md` |
