@@ -1596,11 +1596,12 @@ static void hint_update(GlPresent* v) {
         for (int i = 0; t && i < 5; i++) if (!strcmp(t, names[i])) { style = i; face = i ? HINT_TOP : HINT_OTHER; if (!i) controls_key_name(g_ctl_key[CA_X][0], lab, sizeof lab); }
     }
     snprintf(key, sizeof key, "%d %d %s", style, face, lab);
-    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hint_draw(img, HINT_PX, HINT_PX, style, face, lab); gl_set_hint(img, HINT_PX, HINT_PX); }
+    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hint_draw(img, HINT_PX, HINT_PX, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, HINT_PX, HINT_PX); }
     float kx = v->bot[2] / v->botx[1], ky = v->bot[3] / 192.0f, r = SIGN_BTN_R + 0.5f;
     float cx = (float)g_sign_rect[0] + SIGN_BTN_X, cy = (float)g_sign_rect[1] + SIGN_BTN_Y;
-    v->hint[0] = v->bot[0] + (cx - r - v->botx[0] + (float)side) * kx; v->hint[1] = v->bot[1] + (cy - r) * ky;
-    v->hint[2] = 2 * r * kx; v->hint[3] = 2 * r * ky;
+    float* q = v->layer[GL_LAYER_HINT];
+    q[0] = v->bot[0] + (cx - r - v->botx[0] + (float)side) * kx; q[1] = v->bot[1] + (cy - r) * ky;
+    q[2] = 2 * r * kx; q[3] = 2 * r * ky;
 }
 
 static void present_gl(void) {
