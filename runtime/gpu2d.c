@@ -13,6 +13,7 @@ extern int g_comp_gl;                                           /* (below) GL co
 
 uint32_t g_screen[2][256 * 192];
 uint32_t g_engine_out[2][256 * 192];
+uint8_t g_engine_layer[2][256 * 192];
 
 /* 3D layer of engine A for the current line (gpu3d.c fills it later). */
 uint32_t g_3d_line32[256];     /* 6-bit colour | alpha << 24 (alpha 0 = transparent) */
@@ -679,6 +680,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     if (g_hdtext_on && dst && g_comp_gl) for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].tags && !(bg == 0 && bg_3d)) hdl = 1;
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
+        int front = LAYER_BACKDROP;                                 /* v1's layer (g_engine_layer) */
         int pan1 = 0;                                               /* v1 is a window's panel (minimal: fainter) */
         int win1 = 0;                                               /* v1's WIN_* (minimal) */
         uint8_t wm = winmask[x];
@@ -748,7 +750,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 v = to6(bgl[L].col[x]) | (1u << (24 + L));
                 }
             }
-            v3 = v2; v2 = v1; v1 = v;
+            v3 = v2; v2 = v1; v1 = v; front = L == 0 && bg_3d ? LAYER_3D : L >= 4 ? LAYER_OBJ : L;
             win1 = L < 4 && (winl & (1 << L)) ? (L == paperL ? paperw : bgl[L].win[x]) : 0;
             pan1 = win1 == WIN_PANEL;
         }
@@ -766,6 +768,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             fprintf(stderr, "PIXSRC f%llu eng %d (%d,%d): layer %d src %08x nib %u vram+%lx\n", (unsigned long long)g_frame, eng, x, y, L, sv >> 1, sv & 1,
                     vp ? (long)(vp - vram_bank(0)) : -1L);
         }
+        if (dst) g_engine_layer[eng][y * 256 + x] = (uint8_t)front;
         int fx = (wm & 0x20) != 0;
         if (!dst) { line6[x] = color_composite(v1, v2, bldcnt, fx, ea, eb, evy); continue; }
         if (gl3d && (v1 >> 24) == MARK3D) {                         /* 3D on top */

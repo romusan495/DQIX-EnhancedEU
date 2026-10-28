@@ -621,6 +621,7 @@ static int g_fb_w, g_fb_h;                                     /* one DS screen 
 static int g_wside, g_fb3_w;                                   /* widescreen: DS pixels added each side; 3D / final width at scale */
 static int g_wide_shown = -1;                                  /* the screen composed wide last: 0 top, 1 bottom, -1 none */
 static int g_cut;                                               /* gl_set_hud_cut() */
+static int g_cut_top;                                           /* gl_set_top_cut() */
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
@@ -1707,7 +1708,7 @@ void gl_compose(int a_on_top, int lcd_on) {
         p_glActiveTexture(GL_TEXTURE2); p_glBindTexture(GL_TEXTURE_2D, tex_info);
         p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, has3d ? g_fb[g_fb_shown].post : white_tex);
         p_glUniform1i(loc_has3d, eng == 0 && has3d);
-        p_glUniform1i(loc_cut, g_cut && !top);                     /* the commands screen (the HUD's pieces) */
+        p_glUniform1i(loc_cut, (g_cut && !top) || (g_cut_top && top));   /* the commands screen (the HUD's pieces), the top screen's page (its pop-up) */
         if (g_cut && !top) {
             float t[8 * 3];
             for (int i = 0; i < 8 * 3; i++) t[i] = (float)((g_hud_tint[i / 3] >> (16 - 8 * (i % 3))) & 255) / 255.0f;
@@ -1797,7 +1798,7 @@ static void draw_pieces(const GlPresent* v, GLuint src) {
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
     p_glBindVertexArray(vao_quad);
-    if (g_cut) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
+    if (g_cut || g_cut_top) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
     for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) {
         const float* q = v->piece[i];
         if (q[2] <= 0 || q[3] <= 0) continue;
@@ -2001,3 +2002,4 @@ int gl_read_3d(uint8_t* out, int* w, int* h) {
 int gl_wide_shown(int* side) { *side = g_wside; return g_wide_shown; }
 int gl_3d_ready(void) { return g_comp_has3d && g_fb_shown >= 0 && g_fb[g_fb_shown].valid; }
 void gl_set_hud_cut(int on) { g_cut = on != 0; }
+void gl_set_top_cut(int on) { g_cut_top = on != 0; }

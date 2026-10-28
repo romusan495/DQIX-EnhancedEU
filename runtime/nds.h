@@ -88,6 +88,8 @@ uint8_t  vram_bank_cnt(int b);           /* its VRAMCNT value */
 /* ---- graphics ---- */
 void gpu_render_line(int line);          /* both 2D engines, one scanline */
 void gpu_frame_start(void);              /* line 0: latch per-frame state */
+extern uint8_t g_engine_layer[2][256 * 192];   /* each pixel's front layer (gpu2d.c): 0-3 the BGs, or: */
+enum { LAYER_OBJ = 4, LAYER_BACKDROP, LAYER_3D };
 void gpu_frame_done(void);               /* VBlank: frame complete */
 void gpu_affine_written(int engine, int bg);
 extern uint32_t g_screen[2][256 * 192];  /* top, bottom: 0x00RRGGBB */
