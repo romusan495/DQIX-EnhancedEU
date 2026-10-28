@@ -94,6 +94,8 @@ static int g_hud = 1;                                             /* widescreen 
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
 static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
+static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
+static int g_shop_cut = 118;                                      /* ...the row between the list and the panels under it */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -331,6 +333,27 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             v->bot[0] = 256; v->bot[1] = 0; v->bot[2] = 256; v->bot[3] = 192;
             v->topx[0] = v->botx[0] = (float)side; v->topx[1] = v->botx[1] = 256;
             v->alpha = 1.0f; v->front = 0;
+        } else if (page == 1 && g_shop && !second) {
+            /* a shop's buy list (the field's screen): one column in the middle,
+             * the list (each item's icon before its name, mapmarks_shop()),
+             * the item's description from its card on the top screen, then
+             * the panels under the list (who can equip it, how many held);
+             * over the field, which stays whole */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            float L = (float)g_shop_cut, dw = (float)g_pop_win[2], dh = (float)g_pop_win[3], gap = 3;
+            float k = 192.0f / (192.0f + (dh > 0 ? dh + 2 * gap : 0)), x = (v->cw - 256 * k) / 2;
+            float* q = v->piece[v->npiece++];
+            q[4] = 3; q[5] = 0; q[6] = 0; q[7] = 256; q[8] = L;
+            q[0] = x; q[1] = 0; q[2] = 256 * k; q[3] = L * k;
+            q = v->piece[v->npiece++];
+            q[4] = 3; q[5] = 0; q[6] = L; q[7] = 256; q[8] = 192 - L;
+            q[0] = x; q[1] = 192 - (192 - L) * k; q[2] = 256 * k; q[3] = (192 - L) * k;
+            if (dh > 0) {
+                q = v->piece[v->npiece++];
+                q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = dw; q[8] = dh;
+                q[0] = (v->cw - dw * k) / 2; q[1] = (L + gap) * k; q[2] = dw * k; q[3] = dh * k;
+            }
+            v->icons[0] = x; v->icons[1] = 0; v->icons[2] = 256 * k; v->icons[3] = 192 * k;
         } else if (page == 1) {
             /* a page on the top screen (an item's card in Items, Equipment or a
              * shop, a title): its windows alone, without the page's backdrop,
@@ -1014,7 +1037,7 @@ static int to_touch_in(SDL_Window* win, int wx, int wy, int* tx, int* ty, int cl
         int hit = -1;
         for (int i = v.npiece - 1; i >= 0 && hit < 0; i--) {
             const float* q = v.piece[i];
-            if (lx >= q[0] && lx < q[0] + q[2] && ly >= q[1] && ly < q[1] + q[3]) hit = i;
+            if (q[4] > 0.5f && lx >= q[0] && lx < q[0] + q[2] && ly >= q[1] && ly < q[1] + q[3]) hit = i;   /* (not a piece of the top screen) */
         }
         if (hit < 0 && !(clamp && last < v.npiece)) return 0;   /* the rest of the commands screen isn't shown */
         if (hit >= 0) last = hit;
@@ -1463,13 +1486,33 @@ static void pop_update(int a_on_top) {
         }
         for (int i = 0; i < N; i++) { int c = lab[i]; bg[i] = c == best || (flags[c] & 1) || !(flags[c] & 2); }
     }
+    if (g_shop)                                                   /* a shop: the card's description alone (its parchment box) */
+        for (int i = 0; i < N; i++) { int x = i % 256, y = i / 256; if (x < 8 || x > 184 || y < 25 || y > 101) bg[i] = 1; }
     int x0 = 256, y0 = 192, x1 = -1, y1 = -1, kept = 0;
     for (int i = 0; i < N; i++)
         if (!bg[i]) { int x = i % 256, y = i / 256; kept++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-    if (kept * 50 < N) return;                                    /* (nothing much left: not a page with windows) */
+    if (kept * (g_shop ? 400 : 50) < N) return;                   /* (nothing much left: not a page with windows) */
     for (int i = 0; i < N; i++) px[i] = (px[i] & 0xFFFFFF) | (bg[i] ? 1u << 24 : 0);
     g_pop_win[0] = x0; g_pop_win[1] = y0; g_pop_win[2] = x1 - x0 + 1; g_pop_win[3] = y1 - y0 + 1;
-    pop_place();
+    if (!g_shop) pop_place();
+}
+
+/* A shop's buy list on the field's screen (mapmarks_shop()): its signs
+ * become the items' icons, and the screen is laid out as one column
+ * (canvas_layout_for()); the row under the list: the first one below
+ * y 100 with nothing of the 2D across it (the page number is just above). */
+static void shop_update(int a_on_top) {
+    int side = 0, ok = top_page_mode() == 1 && !a_on_top && g_comp_has3d && gl_wide_shown(&side) == 1;
+    const uint8_t* rgba; int changed;
+    g_shop = mapmarks_shop(ok ? g_engine_out[0] : NULL, g_comp_info, &rgba, &changed);
+    if (changed) gl_set_icons(g_shop ? rgba : NULL, MAPMARKS_W, MAPMARKS_H);
+    if (!g_shop) return;
+    g_shop_cut = 118;
+    for (int y = 100; y < 140; y++) {
+        int n = 0;
+        for (int x = 8; x < 248; x++) n += (g_comp_info[(y * 256 + x) * 4] & 3) == 1;
+        if (n == 240) { g_shop_cut = y; break; }
+    }
 }
 
 /* The map's markers (mapmarks.c) over the top screen, in whichever window
@@ -1505,8 +1548,10 @@ static void present_gl(void) {
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
     hud_update((pow >> 15) & 1);                                 /* (before composing: the minimal style cuts the cards out for it) */
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
+    shop_update((pow >> 15) & 1);
     pop_update((pow >> 15) & 1);
     gl_set_top_cut(g_pop_win[2] != 0);
+    gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */
     {   /* the 3D gone for a single frame in widescreen (a shop's menu after an item's

@@ -225,6 +225,7 @@ static const char* FS_COMP =
     "uniform int u_wide; uniform float u_wtot, u_wside;\n"   /* widescreen: DS pixels across, added each side */
     "uniform float u_s2d;\n"                                    /* smooth 2D: the width of an output pixel in DS pixels (0: off) */
     "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
+    "uniform int u_only;\n"                                    /* the 3D screen apart: 1 its 2D alone (see-through where the 3D shows), 2 its 3D alone */
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     /* Smooth 2D: xBR's corner rule (the same as xbr_upscale below): at each
      * corner of a DS pixel, if the neighbours across that corner form an
@@ -254,6 +255,7 @@ static const char* FS_COMP =
     "  float dsx = u_wide != 0 ? uv.x * u_wtot - u_wside : uv.x * 256.0;\n"
     "  ivec2 p2 = ivec2(min(vec2(dsx, uv.y * 192.0), vec2(255.0, 191.0)));\n"
     "  bool side = u_wide != 0 && (dsx < 0.0 || dsx >= 256.0);\n"
+    "  if (side && u_only == 1) { o_color = vec4(0.0); return; }\n"
     "  if (side) {\n"
     /* Beyond the DS's picture there are no 2D layers: show the 3D there on lines
      * where the edge of the DS's picture shows it (the field), with that
@@ -282,6 +284,14 @@ static const char* FS_COMP =
     "  uvec4 info = texelFetch(u_info, p2, 0);\n"
     "  int mode = int(info.r & 3u);\n"
     "  if (u_s2d > 0.0 && !side && mode == 0) col = smooth2d(p2, fr);\n"
+    /* (premultiplied: a window blended over the 3D keeps its part, EVA, and lets EVB of what is under through) */
+    "  if (u_only == 1 && mode != 0) { float a = mode == 2 ? clamp(1.0 - float(info.b) / 16.0, 0.0, 1.0) : 0.0;\n"
+    "    o_color = vec4(mode == 2 ? min(col * float(info.g) / 16.0, vec3(1.0)) : vec3(0.0), a); return; }\n"
+    "  if (u_only == 1 || (u_only == 2 && mode != 1)) {\n"
+    "    if (u_only == 1) { o_color = vec4(col, 1.0); return; }\n"
+    "    ivec2 sz0 = textureSize(u_3d, 0); vec4 s0 = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz0)), sz0 - 1), 0);\n"
+    "    o_color = vec4(s0.a > 0.0 ? s0.rgb : vec3(0.0), 1.0); return;\n"
+    "  }\n"
 
     "  if (mode == 0) { o_color = vec4(col, 1.0); return; }\n"
     "  vec4 c2t = texelFetch(u_c2, p2, 0);\n"
@@ -622,12 +632,14 @@ static int g_wside, g_fb3_w;                                   /* widescreen: DS
 static int g_wide_shown = -1;                                  /* the screen composed wide last: 0 top, 1 bottom, -1 none */
 static int g_cut;                                               /* gl_set_hud_cut() */
 static int g_cut_top;                                           /* gl_set_top_cut() */
+static int g_split;                                             /* gl_set_split() */
+static GLuint only2d_fbo, only2d_tex;                           /* the 3D screen's 2D alone (gl_set_split()), as final_tex */
 static float g_dlg_box[4];                                      /* gl_dialog_box() */
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
-static GLuint overlay_tex; static int overlay_on;   /* gl_set_overlay() */
+static GLuint overlay_tex[2]; static int overlay_on[2];   /* gl_set_overlay(), gl_set_icons() */
 static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
 static int g_ready;
 
@@ -1049,6 +1061,10 @@ static void make_fbs(void) {
     p_glGenFramebuffers(1, &final_fbo);
     p_glBindFramebuffer(GL_FRAMEBUFFER, final_fbo);
     p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, final_tex, 0);
+    only2d_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h * 2, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+    p_glGenFramebuffers(1, &only2d_fbo);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, only2d_fbo);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, only2d_tex, 0);
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
     g_fb_latest = g_fb_shown = -1;
 }
@@ -1060,6 +1076,7 @@ static void free_fbs(void) {
         p_glDeleteTextures(4, t); p_glDeleteFramebuffers(2, b);
     }
     p_glDeleteTextures(1, &final_tex); p_glDeleteFramebuffers(1, &final_fbo);
+    p_glDeleteTextures(1, &only2d_tex); p_glDeleteFramebuffers(1, &only2d_fbo);
     if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); held_tex = held_fbo = 0; held_w = held_h = 0; }
 }
 
@@ -1701,6 +1718,8 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_3d"), 3);
     GLint loc_rect = p_glGetUniformLocation(prog_comp, "u_rect"), loc_has3d = p_glGetUniformLocation(prog_comp, "u_has3d");
     GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
+    GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only");
+    p_glUniform1i(loc_only, 0);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
     p_glUniform4f(p_glGetUniformLocation(prog_comp, "u_uv"), 0, 0, 1, 1);
@@ -1724,10 +1743,22 @@ void gl_compose(int a_on_top, int lcd_on) {
         if (wide) g_wide_shown = top ? 0 : 1;
         if (wide) p_glUniform4f(loc_rect, -1.0f, top ? 0.0f : -1.0f, 2.0f, 1.0f);   /* top screen = upper half of NDC */
         else p_glUniform4f(loc_rect, -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f);
+        int split = wide && g_split;                                 /* the 3D alone here; its 2D apart, in only2d_tex */
+        p_glUniform1i(loc_only, split ? 2 : 0);
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
+        if (split) {
+            p_glUseProgram(prog_comp);
+            p_glBindFramebuffer(GL_FRAMEBUFFER, only2d_fbo);
+            p_glClearColor(0, 0, 0, 0); p_glClear(GL_COLOR_BUFFER_BIT);
+            p_glUniform1i(loc_only, 1);
+            p_glDrawArrays(GL_TRIANGLES, 0, 6);
+            p_glUniform1i(loc_only, 0);
+        }
         if (g_hdmovie_on && !wide) { const float r[4] = { -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f }; draw_movie(eng, r); }
         if (g_hdtext_on) draw_text(eng, top, W, (float)g_wside);
         if (g_hdsprite_n[eng]) draw_sprites(eng, top, W, (float)g_wside);
+        if (split) { p_glBindFramebuffer(GL_FRAMEBUFFER, final_fbo); p_glDisable(GL_BLEND); }
+        p_glUseProgram(prog_comp); p_glBindVertexArray(vao_quad);
     }
     p_glActiveTexture(GL_TEXTURE0);
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1796,23 +1827,29 @@ void gl_hold(void) {
 static void draw_pieces(const GlPresent* v, GLuint src) {
     float W = (float)(256 + 2 * g_wside);
     p_glUseProgram(prog_copy);
-    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, src); p_glBindSampler(0, 0);
-    p_glGenerateMipmap(GL_TEXTURE_2D);                           /* drawn smaller than rendered: averaged, not shimmering */
-    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindSampler(0, 0);
+    GLuint texs[2] = { src, g_split ? only2d_tex : 0 };
+    for (int t = 0; t < 2; t++) {
+        if (!texs[t]) continue;
+        p_glBindTexture(GL_TEXTURE_2D, texs[t]);
+        p_glGenerateMipmap(GL_TEXTURE_2D);                       /* drawn smaller than rendered: averaged, not shimmering */
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
     p_glBindVertexArray(vao_quad);
-    if (g_cut || g_cut_top) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
+    if (g_cut || g_cut_top || g_split) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
     for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) {
         const float* q = v->piece[i];
         if (q[2] <= 0 || q[3] <= 0) continue;
+        p_glBindTexture(GL_TEXTURE_2D, q[4] > 1.5f && texs[1] ? texs[1] : src);   /* 2, 3: the 3D screen's 2D alone */
         /* canvas (DS pixels, y down) -> window pixels -> NDC (y up); the rect's origin is its bottom left */
         float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
         p_glUniform4f(loc_rect, x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
                       q[2] * v->sc / (float)v->win_w * 2, q[3] * v->sc / (float)v->win_h * 2);
         /* the screen in the composed picture: the top one in the upper half, the DS's 256 columns after the sides */
-        float vtop = q[4] < 0.5f ? 1.0f : 0.5f;
+        float vtop = ((int)(q[4] + 0.5f) & 1) ? 0.5f : 1.0f;
         p_glUniform4f(loc_uv, ((float)g_wside + q[5]) / W, vtop - (q[6] + q[8]) / 384.0f, q[7] / W, q[8] / 384.0f);
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
     }
@@ -1820,11 +1857,10 @@ static void draw_pieces(const GlPresent* v, GLuint src) {
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 }
 
-/* gl_set_overlay()'s picture (the map's markers) over the canvas rect v->overlay. */
-static void draw_overlay(const GlPresent* v) {
-    const float* q = v->overlay;
+/* gl_set_overlay()'s picture (the map's markers) or gl_set_icons()' over the canvas rect q. */
+static void draw_overlay(const GlPresent* v, const float* q, GLuint tex) {
     p_glUseProgram(prog_copy);
-    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, overlay_tex); p_glBindSampler(0, 0);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, tex); p_glBindSampler(0, 0);
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
     p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
@@ -1907,7 +1943,8 @@ void gl_present(const GlPresent* v) {
     p_glBindVertexArray(vao_quad);
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
     if (v->npiece) draw_pieces(v, final_tex);
-    if (overlay_on && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v);
+    if (overlay_on[0] && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v, v->overlay, overlay_tex[0]);
+    if (overlay_on[1] && v->icons[2] > 0 && v->icons[3] > 0) draw_overlay(v, v->icons, overlay_tex[1]);
 }
 
 /* A console photo (RGBA, rows top-down), drawn around the screens. */
@@ -1926,11 +1963,11 @@ void gl_set_skin(const uint8_t* rgba, int w, int h) {
 
 /* A picture drawn over the screens where GlPresent.overlay says (premultiplied
  * RGBA, rows top-down); NULL: none. */
-void gl_set_overlay(const uint8_t* rgba, int w, int h) {
-    overlay_on = rgba != NULL;
+static void set_overlay(int i, const uint8_t* rgba, int w, int h) {
+    overlay_on[i] = rgba != NULL;
     if (!rgba) return;
-    if (!overlay_tex) p_glGenTextures(1, &overlay_tex);
-    p_glBindTexture(GL_TEXTURE_2D, overlay_tex);
+    if (!overlay_tex[i]) p_glGenTextures(1, &overlay_tex[i]);
+    p_glBindTexture(GL_TEXTURE_2D, overlay_tex[i]);
     p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1938,6 +1975,8 @@ void gl_set_overlay(const uint8_t* rgba, int w, int h) {
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
+void gl_set_overlay(const uint8_t* rgba, int w, int h) { set_overlay(0, rgba, w, h); }
+void gl_set_icons(const uint8_t* rgba, int w, int h) { set_overlay(1, rgba, w, h); }
 
 /* The window as shown (for tests): top-down RGB, caller frees. */
 uint8_t* gl_read_window(int w, int h) {
@@ -2008,6 +2047,7 @@ int gl_wide_shown(int* side) { *side = g_wside; return g_wide_shown; }
 int gl_3d_ready(void) { return g_comp_has3d && g_fb_shown >= 0 && g_fb[g_fb_shown].valid; }
 void gl_set_hud_cut(int on) { g_cut = on != 0; }
 void gl_set_top_cut(int on) { g_cut_top = on != 0; }
+void gl_set_split(int on) { g_split = on != 0; }
 int gl_dialog_box(int r[4]) {
     if (g_dlg_box[2] <= g_dlg_box[0] || g_dlg_box[3] <= g_dlg_box[1]) return 0;
     for (int i = 0; i < 4; i++) r[i] = (int)lroundf(g_dlg_box[i]);
