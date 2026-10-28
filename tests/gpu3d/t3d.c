@@ -10,7 +10,12 @@ Core g_c9;
 uint64_t g_frame;
 void irq_raise(Core* k, int b) { (void)k; (void)b; }
 uint32_t g_3d_line32[256]; int g_3d_present;   /* 6-bit r | g << 8 | b << 16 | alpha << 24 */
+void gpu3d_init(void);
 void gpu3d_render_line(int line);
+#undef getenv
+char* rt_getenv(const char* name) { return getenv(name); }
+void trace_dump(FILE* f, int n) { (void)f; (void)n; }
+uint32_t mem_read32(uint32_t addr) { (void)addr; return 0; }   /* no RAM: the scene uses no display lists */
 static void cmd(int c, const uint32_t* p, int n) {
     if (!n) { gx_write(0x440 + (c - 0x10) * 4, 0); return; }
     for (int i = 0; i < n; i++) gx_write(0x440 + (c - 0x10) * 4, p[i]);
