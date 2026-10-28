@@ -1,0 +1,1160 @@
+# Dragon Quest IX per PC: barra dei menu, finestre e messaggi in italiano.
+# Ogni testo inglese (riga en = , esattamente come nel codice) è seguito dalla traduzione (it = ).
+# \n = a capo, \t = prima della scorciatoia di un menu, & = la lettera sottolineata (tasto Alt).
+# Mantenere %d, %s... nello stesso ordine. Controllo: python tools/lang_check.py
+
+# ---- menu_win32.c
+
+en = &Game
+it = &Gioco
+
+en = &Pause\tP
+it = &Pausa\tP
+
+en = &Fast forward\t(or hold Tab)
+it = &Avanti veloce\t(o tieni premuto Tab)
+
+en = &Reset...\tCtrl+R
+it = &Riavvia...\tCtrl+R
+
+en = &Volume...\t- / =
+it = &Volume...\t- / =
+
+en = &Mute
+it = &Muto
+
+en = &Controls...
+it = &Comandi...
+
+en = &Keep a copy of every save (save-backups folder)
+it = &Tieni una copia di ogni salvataggio (cartella save-backups)
+
+en = Save &screenshot\tF12
+it = Salva &schermata\tF12
+
+en = Save &bug report\tF10
+it = Salva segnalazione di &bug\tF10
+
+en = E&xit\tEsc
+it = &Esci\tEsc
+
+en = G&raphics
+it = G&rafica
+
+en = &Classic: exactly like the DS\tF5
+it = &Classica: esattamente come il DS\tF5
+
+en = &Enhanced: sharper 3D\tF5
+it = &Migliorata: 3D più nitido\tF5
+
+en = 3D &resolution (Enhanced)\tF4
+it = &Risoluzione 3D (Migliorata)\tF4
+
+en = 1x (DS)
+it = 1x (DS)
+
+en = 2x
+it = 2x
+
+en = 3x
+it = 3x
+
+en = 4x
+it = 4x
+
+en = 6x
+it = 6x
+
+en = 8x
+it = 8x
+
+en = &Auto: as sharp as your screen (up to 12x)
+it = &Auto: nitida quanto il tuo schermo (fino a 12x)
+
+en = &Smooth textures (Enhanced)
+it = Texture &smussate (Migliorata)
+
+en = &Upscaled textures, xBR (Enhanced)
+it = Texture &ingrandite, xBR (Migliorata)
+
+en = Smooth &2D: menus, maps, sprites (Enhanced)
+it = &2D smussato: menu, mappe, sprite (Migliorata)
+
+en = Character &outlines (Enhanced)
+it = &Contorni dei personaggi (Migliorata)
+
+en = Like the &DS
+it = Come sul &DS
+
+en = &Thin
+it = &Sottili
+
+en = &None
+it = &Nessuno
+
+en = &Window style (Enhanced)
+it = Stile delle &finestre (Migliorata)
+
+en = &Minimal: no frame, more see-through
+it = &Minimale: senza cornice, più trasparente
+
+en = &HD textures from the textures folder (Enhanced)
+it = Texture &HD dalla cartella textures (Migliorata)
+
+en = &Reload the HD textures
+it = &Ricarica le texture HD
+
+en = &Dump textures to textures\\dump (for making a pack)
+it = &Esporta le texture in textures\\dump (per creare un pack)
+
+en = HD te&xt (Enhanced)
+it = Te&sto HD (Migliorata)
+
+en = Text &font
+it = &Carattere del testo
+
+en = The game's own letters, &smoothed
+it = Le lettere del gioco, &smussate
+
+en = &Georgia
+it = &Georgia
+
+en = &Palatino Linotype
+it = &Palatino Linotype
+
+en = &Constantia
+it = &Constantia
+
+en = &Times New Roman
+it = &Times New Roman
+
+en = Segoe &UI
+it = Segoe &UI
+
+en = &Lora
+it = &Lora
+
+en = C&rimson Pro
+it = C&rimson Pro
+
+en = &Alegreya
+it = &Alegreya
+
+en = Spectral
+it = Spectral
+
+en = &EB Garamond
+it = &EB Garamond
+
+en = P&hilosopher
+it = P&hilosopher
+
+en = &Marcellus
+it = &Marcellus
+
+en = &Nunito (rounded)
+it = &Nunito (arrotondato)
+
+en = &Fredoka (rounded, bold)
+it = &Fredoka (arrotondato, grassetto)
+
+en = HD &movies from the movies folder (Enhanced)
+it = &Filmati HD dalla cartella movies (Migliorata)
+
+en = &Screen
+it = &Schermo
+
+en = &DS Lite screen\tF6
+it = Schermo del &DS Lite\tF6
+
+en = LCD &colours
+it = &Colori LCD
+
+en = &Pixel grid (at 3x and larger)
+it = &Griglia dei pixel (da 3x in su)
+
+en = &Motion blur
+it = &Sfocatura di movimento
+
+en = &Backlight
+it = &Retroilluminazione
+
+en = &Low
+it = &Bassa
+
+en = &Medium
+it = &Media
+
+en = &High
+it = &Alta
+
+en = Ma&x
+it = Ma&ssima
+
+en = &View
+it = &Visualizza
+
+en = Show the DS &Lite\tF7
+it = Mostra il DS &Lite\tF7
+
+en = Console &colour
+it = &Colore della console
+
+en = &Gap between the screens
+it = &Spazio tra gli schermi
+
+en = &Actual size (as big as a real DS Lite)\tF8
+it = &Dimensione reale (grande come un vero DS Lite)\tF8
+
+en = &Window size\tF3
+it = Dimensione della &finestra\tF3
+
+en = 1x
+it = 1x
+
+en = &Integer scaling
+it = Scala &intera
+
+en = &Fullscreen\tF11
+it = &Schermo intero\tF11
+
+en = &Readability of the options menu (Esc)
+it = &Leggibilità del menu delle opzioni (Esc)
+
+en = Stronger &contrast
+it = &Contrasto più forte
+
+en = &Normal text
+it = Testo &normale
+
+en = &Large text
+it = Testo &grande
+
+en = La&rger text
+it = Testo &molto grande
+
+en = &Wireless
+it = &Wireless
+
+en = &Connect (Nintendo Wi-Fi Connection replacement)
+it = &Connetti (sostituto della Nintendo Wi-Fi Connection)
+
+en = &Server
+it = &Server
+
+en = &Built-in (offline: DQIX's preserved downloads)
+it = &Integrato (offline: i download di DQIX conservati)
+
+en = &AltWFC (172.104.88.237)
+it = &AltWFC (172.104.88.237)
+
+en = &Wiimmfi (164.132.44.106): not for DQIX
+it = &Wiimmfi (164.132.44.106): non per DQIX
+
+en = &Custom (wfc_server in settings.ini)
+it = &Personalizzato (wfc_server in settings.ini)
+
+en = &Play with friends far away (tag mode, visiting)
+it = &Gioca con amici lontani (modalità contatto, visite)
+
+en = &Host: your friends join you...
+it = &Ospita: i tuoi amici ti raggiungono...
+
+en = &Join a friend...
+it = &Raggiungi un amico...
+
+en = &Start now (everyone is here)\tEnter
+it = &Inizia ora (ci sono tutti)\tInvio
+
+en = &Leave and play alone
+it = &Esci e gioca da solo
+
+en = Your &name...
+it = Il tuo &nome...
+
+en = &How does this work?
+it = &Come funziona?
+
+en = &Unlock all downloadable content now (without Sellma)
+it = &Sblocca ora tutti i contenuti scaricabili (senza passare dal DQVC)
+
+en = &Modern
+it = &Moderno
+
+en = Walk in any &direction with the left stick
+it = Cammina in ogni &direzione con la levetta sinistra
+
+en = Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)
+it = Panoramico: &interfaccia di battaglia sul 3D (gruppo in alto, comandi in basso a sinistra)
+
+en = Map in the top right co&rner (one window, gone during battles)\tM
+it = Mappa nell'a&ngolo in alto a destra (una finestra, nascosta in battaglia)\tM
+
+en = Map si&ze
+it = Dimen&sione della mappa
+
+en = Small
+it = Piccola
+
+en = Medium
+it = Media
+
+en = Large
+it = Grande
+
+en = &Map: mark the chests, bookshelves and quests (the mouse over one: what it holds)
+it = &Mappa: segna forzieri, librerie e missioni (il mouse sopra: cosa contiene)
+
+en = Map: also mark the ones already &emptied or done (greyed)
+it = Mappa: segna anche quelli già &svuotati o completati (in grigio)
+
+en = Map: show the m&onsters walking nearby (red dots)
+it = Mappa: mostra i m&ostri nei dintorni (punti rossi)
+
+en = Map: a plan of the &rooms inside buildings (drawn from their walls)
+it = Mappa: una pianta delle &stanze negli edifici (disegnata dai loro muri)
+
+en = &Start (takes effect next launch)
+it = &Avvio (dal prossimo avvio)
+
+en = &Logos and opening movie, as on a DS
+it = &Loghi e filmato iniziale, come sul DS
+
+en = Skip the &logos
+it = Salta i &loghi
+
+en = Skip the logos and the opening &movie
+it = Salta i loghi e il &filmato iniziale
+
+en = &Battle speed
+it = Velocità delle &battaglie
+
+en = &Normal
+it = &Normale
+
+en = &2x
+it = &2x
+
+en = &3x
+it = &3x
+
+en = Sa&ve by itself every 10 minutes (on the field, as at a church)
+it = Sal&vataggio automatico ogni 10 minuti (sul campo, come in chiesa)
+
+en = Farm &gold by itself
+it = Raccogli &oro da solo
+
+en = &Farm here now\tCtrl+G
+it = &Raccogli qui ora\tCtrl+G
+
+en = Gold &target...
+it = &Obiettivo di oro...
+
+en = Fast &forward while farming
+it = &Avanti veloce durante la raccolta
+
+en = &How does it work?
+it = &Come funziona?
+
+en = &What is this?
+it = &Che cos'è?
+
+en = &Cheats
+it = &Trucchi
+
+en = Codes for the European version
+it = Codici per la versione europea
+
+en = Codes for the USA version
+it = Codici per la versione americana
+
+en = &About these cheats
+it = &Informazioni su questi trucchi
+
+en = &Language
+it = &Lingua
+
+en = &English
+it = &English
+
+en = &Français
+it = &Français
+
+en = &Deutsch
+it = &Deutsch
+
+en = &Italiano
+it = &Italiano
+
+en = E&spañol
+it = E&spañol
+
+en = &Menus and messages of this window
+it = &Menu e messaggi di questa finestra
+
+en = The &game's language
+it = La lingua del &gioco
+
+en = &Help
+it = &Aiuto
+
+en = &Controls
+it = &Comandi
+
+en = Check for &updates...
+it = Cerca &aggiornamenti...
+
+en = Check for updates at &start
+it = Cerca aggiornamenti all'&avvio
+
+en = &Send a bug report...
+it = &Invia una segnalazione di bug...
+
+en = &About
+it = &Informazioni
+
+en = &Fullscreen (F11)
+it = &Schermo intero (F11)
+
+en = Save
+it = Salva
+
+en = Skip
+it = Salta
+
+en = Volume
+it = Volume
+
+en = Mute
+it = Muto
+
+en = Close
+it = Chiudi
+
+en = Controller: %s
+it = Controller: %s
+
+en = No controller connected
+it = Nessun controller collegato
+
+en = Put every key and button back to how the game came?
+it = Riportare tutti i tasti e i pulsanti come all'origine?
+
+en = Controls
+it = Comandi
+
+en = Pick an action, then change one of its keys or its controller button. A key or button that another action has moves over to it (they swap). Esc and Alt+Enter, and the sticks, stay as they are.
+it = Scegli un'azione, poi cambia uno dei suoi tasti o il pulsante del controller. Un tasto o pulsante già usato da un'altra azione passa a questa (si scambiano). Esc, Alt+Invio e le levette restano come sono.
+
+en = Action
+it = Azione
+
+en = Key
+it = Tasto
+
+en = Second key
+it = 2° tasto
+
+en = Controller
+it = Controller
+
+en = Change key...
+it = Cambia tasto...
+
+en = Second key...
+it = Secondo tasto...
+
+en = Controller button...
+it = Pulsante controller...
+
+en = Clear
+it = Cancella
+
+en = Restore defaults
+it = Ripristina predefiniti
+
+# ---- gamemenu.c
+
+en = Resume
+it = Riprendi
+
+en = Esc
+it = Esc
+
+en = Options
+it = Opzioni
+
+en = %s: choose     %s: back     %s: back to the game
+it = %s: scegli     %s: indietro     %s: torna al gioco
+
+en = %s: choose     %s / %s: back to the game
+it = %s: scegli     %s / %s: torna al gioco
+
+en = A / Enter: choose     B / Backspace: back     Esc: back to the game
+it = A / Invio: scegli     B / Backspace: indietro     Esc: torna al gioco
+
+en = A / Enter: choose     B / Esc: back to the game
+it = A / Invio: scegli     B / Esc: torna al gioco
+
+# ---- frontend_sdl.c
+
+en = OUT OF SYNC: leave the session (Wireless menu)
+it = NON SINCRONIZZATO: esci dalla sessione (menu Wireless)
+
+en =  - session over: %s
+it =  - sessione finita: %s
+
+en =  - together: %d of %d players, delay %d
+it =  - insieme: %d giocatori su %d, ritardo %d
+
+en = paused (P to continue)%s
+it = in pausa (P per continuare)%s
+
+en = farming gold: %d of %d (Ctrl+G stops)%s
+it = raccolta d'oro: %d su %d (Ctrl+G ferma)%s
+
+en = farming gold (Ctrl+G stops)%s
+it = raccolta d'oro (Ctrl+G ferma)%s
+
+en = Classic
+it = Classica
+
+en = Enhanced
+it = Migliorata
+
+en =  - DS Lite screen
+it =  - schermo del DS Lite
+
+en =  (fast)
+it =  (veloce)
+
+en = The game couldn't start again by itself. Close it and start it again.
+it = Il gioco non è riuscito a riavviarsi da solo. Chiudilo e riavvialo.
+
+en = Cancel
+it = Annulla
+
+en = Exit
+it = Esci
+
+en = Quit the game?\n\nAnything since you last saved in the game is lost.
+it = Uscire dal gioco?\n\nTutto ciò che è successo dall'ultimo salvataggio nel gioco andrà perso.
+
+en = Quit
+it = Esci
+
+en = Your name
+it = Il tuo nome
+
+en = The name your friends see in the session (your hero's name, say):
+it = Il nome che i tuoi amici vedono nella sessione (quello del tuo eroe, per esempio):
+
+en = Host a session: your friends join you (up to 3 of them).%s
+it = Ospita una sessione: i tuoi amici ti raggiungono (fino a 3).%s
+
+en = \n\nThe game restarts for this: save your adventure first (in the game) if you haven't.
+it = \n\nPer questo il gioco si riavvia: salva prima la tua avventura (nel gioco), se non l'hai fatto.
+
+en = Host a session
+it = Ospita una sessione
+
+en = Host
+it = Ospita
+
+en = Join a friend
+it = Raggiungi un amico
+
+en = The code your friend's game shows (like DQ-7KF2-QM4P), or their address (like 203.0.113.7:27900). The game restarts and connects: save your adventure first if you haven't.
+it = Il codice mostrato dal gioco del tuo amico (come DQ-7KF2-QM4P), o il suo indirizzo (come 203.0.113.7:27900). Il gioco si riavvia e si connette: salva prima la tua avventura, se non l'hai fatto.
+
+en = Leave the session
+it = Esci dalla sessione
+
+en = Leave and play alone? Your DS is switched off for the others; your game restarts (it was saved whenever you saved in the game).
+it = Uscire e giocare da solo? Il tuo DS si spegne per gli altri; il tuo gioco si riavvia (è stato salvato a ogni salvataggio nel gioco).
+
+en = Leave
+it = Esci
+
+en = Playing with friends far away
+it = Giocare con amici lontani
+
+en = Tag mode, visiting other worlds and inviting friends (Pavo) need DS systems close to each other. This lets friends anywhere play those parts together, up to 4 players.\n\nHow: one of you hosts (Wireless > Play with friends far away > Host), the others join with the code the host's game shows. When everyone is in, the host presses Start the game. All the games restart together, each from its own save, and from then on every PC runs every player's DS: yours in the window, your friends' unseen. Only the buttons travel between the PCs, so the DSes really are side by side - on every PC at once.\n\nWhat to expect:\n- Save your adventure before hosting or joining: the game restarts.\n- Everyone needs the same version of this game.\n- Buttons react a little later than usual (the input delay, a few frames, depending on the distance).\n- If someone's PC is slow, everyone waits for it while your DSes are talking wirelessly.\n- The built-in Wi-Fi works as usual (DQVC, the downloads), with the host's files for everyone. Other online servers are off during a session.\n- Your game saves to your own save as always. Leaving (or closing the game) switches your DS off for the others.\n\nGetting in: the code works on any internet - it connects through a small relay on the internet when the host's router doesn't let friends in directly (apartment and mobile internet, for example). Where the router does, the host's game also shows an address that connects directly, with a little less delay. Windows may ask whether to allow the game on networks: allow it.
+it = La modalità contatto, le visite ad altri mondi e gli inviti agli amici richiedono DS vicini tra loro. Questo permette ad amici ovunque di giocare insieme queste parti, fino a 4 giocatori.\n\nCome: uno di voi ospita (Wireless > Gioca con amici lontani > Ospita), gli altri si uniscono con il codice mostrato dal gioco dell'host. Quando ci sono tutti, l'host preme Inizia la partita. Tutti i giochi si riavviano insieme, ognuno dal proprio salvataggio, e da lì ogni PC fa girare il DS di ogni giocatore: il tuo nella finestra, quelli dei tuoi amici senza vederli. Tra i PC viaggiano solo i pulsanti, quindi i DS sono davvero uno accanto all'altro, su ogni PC allo stesso tempo.\n\nCosa aspettarsi:\n- Salva la tua avventura prima di ospitare o unirti: il gioco si riavvia.\n- Tutti devono avere la stessa versione di questo gioco.\n- I pulsanti rispondono un po' più tardi del solito (il ritardo di input, qualche fotogramma, secondo la distanza).\n- Se il PC di qualcuno è lento, tutti lo aspettano mentre i vostri DS comunicano senza fili.\n- Il Wi-Fi integrato funziona come al solito (DQVC, download), con i file dell'host per tutti. Gli altri server online sono spenti durante una sessione.\n- Il tuo gioco salva nel tuo salvataggio come sempre. Uscire (o chiudere il gioco) spegne il tuo DS per gli altri.\n\nConnettersi: il codice funziona con qualsiasi connessione: passa da un piccolo relay su Internet quando il router dell'host non lascia entrare gli amici direttamente (per esempio in appartamento o con Internet mobile). Dove il router lo permette, il gioco dell'host mostra anche un indirizzo che si connette direttamente, con un po' meno ritardo. Windows può chiedere se consentire il gioco sulle reti: consentilo.
+
+en = Open GitHub
+it = Apri GitHub
+
+en = Don't send
+it = Non inviare
+
+en = Send the bug report
+it = Invia la segnalazione di bug
+
+en = Send this report to the people working on the game?\n\nYour browser opens a new bug report on the project's GitHub page, already filled in, and the report's folder opens with one file in it to drag into that page. Then press Submit. You need a free GitHub account.\n\nEverything on GitHub is public: anyone can see the report and download its file. The file contains:\n  - a screenshot of the game, and a picture of the whole game window\n  - every button you pressed since the game started\n  - your save file (your characters' names and progress), at the start and now, if ticked below\n  - your description\n  - the game's version, log and settings (settings.ini and controls.ini): your graphics card, the Wi-Fi settings and the console's made-up ID; after playing with friends also their names and the host's internet address\n  - timing measurements\n\nNothing is sent until you press Submit on GitHub.
+it = Inviare questa segnalazione a chi lavora sul gioco?\n\nIl browser apre una nuova segnalazione di bug sulla pagina GitHub del progetto, già compilata, e la cartella della segnalazione si apre con un file da trascinare in quella pagina. Poi premi Submit. Serve un account GitHub gratuito.\n\nTutto su GitHub è pubblico: chiunque può vedere la segnalazione e scaricarne il file. Il file contiene:\n  - una schermata del gioco e un'immagine di tutta la finestra del gioco\n  - ogni pulsante premuto dall'avvio del gioco\n  - il tuo salvataggio (nomi e progressi dei tuoi personaggi), all'inizio e ora, se spuntato qui sotto\n  - la tua descrizione\n  - versione, registro e impostazioni del gioco (settings.ini e controls.ini): la tua scheda grafica, le impostazioni Wi-Fi e l'ID inventato della console; dopo aver giocato con amici anche i loro nomi e l'indirizzo Internet dell'host\n  - misure dei tempi\n\nNiente viene inviato finché non premi Submit su GitHub.
+
+en = Include my save file (it makes the problem much easier to find)
+it = Includi il mio salvataggio (il problema è molto più facile da trovare)
+
+en = Send with my save
+it = Invia con il mio salvataggio
+
+en = Send without my save
+it = Invia senza il mio salvataggio
+
+en = The report couldn't be packed. It is still in the reports folder.
+it = Non è stato possibile comprimere la segnalazione. È ancora nella cartella reports.
+
+en = The browser didn't open. Go to https://github.com/%s/issues/new and attach %s.
+it = Il browser non si è aperto. Vai su https://github.com/%s/issues/new e allega %s.
+
+en = Update
+it = Aggiornamento
+
+en = Leave the session first (Wireless menu), then update.
+it = Esci prima dalla sessione (menu Wireless), poi aggiorna.
+
+en = This copy of the game wasn't made with BUILD.bat, so it can't update itself. Download the new version from https://github.com/%s instead.
+it = Questa copia del gioco non è stata creata con BUILD.bat, quindi non può aggiornarsi da sola. Scarica invece la nuova versione da https://github.com/%s.
+
+en = Update to %s?\n\nThe game closes, downloads %s, builds it from your ROM again (a few minutes; a window shows how far it is) and starts again. Your saves, settings and extras are kept, and the current version is kept in the update folder in case you want to go back (update\\rollback.bat).
+it = Aggiornare a %s?\n\nIl gioco si chiude, scarica %s, lo ricostruisce dalla tua ROM (qualche minuto; una finestra mostra l'avanzamento) e si riavvia. Salvataggi, impostazioni ed extra vengono mantenuti, e la versione attuale resta nella cartella update nel caso volessi tornare indietro (update\\rollback.bat).
+
+en = downloading the update...
+it = download dell'aggiornamento...
+
+en = The update couldn't be downloaded: %s.
+it = Non è stato possibile scaricare l'aggiornamento: %s.
+
+en = Dragon Quest IX %s is available (you have %s).\n\nUpdate now?%s
+it = Dragon Quest IX %s è disponibile (hai la %s).\n\nAggiornare ora?%s
+
+en = \n\nOr try the nightly version: the newest work, but less tested.
+it = \n\nOppure prova la versione nightly: il lavoro più recente, ma meno testato.
+
+en = Update to %s
+it = Aggiorna a %s
+
+en = Install nightly %s
+it = Installa la nightly %s
+
+en = Skip this version
+it = Salta questa versione
+
+en = Later
+it = Più tardi
+
+en = Update available
+it = Aggiornamento disponibile
+
+en = checking for updates...
+it = ricerca di aggiornamenti...
+
+en = Couldn't check for updates: %s.
+it = Impossibile cercare aggiornamenti: %s.
+
+en = no answer
+it = nessuna risposta
+
+en = Updates
+it = Aggiornamenti
+
+en =  (newer)
+it =  (più recente)
+
+en =  (this one)
+it =  (questa)
+
+en =  (older)
+it =  (più vecchia)
+
+en = \n\nInstalling stable goes back to %s, an older version than this one. Your saves and settings are kept.
+it = \n\nInstallare la stable torna alla %s, una versione più vecchia di questa. Salvataggi e impostazioni vengono mantenuti.
+
+en = This copy: %s\n\nStable: %s%s\nTested; recommended for everyone.\n\nNightly: %s%s\nThe newest work: new features and fixes first, but less tested.%s\n\nFriends playing together need the same version.
+it = Questa copia: %s\n\nStable: %s%s\nTestata; consigliata a tutti.\n\nNightly: %s%s\nIl lavoro più recente: novità e correzioni prima, ma meno testata.%s\n\nGli amici che giocano insieme devono avere la stessa versione.
+
+en = Install stable %s
+it = Installa la stable %s
+
+en = Stop and play alone? The game restarts.
+it = Smettere e giocare da solo? Il gioco si riavvia.
+
+en = Stop
+it = Smetti
+
+en = Downloadable content
+it = Contenuti scaricabili
+
+en = The 64 downloadable quests and the 23 special guests will be switched on in your save the next time the game starts (they come with the save, as if downloaded from Nintendo Wi-Fi Connection).\n\nClose the game and start it again, load your adventure log, and save once in the game to keep them.\n\nThe quests are offered by their quest givers once you reach them in the story; the guests visit Quester's Rest.
+it = Le 64 missioni scaricabili e i 23 ospiti speciali verranno attivati nel tuo salvataggio al prossimo avvio del gioco (arrivano con il salvataggio, come se fossero stati scaricati dalla Nintendo Wi-Fi Connection).\n\nChiudi il gioco e riavvialo, carica il tuo diario d'avventura e salva una volta nel gioco per tenerli.\n\nLe missioni vengono proposte dai loro committenti quando li raggiungi nella storia; gli ospiti visitano la locanda di Stornway.
+
+en = Off. A save that already has them keeps them; this only stops switching them on at start.
+it = Disattivato. Un salvataggio che li ha già li tiene; questo smette solo di attivarli all'avvio.
+
+en = Wireless
+it = Wireless
+
+en = Connected mode is on. In the game, talk to Sellma at the DQVC counter in Stornway's Quester's Rest and the DS will connect through this PC to the server chosen under Wireless > Server.\n\nIf the connection fails, press F10 right after: the bug report records how far it got.
+it = La modalità connessa è attiva. Nel gioco, parla con la commessa del banco DQVC nella locanda di Stornway e il DS si connetterà tramite questo PC al server scelto in Wireless > Server.\n\nSe la connessione non riesce, premi F10 subito dopo: la segnalazione di bug registra fin dove è arrivata.
+
+en = Nintendo Wi-Fi Connection closed in 2014. Fans run replacement servers (AltWFC, Wiimmfi) that a real DS reaches by changing its DNS setting; this game does the same.\n\nThe PC plays the part of a wireless access point called DQIX-PC and passes the DS's traffic to the internet. Nothing else on your PC is changed.\n\nServer > Built-in: nothing goes to the internet. The PC answers the game itself with DQIX's downloads as Nintendo served them (preserved by fans, in the wfc folder).\n\nConnect to the internet: the DS gets online when the game asks for it, e.g. when Sellma downloads DQVC items and new quests. Turn it off and the game behaves like a DS with no access point.\n\nUnlock all downloadable content now: switches on every downloadable quest and special guest in your save when the game starts, without visiting Sellma.
+it = La Nintendo Wi-Fi Connection ha chiuso nel 2014. Dei fan gestiscono server sostitutivi (AltWFC, Wiimmfi) che un vero DS raggiunge cambiando la sua impostazione DNS; questo gioco fa lo stesso.\n\nIl PC fa da punto di accesso wireless chiamato DQIX-PC e passa il traffico del DS a Internet. Nient'altro viene cambiato sul tuo PC.\n\nServer > Integrato: niente va su Internet. Il PC risponde da sé al gioco con i download di DQIX come li serviva Nintendo (conservati dai fan, nella cartella wfc).\n\nConnetti a Internet: il DS va online quando il gioco lo chiede, per esempio quando il DQVC scarica oggetti e nuove missioni. Spento, il gioco si comporta come un DS senza punto di accesso.\n\nSblocca ora tutti i contenuti scaricabili: attiva ogni missione scaricabile e ogni ospite speciale nel tuo salvataggio all'avvio del gioco, senza passare dal DQVC.
+
+en = Bug report
+it = Segnalazione di bug
+
+en = The report is saved. Describe what went wrong (what you did, what you expected, what happened) - as much as you like. Save adds it to the report; Skip keeps the report without a description.
+it = La segnalazione è salvata. Descrivi cosa è andato storto (cosa hai fatto, cosa ti aspettavi, cosa è successo), quanto vuoi. Salva la aggiunge alla segnalazione; Salta tiene la segnalazione senza descrizione.
+
+en = report saved (see the reports folder)
+it = segnalazione salvata (vedi la cartella reports)
+
+en = Widescreen needs Enhanced: stacked until then
+it = Il panoramico richiede Migliorata: schermi impilati nel frattempo
+
+en = Small screen hidden
+it = Schermo piccolo nascosto
+
+en = Small screen shown
+it = Schermo piccolo visibile
+
+en = Single screen (%s)
+it = Schermo singolo (%s)
+
+en = Both screens
+it = Entrambi gli schermi
+
+en = top
+it = sopra
+
+en = bottom
+it = sotto
+
+en = Small screen: %d%%
+it = Schermo piccolo: %d%%
+
+en = top left
+it = in alto a sinistra
+
+en = top right
+it = in alto a destra
+
+en = bottom right
+it = in basso a destra
+
+en = bottom left
+it = in basso a sinistra
+
+en = Small screen: %s
+it = Schermo piccolo: %s
+
+en = small
+it = piccolo
+
+en = medium
+it = medio
+
+en = large
+it = grande
+
+en = Reset
+it = Riavvia
+
+en = Not while playing with friends: it would leave them out of step. Leave the session first (Wireless menu).
+it = Non mentre giochi con amici: andrebbero fuori sincronia. Esci prima dalla sessione (menu Wireless).
+
+en = Start the game again from the beginning, like switching the DS off and on?\n\nAnything since you last saved in the game is lost.
+it = Riavviare il gioco dall'inizio, come spegnendo e riaccendendo il DS?\n\nTutto ciò che è successo dall'ultimo salvataggio nel gioco andrà perso.
+
+en = Volume %d%% (- and = change it)
+it = Volume %d%% (- e = lo cambiano)
+
+en = Sound off
+it = Audio disattivato
+
+en = Volume %d%%
+it = Volume %d%%
+
+en = Change the keys and controller buttons in controls.ini, next to the game (the game writes it with every action listed), then start the game again.
+it = Cambia i tasti e i pulsanti del controller in controls.ini, accanto al gioco (il gioco lo scrive con tutte le azioni), poi riavvia il gioco.
+
+en = You stopped it.
+it = L'hai fermata tu.
+
+en = Farming stopped
+it = Raccolta fermata
+
+en = Farm gold by itself
+it = Raccolta d'oro automatica
+
+en = Farming until the party has %d gold (Ctrl+G or any button stops)
+it = Raccolta finché il gruppo ha %d monete d'oro (Ctrl+G o qualsiasi pulsante ferma)
+
+en = Stop farming once the party has this much gold (now %d):
+it = Ferma la raccolta quando il gruppo ha questo oro (ora %d):
+
+en = Gold target
+it = Obiettivo di oro
+
+en = Gold target: %d
+it = Obiettivo di oro: %d
+
+en = Go to a place with monsters, stand on the field with nothing open, and choose Farm here now (or press Ctrl+G).\n\nThe hero goes for the monsters walking nearby, staying around the place where you started it (or walks around there until one shows up), and fights every battle by pressing A: Fight, then each member's first command (Attack), or what their tactics say if you set tactics (Tactics in the battle menu). Set tactics such as Show no mercy for the whole party and the battles go by themselves.\n\nIt stops, and pauses the game, when the party has the gold you asked for (Gold target), or when someone in the party is knocked out or low on HP (a wipe-out loses half your gold), when the party leaves the area, when no battle comes for 3 minutes, or when the game stays in a menu or conversation too long. Ctrl+G, or any button you press, stops it at once.\n\nWith Fast forward while farming on, it runs as fast as your PC can.
+it = Vai in un posto con mostri, resta sul campo senza niente di aperto e scegli Raccogli qui ora (o premi Ctrl+G).\n\nL'eroe va verso i mostri nei dintorni, restando intorno al punto in cui l'hai avviata (o ci gira intorno finché ne appare uno), e affronta ogni battaglia premendo A: Combatti, poi il primo comando di ogni membro (Attacca), o quello che dice la loro tattica se ne hai impostata una (Tattica nel menu di battaglia). Imposta una tattica offensiva per tutto il gruppo e le battaglie vanno da sole.\n\nSi ferma, e mette in pausa il gioco, quando il gruppo ha l'oro chiesto (Obiettivo di oro), o quando qualcuno del gruppo è KO o ha pochi PV (una sconfitta fa perdere metà del tuo oro), quando il gruppo lascia la zona, quando nessuna battaglia arriva per 3 minuti, o quando il gioco resta troppo in un menu o in una conversazione. Ctrl+G, o qualsiasi pulsante, la ferma subito.\n\nCon Avanti veloce durante la raccolta, va veloce quanto il tuo PC permette.
+
+en = Cheats
+it = Trucchi
+
+en = Action Replay codes, the ones made for this ROM's version (USA or European): tick one to turn it on, tick it again to turn it off. They are all off at first, and never run while playing with friends.\n\nThe ones with a number (gold, mini medals, skill points) ask for it when you tick them: to change it, untick the cheat and tick it again.\n\nWhat they change goes into your adventure log when you save (gold, skill points, vocations...): save to another slot first, or keep Game > Keep a copy of every save on.\n\nOnly the codes that change the game's data are here: on PC the game's code is compiled, so the codes that rewrite the game's instructions (walk faster, more experience...) can't work.\n\nThe codes are the public ones from Almar's Guides (almarsguides.com, Dragon Quest IX, Action Replay).
+it = Codici Action Replay, quelli fatti per la versione di questa ROM (americana o europea): spuntane uno per attivarlo, rispuntalo per disattivarlo. All'inizio sono tutti disattivati e non funzionano mai mentre giochi con amici.\n\nQuelli con un numero (oro, mini medaglie, punti abilità) lo chiedono quando li spunti: per cambiarlo, togli la spunta al trucco e rimettila.\n\nCiò che cambiano finisce nel tuo diario d'avventura quando salvi (oro, punti abilità, vocazioni...): salva prima in un altro slot, o tieni attivo Gioco > Tieni una copia di ogni salvataggio.\n\nQui ci sono solo i codici che cambiano i dati del gioco: su PC il codice del gioco è compilato, quindi i codici che riscrivono le istruzioni del gioco (camminare più veloce, più esperienza...) non possono funzionare.\n\nSono i codici pubblici di Almar's Guides (almarsguides.com, Dragon Quest IX, Action Replay).
+
+en = The game will be in %s the next time it starts: close it and start it again.\n\nYour adventure log is the same in every language.
+it = Il gioco sarà in %s al prossimo avvio: chiudilo e riavvialo.\n\nIl tuo diario d'avventura è lo stesso in tutte le lingue.
+
+en = Language
+it = Lingua
+
+en = Modern
+it = Moderno
+
+en = Optional ways to play that the DS didn't have. Walking with the stick is on at first; the others are off. With them all off the game is exactly the original.\n\nWalk in any direction with the left stick (on at first): on the DS the D-pad walks in 8 directions and only the stylus walks in any. With this on, a controller's left stick steers like the stylus while you walk around (the game's own stylus walking). In menus, dialogue and battles the stick stays a D-pad. Friends in a session don't need it on.\n\nWidescreen: the action (the field, or a battle) is drawn wider than the DS's screen, so you see more of the world left and right, and the other screen (the map, or the battle commands) sits small in a corner over it. K (or the right stick click) moves it to the next corner, I changes its size, O (or the left stick click) how see-through it is; it turns solid while the mouse is on it. U (or the left trigger) hides it; holding F9 (or the right trigger) shows it big until you let go. In a window it is 16:9; in fullscreen it fills the monitor. Text, menus and the touch screen's buttons stay in the middle, as on the DS. People and things at the sides stay in view (except while playing with friends far away). Enhanced mode only (the 3D on the graphics card).\n\nWidescreen, dynamic (experimental): the small screen stays top left, and the field slides over to make room when a menu would be under it.\n\nTop screen in the corner: the field as on the DS (4:3), the top screen beside it.\n\nTwo windows: one screen in each, to put them on two monitors (each can be fullscreen).\n\nSingle screen (U or the left trigger): only one screen, as big as it gets; F9 or the right trigger shows the other one.\n\nBattle speed: battles (and their victory messages) go 2 or 3 times as fast; the music keeps its pitch and skips ahead. The rest of the game stays at its own speed. Off while playing with friends far away.\n\nMap: show the monsters walking nearby: red dots on the map, to go for them or around them.\n\nSave by itself every 10 minutes: the game saves as the priest would, wherever the party is, once the hero is free to walk (never during a battle, a dialogue, a menu or a cut scene); Continue takes you back there. The 10 minutes count from the last save, the church's too. It needs a save made once at a church first, and is off while playing with friends. Game > Keep a copy of every save keeps the earlier ones in save-backups.\n\nAll are also under View; F2 goes through the layouts.
+it = Modi di giocare facoltativi che il DS non aveva. Camminare con la levetta è attivo all'inizio; gli altri sono disattivati. Tutti disattivati, il gioco è esattamente l'originale.\n\nCammina in ogni direzione con la levetta sinistra (attivo all'inizio): sul DS la croce direzionale cammina in 8 direzioni e solo il pennino in tutte. Con questo attivo, la levetta sinistra di un controller dirige come il pennino mentre cammini (la camminata col pennino del gioco). Nei menu, nei dialoghi e nelle battaglie la levetta resta una croce direzionale. Gli amici in una sessione non devono attivarlo.\n\nPanoramico: l'azione (il campo o una battaglia) è disegnata più larga dello schermo del DS, quindi vedi di più del mondo a sinistra e a destra, e l'altro schermo (la mappa o i comandi di battaglia) sta piccolo in un angolo sopra. K (o il clic della levetta destra) lo sposta all'angolo successivo, I ne cambia la dimensione, O (o il clic della levetta sinistra) la trasparenza; diventa opaco quando il mouse è sopra. U (o il grilletto sinistro) lo nasconde; tenere premuto F9 (o il grilletto destro) lo mostra grande finché non lasci. In finestra è 16:9; a schermo intero riempie il monitor. Testo, menu e pulsanti del touch screen restano al centro, come sul DS. Persone e cose ai lati restano visibili (tranne giocando con amici lontani). Solo in modalità Migliorata (il 3D sulla scheda grafica).\n\nPanoramico dinamico (sperimentale): lo schermo piccolo resta in alto a sinistra, e il campo scorre per fare spazio quando un menu ci finirebbe sotto.\n\nSchermo superiore nell'angolo: il campo come sul DS (4:3), lo schermo superiore accanto.\n\nDue finestre: uno schermo in ciascuna, per metterle su due monitor (ognuna può essere a schermo intero).\n\nSchermo singolo (U o il grilletto sinistro): un solo schermo, il più grande possibile; F9 o il grilletto destro mostra l'altro.\n\nVelocità delle battaglie: le battaglie (e i loro messaggi di vittoria) vanno 2 o 3 volte più veloci; la musica mantiene la sua intonazione e salta avanti. Il resto del gioco mantiene la sua velocità. Disattivata giocando con amici lontani.\n\nMappa: mostra i mostri nei dintorni: punti rossi sulla mappa, per andare verso di loro o aggirarli.\n\nSalvataggio automatico ogni 10 minuti: il gioco salva come farebbe il sacerdote, ovunque sia il gruppo, appena l'eroe è libero di camminare (mai durante una battaglia, un dialogo, un menu o un filmato); Continua ti riporta lì. I 10 minuti contano dall'ultimo salvataggio, anche quello in chiesa. Serve prima un salvataggio fatto una volta in chiesa, ed è disattivato giocando con amici. Gioco > Tieni una copia di ogni salvataggio tiene i precedenti in save-backups.\n\nTutto è anche in Visualizza; F2 passa da una disposizione all'altra.
+
+en = Actual size
+it = Dimensione reale
+
+en = Your monitor didn't say how big it is, so the real size can't be worked out.\n\nMeasure the width of its picture area in millimetres and put it in settings.ini\n(next to the game) as monitor_width_mm, e.g. monitor_width_mm = 597
+it = Il tuo monitor non ha indicato quanto è grande, quindi non si può calcolare la dimensione reale.\n\nMisura la larghezza della sua area d'immagine in millimetri e mettila in settings.ini\n(accanto al gioco) come monitor_width_mm, per esempio monitor_width_mm = 597
+
+en = These are the usual keys; Game > Controls changes any of them.\n\nDS button      Keyboard              Controller\nD-pad          arrow keys            D-pad / left stick\nA / B          X / Z                 right / bottom button\nX / Y          S / A                 top / left button\nL / R          Q / W                 shoulder buttons\n               (turn the camera)     or the right stick, while walking\nSTART          Enter                 Start\nSELECT         Right Shift           Back\nTouch screen   left mouse button on the bottom screen\n\nScreens: F2 layout   U single screen (left trigger)   F9 swap (right trigger; widescreen: hold to see the other)\nWidescreen's small screen: K corner (right stick click)   I size   O opacity (left stick click)\nTab (hold) fast forward   P pause   Ctrl+R reset (controller: hold Start+Select+L+R)   - / = volume   Ctrl+G farm gold\nF5 Classic / Enhanced   F4 3D resolution   F6 DS Lite screen   F7 DS Lite console   F8 actual size   F3 window size\nF11 or Alt+Enter fullscreen (mouse at the top: menu bar)   F12 screenshot   F10 bug report   Esc leave fullscreen / quit\nIn fullscreen, double-click outside the touch screen to go back to the window.
+it = Questi sono i tasti abituali; Gioco > Comandi permette di cambiarli tutti.\n\nPulsante DS    Tastiera              Controller\nCroce          frecce                croce / levetta sinistra\nA / B          X / Z                 pulsante destro / basso\nX / Y          S / A                 pulsante alto / sinistro\nL / R          Q / W                 tasti dorsali\n               (ruotare la camera)   o la levetta destra, camminando\nSTART          Invio                 Start\nSELECT         Maiusc destro         Back\nTouch screen   clic sinistro sullo schermo inferiore\n\nSchermi: F2 disposizione   U schermo singolo (grilletto sinistro)   F9 scambia (grilletto destro; panoramico: tieni premuto per l'altro)\nSchermo piccolo del panoramico: K angolo (clic levetta destra)   I dimensione   O opacità (clic levetta sinistra)\nTab (tieni premuto) avanti veloce   P pausa   Ctrl+R riavvia (controller: tieni Start+Select+L+R)   - / = volume   Ctrl+G raccogli oro\nF5 Classica / Migliorata   F4 risoluzione 3D   F6 schermo del DS Lite   F7 console DS Lite   F8 dimensione reale   F3 dimensione finestra\nF11 o Alt+Invio schermo intero (mouse in alto: barra dei menu)   F12 schermata   F10 segnalazione di bug   Esc esci dallo schermo intero / esci\nA schermo intero, fai doppio clic fuori dal touch screen per tornare alla finestra.
+
+en = Dragon Quest IX for PC, %s (%s), built %s\n\nClassic draws the game exactly like the DS; Enhanced draws its 3D\non the graphics card at up to 4x.\n\nDS Lite screen colours: Pokefan531's measured DS Lite profile.
+it = Dragon Quest IX per PC, %s (%s), compilato il %s\n\nClassica disegna il gioco esattamente come il DS; Migliorata disegna il suo 3D\nsulla scheda grafica fino a 4x.\n\nColori dello schermo del DS Lite: il profilo DS Lite misurato da Pokefan531.
+
+en = About
+it = Informazioni
+
+en = %s\n\nType the number you want, from 0 to %d:
+it = %s\n\nScrivi il numero che vuoi, da 0 a %d:
+
+en = Map shown
+it = Mappa visibile
+
+en = Map hidden
+it = Mappa nascosta
+
+en = Not changed
+it = Non cambiato
+
+en = Resetting... (keep holding Start + Select + L + R)
+it = Riavvio... (continua a tenere Start + Select + L + R)
+
+en = Reset cancelled
+it = Riavvio annullato
+
+en = Saved
+it = Salvato
+
+# ---- farm.c
+
+en = Someone
+it = Qualcuno
+
+en = Load your adventure first.
+it = Carica prima la tua avventura.
+
+en = Start it while the hero is free to walk on the field (no menu or conversation open).
+it = Avviala quando l'eroe è libero di camminare sul campo (nessun menu o conversazione aperti).
+
+en = The party already has that much gold: raise the target first.
+it = Il gruppo ha già tutto quell'oro: alza prima l'obiettivo.
+
+en = You pressed a button: the farm stopped so you can play.
+it = Hai premuto un pulsante: la raccolta si è fermata perché tu possa giocare.
+
+en = %s is in danger: heal the party before farming more.
+it = %s è in pericolo: cura il gruppo prima di raccogliere ancora.
+
+en = The adventure isn't loaded any more.
+it = L'avventura non è più caricata.
+
+en = Done: the party has %d gold (target %d), after %d battles.
+it = Fatto: il gruppo ha %d monete d'oro (obiettivo %d), dopo %d battaglie.
+
+en = The party left the area where the farm started (a door or the edge of the map).
+it = Il gruppo ha lasciato la zona in cui è iniziata la raccolta (una porta o il bordo della mappa).
+
+en = No battle for 3 minutes: try a place with more monsters.
+it = Nessuna battaglia da 3 minuti: prova un posto con più mostri.
+
+en = The game has been off the field for 4 minutes: something needs you.
+it = Il gioco è fuori dal campo da 4 minuti: qualcosa ha bisogno di te.
+
+# ---- cheats.c
+
+en = Gold: always %s...
+it = Oro: sempre %s...
+
+en = Gold in the bank: always %s...
+it = Oro in banca: sempre %s...
+
+en = Mini medals: always %s...
+it = Mini medaglie: sempre %s...
+
+en = Party: HP stay full in battle
+it = Gruppo: PV sempre pieni in battaglia
+
+en = Party: MP stay full in battle
+it = Gruppo: PM sempre pieni in battaglia
+
+en = Party: %s skill points to spend (press Select)...
+it = Gruppo: %s punti abilità da spendere (premi Select)...
+
+en = Every vocation unlocked
+it = Tutte le vocazioni sbloccate
+
+en = Every party trick learnt
+it = Tutti i giochi di società imparati
+
+en = Quester's Rest: top level and every upgrade (press Select)
+it = Locanda: livello massimo e tutte le migliorie (premi Select)
+
+en = Time of day: Start+Up for day, Start+Down for night
+it = Ora del giorno: Start+Su per il giorno, Start+Giù per la notte
+
+en = Monsters: HP to 0, any hit finishes them (press B+Start in battle)
+it = Mostri: PV a 0, ogni colpo li finisce (premi B+Start in battaglia)
+
+# ---- controls.c
+
+en = DS: A
+it = DS: A
+
+en = DS: B
+it = DS: B
+
+en = DS: X
+it = DS: X
+
+en = DS: Y
+it = DS: Y
+
+en = DS: L (turn the camera)
+it = DS: L (ruota la camera)
+
+en = DS: R (turn the camera)
+it = DS: R (ruota la camera)
+
+en = DS: START
+it = DS: START
+
+en = DS: SELECT
+it = DS: SELECT
+
+en = DS: Up
+it = DS: Su
+
+en = DS: Down
+it = DS: Giù
+
+en = DS: Left
+it = DS: Sinistra
+
+en = DS: Right
+it = DS: Destra
+
+en = Fast forward (hold)
+it = Avanti veloce (tieni premuto)
+
+en = Pause
+it = Pausa
+
+en = Fullscreen
+it = Schermo intero
+
+en = Show / hide the map (top right)
+it = Mostra / nascondi mappa (in alto a dx)
+
+en = Window size
+it = Dimensione della finestra
+
+en = 3D resolution
+it = Risoluzione 3D
+
+en = Classic / Enhanced
+it = Classica / Migliorata
+
+en = DS Lite screen
+it = Schermo del DS Lite
+
+en = DS Lite console
+it = Console DS Lite
+
+en = Volume down
+it = Abbassa il volume
+
+en = Volume up
+it = Alza il volume
+
+en = Reset the game
+it = Riavvia il gioco
+
+en = Screenshot
+it = Schermata
+
+en = Options menu (in the game; Esc too)
+it = Menu delle opzioni (nel gioco; anche Esc)
+
+en = Right face button
+it = Pulsante frontale destro
+
+en = Circle
+it = Cerchio
+
+en = B
+it = B
+
+en = A
+it = A
+
+en = Bottom face button
+it = Pulsante frontale basso
+
+en = Cross
+it = Croce
+
+en = Top face button
+it = Pulsante frontale alto
+
+en = Triangle
+it = Triangolo
+
+en = Y
+it = Y
+
+en = X
+it = X
+
+en = Left face button
+it = Pulsante frontale sinistro
+
+en = Square
+it = Quadrato
+
+en = Back / Select
+it = Back / Select
+
+en = Create / Share
+it = Create / Share
+
+en = View
+it = View
+
+en = Home / Guide
+it = Home / Guide
+
+en = PS button
+it = Tasto PS
+
+en = Xbox button
+it = Pulsante Xbox
+
+en = Home
+it = Home
+
+en = Start
+it = Start
+
+en = Menu
+it = Menu
+
+en = Left stick click
+it = Clic levetta sinistra
+
+en = L3
+it = L3
+
+en = Right stick click
+it = Clic levetta destra
+
+en = R3
+it = R3
+
+en = Left shoulder
+it = Dorsale sinistro
+
+en = L1
+it = L1
+
+en = LB
+it = LB
+
+en = L
+it = L
+
+en = Right shoulder
+it = Dorsale destro
+
+en = R1
+it = R1
+
+en = RB
+it = RB
+
+en = R
+it = R
+
+en = D-pad up
+it = Croce su
+
+en = D-pad down
+it = Croce giù
+
+en = D-pad left
+it = Croce sinistra
+
+en = D-pad right
+it = Croce destra
+
+en = Share / Capture
+it = Condividi / Cattura
+
+en = Mute button
+it = Tasto microfono
+
+en = Share
+it = Share
+
+en = Capture
+it = Cattura
+
+en = Back paddle 1
+it = Levetta posteriore 1
+
+en = Back button 1
+it = Tasto posteriore 1
+
+en = Back paddle 2
+it = Levetta posteriore 2
+
+en = Back button 2
+it = Tasto posteriore 2
+
+en = Back paddle 3
+it = Levetta posteriore 3
+
+en = Back button 3
+it = Tasto posteriore 3
+
+en = Back paddle 4
+it = Levetta posteriore 4
+
+en = Back button 4
+it = Tasto posteriore 4
+
+en = Touchpad click
+it = Clic del touchpad
+

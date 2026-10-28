@@ -14,6 +14,7 @@ void gamemenu_open(void);
 void gamemenu_close(void);
 void gamemenu_set_font(const char* name);   /* a font in fonts/ (the HD text's), else a system one */
 void gamemenu_changed(void);                /* check marks or texts changed: draw again */
+void gamemenu_set_readability(int contrast, int size);   /* View > Readability: stronger contrast (0/1); text size 0 normal, 1 large, 2 larger */
 /* Navigation; returns the chosen item's MI_ id (or GM_RESUME), else 0. */
 int gamemenu_key(int key);
 /* The mouse at (x, y) in the window's drawable pixels; click 1 = left, 2 = right (back). */

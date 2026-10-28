@@ -7,7 +7,9 @@
 #include <string.h>
 #include <math.h>
 #include "gamemenu.h"
+#include "uitext.h"
 #include "menu.h"
+#include "controls.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
@@ -44,7 +46,7 @@ static void make_rows(void) {
     const MenuNode* n; int nn = menu_nodes(&n);
     int cur = g_stack[g_depth];
     g_nrows = 0;
-    if (g_depth == 0) g_rows[g_nrows++] = (Row){ MENU_ITEM, GM_RESUME, "Resume", "Esc", 1 };
+    if (g_depth == 0) g_rows[g_nrows++] = (Row){ MENU_ITEM, GM_RESUME, T("Resume"), T("Esc"), 1 };
     for (int i = 1; i < nn && g_nrows < MAX_ROWS; i++) {
         if (n[i].parent != cur) continue;
         if (n[i].kind == MENU_SEP && (g_nrows == 0 || g_rows[g_nrows - 1].kind == MENU_SEP)) continue;
@@ -292,9 +294,19 @@ static void check(float x, float y, float s, const float c[4]) {
 /* The window itself is drawn by the renderer in the minimal style of the
  * game's restyled windows (gamemenu_box, gl_set_menu_box): see-through black
  * with a grey line. Here: the veil and what is written in it. */
-static const float C_VEIL[4] = { 0, 0, 0, 0.45f }, C_WHITE[4] = { 1, 1, 1, 1 };
-static const float C_DIM[4] = { 0.60f, 0.60f, 0.60f, 1 }, C_KEY[4] = { 0.75f, 0.75f, 0.75f, 1 }, C_SEL[4] = { 1, 1, 1, 0.12f };
-static const float C_TITLE[4] = { 0.93f, 0.93f, 0.93f, 1 }, C_LINE[4] = { 0.5f, 0.5f, 0.5f, 1 };
+static float C_VEIL[4] = { 0, 0, 0, 0.45f }, C_WHITE[4] = { 1, 1, 1, 1 };
+static float C_DIM[4] = { 0.60f, 0.60f, 0.60f, 1 }, C_KEY[4] = { 0.75f, 0.75f, 0.75f, 1 }, C_SEL[4] = { 1, 1, 1, 0.12f };
+static float C_TITLE[4] = { 0.93f, 0.93f, 0.93f, 1 }, C_LINE[4] = { 0.5f, 0.5f, 0.5f, 1 };
+static int g_contrast, g_size;                    /* View > Readability: stronger contrast; text normal, large, larger */
+void gamemenu_set_readability(int contrast, int size) {
+    if (contrast == g_contrast && size == g_size) return;
+    g_contrast = contrast != 0; g_size = size < 0 ? 0 : size > 2 ? 2 : size;
+    /* stronger contrast: the greys nearly white, a darker veil (under the text too), a clearer cursor */
+    float dim = g_contrast ? 0.88f : 0.60f, key = g_contrast ? 0.95f : 0.75f, line = g_contrast ? 0.85f : 0.5f;
+    for (int i = 0; i < 3; i++) { C_DIM[i] = dim; C_KEY[i] = key; C_LINE[i] = line; C_TITLE[i] = g_contrast ? 1 : 0.93f; }
+    C_VEIL[3] = g_contrast ? 0.72f : 0.45f; C_SEL[3] = g_contrast ? 0.30f : 0.12f;
+    g_dirty = 1;
+}
 static float g_box[5];                            /* the window: x0 y0 x1 y1, line width (drawable pixels) */
 
 const float* gamemenu_box(void) { return g_open && g_box[4] > 0 ? g_box : NULL; }
@@ -311,9 +323,10 @@ const uint8_t* gamemenu_picture(int w, int h, int* changed) {
     make_rows();
     float u = (float)h / 720.0f; if (u < 0.6f) u = 0.6f;
     if (u * 1100 > w * 0.92f) u = w * 0.92f / 1100;   /* narrow windows */
-    float pw = fminf(w - 40 * u, 980 * u), title_px = 30 * u, row_px = 23 * u;
-    g_rowh = 40 * u;
-    float head = 76 * u, foot = 52 * u;
+    float z = g_size == 2 ? 1.4f : g_size ? 1.2f : 1;  /* larger text: larger rows */
+    float pw = fminf(w - 40 * u, 980 * u), title_px = 30 * u * z, row_px = 23 * u * z;
+    g_rowh = 40 * u * z;
+    float head = 76 * u * z, foot = 52 * u * z;
     float room = h - 2 * 30 * u - head - foot, all = 0;
     for (int i = 0; i < g_nrows; i++) all += g_rows[i].kind == MENU_SEP ? SEP_H : 1;
     int fit = (int)(room / g_rowh);                   /* whole rows that fit (separators make it a little more) */
@@ -338,7 +351,8 @@ const uint8_t* gamemenu_picture(int w, int h, int* changed) {
     }
 
     /* the title: where we are */
-    char title[400] = "Options";
+    char title[400];
+    snprintf(title, sizeof title, "%s", T("Options"));
     const MenuNode* n; menu_nodes(&n);
     for (int d = 1; d <= g_depth; d++) { size_t l = strlen(title); snprintf(title + l, sizeof title - l, "  \xE2\x80\xBA  %s", n[g_stack[d]].text); }
     float tx = g_px0 + 40 * u;
@@ -383,9 +397,17 @@ const uint8_t* gamemenu_picture(int w, int h, int* changed) {
     if (g_top[g_depth] + g_vis < g_nrows) updown(g_px1 - 48 * u, g_py1 - foot + 14 * u, 9 * u, 0, C_KEY);
 
     /* how to use it */
-    const char* hint = g_depth ? "A / Enter: choose     B / Backspace: back     Esc: back to the game"
-                               : "A / Enter: choose     B / Esc: back to the game";
-    float hp = 17 * u;
+    char hint[300];
+    if (g_ctl_pad_label[0]) {                       /* a controller: its own buttons' names (a PlayStation's Circle and Cross...) */
+        char ok[64], back[64], menu[64];
+        controls_pad_name(g_ctl_pad[CA_A], ok, sizeof ok); controls_pad_name(g_ctl_pad[CA_B], back, sizeof back);
+        controls_pad_name(g_ctl_pad[CA_MENU], menu, sizeof menu);
+        if (!strcmp(menu, "-")) snprintf(menu, sizeof menu, "%s", T("Esc"));   /* no button for it */
+        if (g_depth) snprintf(hint, sizeof hint, T("%s: choose     %s: back     %s: back to the game"), T(ok), T(back), T(menu));
+        else snprintf(hint, sizeof hint, T("%s: choose     %s / %s: back to the game"), T(ok), T(back), T(menu));
+    } else snprintf(hint, sizeof hint, "%s", g_depth ? T("A / Enter: choose     B / Backspace: back     Esc: back to the game")
+                                                     : T("A / Enter: choose     B / Esc: back to the game"));
+    float hp = 17 * u * (g_size ? 1.15f : 1);
     while (text_width(hint, hp) > pw - 80 * u && hp > 10 * u) hp *= 0.92f;
     text(g_px0 + 40 * u, g_py1 - foot + (foot - hp * 1.25f) / 2, hp, C_DIM, hint);
     return g_pic;

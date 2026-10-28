@@ -45,6 +45,7 @@
 #include "update.h"
 #include "text.h"
 #include "controls.h"
+#include "uitext.h"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -509,6 +510,9 @@ static void default_console_color(void) {
 /* settings.ini's names for g_fw_language (1-5), and the menu's */
 static const char* const LANGUAGE_KEY[6] = { "", "english", "french", "german", "italian", "spanish" };
 static const char* const LANGUAGE_NAME[6] = { "", "English", "Fran\xc3\xa7" "ais", "Deutsch", "Italiano", "Espa\xc3\xb1ol" };
+static int g_ui_language;        /* the menus' and messages' language (uitext.h): 0 the game's, else 1-5 like g_fw_language */
+static int g_ui_contrast, g_ui_text_size;   /* View > Readability (the in-game options menu): stronger contrast; text 0 normal, 1 large, 2 larger */
+static int ui_language_wanted(void) { return g_ui_language ? g_ui_language : rom_is_eur() ? g_fw_language : 1; }
 /* settings_version 2: a new install looks like the project's own setup (Enhanced,
  * widescreen with the map in the top right corner, the battle HUD, the map
  * markers...). An older settings.ini keeps the player's own things (volume,
@@ -596,6 +600,9 @@ static void settings_load(void) {
         else if (!strcmp(key, "monitor_width_mm")) g_opt.monitor_width_mm = (float)atof(val);
         else if (!strcmp(key, "downloadable_content")) g_opt.dlc = atoi(val) != 0;
         else if (!strcmp(key, "language")) { for (int i = 1; i <= 5; i++) if (!strcmp(val, LANGUAGE_KEY[i])) g_fw_language = i; }
+        else if (!strcmp(key, "menu_contrast")) g_ui_contrast = atoi(val) != 0;
+        else if (!strcmp(key, "menu_text_size")) { int v = atoi(val); if (v >= 0 && v <= 2) g_ui_text_size = v; }
+        else if (!strcmp(key, "menu_language")) { g_ui_language = 0; for (int i = 1; i <= 5; i++) if (!strcmp(val, LANGUAGE_KEY[i])) g_ui_language = i; }
         else if (!strcmp(key, "wireless")) g_net_want = atoi(val) != 0;
         else if (!strcmp(key, "wfc_server")) snprintf(g_wfc_server, sizeof g_wfc_server, "%s", val);
         else if (!strcmp(key, "wireless_mac")) {
@@ -704,6 +711,12 @@ static void settings_save(void) {
     fprintf(f, "downloadable_content = %d\n", g_opt.dlc);
     fprintf(f, "# the game's language (European version; the USA version is in English): english, french, german, italian or spanish\n");
     fprintf(f, "language = %s\n", LANGUAGE_KEY[g_fw_language]);
+    fprintf(f, "# the menu bar's, windows' and messages' language: game (the game's own: English with the USA version),\n");
+    fprintf(f, "# english, french, german, italian or spanish (their texts: lang folder)\n");
+    fprintf(f, "menu_language = %s\n", g_ui_language ? LANGUAGE_KEY[g_ui_language] : "game");
+    fprintf(f, "# View > Readability, the options menu in the game (Esc): stronger contrast 0 or 1; text size 0 normal, 1 large, 2 larger\n");
+    fprintf(f, "menu_contrast = %d\n", g_ui_contrast);
+    fprintf(f, "menu_text_size = %d\n", g_ui_text_size);
     fprintf(f, "# Wireless menu: connect to a community Nintendo Wi-Fi Connection server: 0 or 1\n");
     fprintf(f, "wireless = %d\n", g_net_want);
     fprintf(f, "# which server: builtin (offline, the files in the wfc folder), altwfc, wiimmfi, or another's DNS address\n");
@@ -768,6 +781,7 @@ static void audio_cb(void* u, Uint8* stream, int len) {
 
 /* Window size = canvas x scale, made smaller if it would not fit on the screen. */
 static void menu_sync(void);
+static void menu_build(void);
 /* keep: the layout changed (swap, single screen, another layout): keep the
  * size the player gave the window - the same if the picture keeps its shape,
  * else the new shape at the same zoom. Otherwise (window size, actual size,
@@ -983,10 +997,8 @@ void frontend_init(int argc, char** argv) {
             if (wp && sscanf(wp, "%d,%d", &x, &y) == 2) SDL_SetWindowPosition(g_win, x, y);
         }
         apply_mode();
-        const char* names[N_DRAWN + MAX_SKINS];
-        for (int i = 0; i < N_DRAWN; i++) names[i] = SHELLS[i].name;
-        for (int i = 0; i < g_nskins; i++) names[N_DRAWN + i] = g_skins[i].name;
-        menu_init(g_win, names, N_SHELLS, g_all_options);
+        ui_lang_load(ui_language_wanted());
+        menu_build();
         if (g_update_auto && !session_requested() && update_project_dir()) update_check_async();
         update_actual();
         menu_sync();
@@ -1647,9 +1659,9 @@ static void present(void) {
 static void update_offer(const UpdateInfo* u);
 static double g_last_fps;
 static void update_title(double fps);
-/* a short message in the title bar for two seconds ("Volume 70%") */
+/* a short message in the title bar for two seconds ("Volume 70%"), in the player's language */
 static void notice(const char* fmt, ...) {
-    va_list ap; va_start(ap, fmt); vsnprintf(g_notice, sizeof g_notice, fmt, ap); va_end(ap);
+    va_list ap; va_start(ap, fmt); vsnprintf(g_notice, sizeof g_notice, T(fmt), ap); va_end(ap);
     g_notice_until = SDL_GetPerformanceCounter() + g_perf_freq * 2;
     if (g_win) update_title(g_last_fps);
 }
@@ -1661,23 +1673,32 @@ static void update_title(double fps) {
     if (session_running()) {
         SessionInfo si; session_info(&si);
         int here = 0; for (int k = 0; k < si.n; k++) here += !si.gone[k];
-        if (si.desync) snprintf(ses, sizeof ses, " - OUT OF SYNC: leave the session (Wireless menu)");
-        else if (si.state == 4) snprintf(ses, sizeof ses, " - session over: %s", si.message);
-        else snprintf(ses, sizeof ses, " - together: %d of %d players, delay %d", here, si.n, si.delay);
+        if (si.desync) snprintf(ses, sizeof ses, " - %s", T("OUT OF SYNC: leave the session (Wireless menu)"));
+        else if (si.state == 4) snprintf(ses, sizeof ses, T(" - session over: %s"), si.message);
+        else snprintf(ses, sizeof ses, T(" - together: %d of %d players, delay %d"), here, si.n, si.delay);
         static char last[256]; static uint64_t shown;
         if (strcmp(last, si.message)) { snprintf(last, sizeof last, "%s", si.message); shown = SDL_GetPerformanceCounter(); }
         if (!si.desync && si.state == 3 && SDL_GetPerformanceCounter() - shown < g_perf_freq * 8) snprintf(ses + strlen(ses), sizeof ses - strlen(ses), " - %s", si.message);
     }
-    if (g_notice[0] && SDL_GetPerformanceCounter() < g_notice_until) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s", g_notice);
-    else if (g_paused) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - paused (P to continue)%s", ses);
+    char what[300];                                             /* after "Dragon Quest IX <version> - ", in the player's language */
+    if (g_notice[0] && SDL_GetPerformanceCounter() < g_notice_until) snprintf(what, sizeof what, "%s", g_notice);
+    else if (g_paused) snprintf(what, sizeof what, T("paused (P to continue)%s"), ses);
     else if (g_farm_on) { int g = farm_gold();
-        if (g >= 0) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - farming gold: %d of %d (Ctrl+G stops)%s", g, g_farm_target, ses);
-        else snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - farming gold (Ctrl+G stops)%s", ses); }
-    else snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s%s - %.1f fps%s%s", g_classic ? "Classic" : "Enhanced",
-                  g_gl && g_opt.lcd ? " - DS Lite screen" : "", fps, g_fast ? " (fast)" : "", ses);
+        if (g >= 0) snprintf(what, sizeof what, T("farming gold: %d of %d (Ctrl+G stops)%s"), g, g_farm_target, ses);
+        else snprintf(what, sizeof what, T("farming gold (Ctrl+G stops)%s"), ses); }
+    else snprintf(what, sizeof what, "%s%s - %.1f fps%s%s", T(g_classic ? "Classic" : "Enhanced"),
+                  g_gl && g_opt.lcd ? T(" - DS Lite screen") : "", fps, g_fast ? T(" (fast)") : "", ses);
+    snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s", what);
     SDL_SetWindowTitle(g_win, title);
 }
 
+/* the menu bar, in the language loaded (built again when it changes) */
+static void menu_build(void) {
+    const char* names[N_DRAWN + MAX_SKINS];
+    for (int i = 0; i < N_DRAWN; i++) names[i] = SHELLS[i].name;
+    for (int i = 0; i < g_nskins; i++) names[N_DRAWN + i] = g_skins[i].name;
+    menu_init(g_win, names, N_SHELLS, g_all_options);
+}
 static void menu_sync(void) {
     {
         SessionInfo si; session_info(&si);
@@ -1753,6 +1774,9 @@ static void menu_sync(void) {
     menu_check(MI_ANALOG, g_analog_walk);
     menu_check(MI_FARM, g_farm_on); menu_check(MI_FARM_FAST, g_farm_fast); menu_enable(MI_FARM, !session_requested());
     for (int i = 0; i < 5; i++) { menu_check(MI_LANG1 + i, g_fw_language == i + 1); menu_enable(MI_LANG1 + i, rom_is_eur()); }
+    for (int i = 0; i <= 5; i++) menu_check(MI_UILANG0 + i, g_ui_language == i);
+    menu_check(MI_UICONTRAST, g_ui_contrast);
+    for (int i = 0; i < 3; i++) menu_check(MI_UISIZE0 + i, g_ui_text_size == i);
     for (int i = 0; i < 4; i++) { menu_check(MI_SIZE1 + i, g_scale == i + 1); menu_enable(MI_SIZE1 + i, !g_opt.actual); }
     menu_check(MI_INTEGER, g_opt.integer); menu_enable(MI_INTEGER, !g_opt.actual);
     menu_check(MI_ACTUAL, g_opt.actual); menu_enable(MI_ACTUAL, g_gl);
@@ -1780,6 +1804,7 @@ static const char* CONTROLS_TEXT =
 /* A message box whose long lines are wrapped (the system boxes size themselves
  * to the longest line, which made the help as wide as the screen). */
 static int info_box(Uint32 flags, const char* title, const char* text, SDL_Window* win) {
+    title = T(title); text = T(text);                           /* in the player's language */
     size_t n = strlen(text);
     char* out = malloc(n * 2 + 1);
     if (!out) return SDL_ShowSimpleMessageBox(flags, title, text, win);
@@ -1801,6 +1826,15 @@ static int info_box(Uint32 flags, const char* title, const char* text, SDL_Windo
 }
 
 static int g_menu_peek;          /* fullscreen: the menu bar is showing because the mouse is at the top */
+/* Language > Menus and messages, or the game's language when the menus follow it */
+static void ui_language_changed(void) {
+    if (ui_language_wanted() == ui_lang()) return;
+    ui_lang_load(ui_language_wanted());
+    menu_build();
+    menu_sync();
+    if (g_fullscreen && !g_menu_peek) menu_show(0);
+}
+
 static void settings_save(void);
 
 /* ---------------------------------------------------------------- playing with friends far away */
@@ -1842,7 +1876,7 @@ static void restart_with(const char* session) {
         CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
         exit(0);
     }
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dragon Quest IX", "The game couldn't start again by itself. Close it and start it again.", g_win);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dragon Quest IX", T("The game couldn't start again by itself. Close it and start it again."), g_win);
 #else
     if (pos[0]) setenv("DQIX_WINPOS", pos, 1); else unsetenv("DQIX_WINPOS");
     if (session) setenv("DQIX_SESSION", session, 1); else unsetenv("DQIX_SESSION");
@@ -1886,7 +1920,7 @@ static void session_action(int id) {
     switch (id) {
     case MI_SES_HOST: {
         if (!g_player_name[0] && !ask_name()) return;
-        char text[400]; snprintf(text, sizeof text, "Host a session: your friends join you (up to 3 of them).%s", RESTART);
+        char text[400]; snprintf(text, sizeof text, T("Host a session: your friends join you (up to 3 of them).%s"), T(RESTART));
         if (!ask_yes("Host a session", text, "Host")) return;
         char ses[64]; snprintf(ses, sizeof ses, "host:%d", g_session_port);
         restart_with(ses);
@@ -1977,7 +2011,7 @@ static void report_send(const char* dir, const char* description) {
     char zip[400];
     if (!report_zip(dir, with_saves, zip, sizeof zip)) { info_box(SDL_MESSAGEBOX_ERROR, "Send the bug report", "The report couldn't be packed. It is still in the reports folder.", g_win); return; }
     const char* zname = strrchr(zip, '/'); zname = zname ? zname + 1 : zip;
-    char title[160] = "Bug report (" DQIX_VERSION ")";
+    char title[160] = "Bug report (" DQIX_VERSION ")";             /* on GitHub: stays in English */
     if (description && description[0]) {
         char first[90]; snprintf(first, sizeof first, "%s", description);
         first[strcspn(first, "\r\n")] = 0;
@@ -2004,7 +2038,7 @@ static void report_send(const char* dir, const char* description) {
     url_add(url, sizeof url, body);
     show_in_folder(zip);
     if (SDL_OpenURL(url) != 0) {
-        char m[600]; snprintf(m, sizeof m, "The browser didn't open. Go to https://github.com/%s/issues/new and attach %s.", UPDATE_REPO, zip);
+        char m[600]; snprintf(m, sizeof m, T("The browser didn't open. Go to https://github.com/%s/issues/new and attach %s."), UPDATE_REPO, zip);
         info_box(SDL_MESSAGEBOX_INFORMATION, "Send the bug report", m, g_win);
     }
 }
@@ -2012,14 +2046,15 @@ static void report_send(const char* dir, const char* description) {
 /* A message with buttons: Windows' own dialog (buttons sized to their words),
  * SDL's elsewhere. Returns the chosen button's index, or `cancel`. */
 static int choose(const char* title, const char* text, const char* const* buttons, int n, int def, int cancel) {
-    int r = choice_box(g_win, title, text, buttons, n, def, cancel, NULL, NULL);
+    int r = choice_box(g_win, title, text, buttons, n, def, cancel, NULL, NULL);   /* (translates them itself) */
     if (r >= 0) return r;
     SDL_MessageBoxButtonData b[8];
     if (n > 8) n = 8;
     for (int i = 0; i < n; i++) {
         b[i].flags = (i == def ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0) | (i == cancel ? SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT : 0);
-        b[i].buttonid = i; b[i].text = buttons[i];
+        b[i].buttonid = i; b[i].text = T(buttons[i]);
     }
+    title = T(title); text = T(text);
     const SDL_MessageBoxData d = { SDL_MESSAGEBOX_INFORMATION, g_win, title, text, n, b, NULL };
     int out = cancel;
     if (SDL_ShowMessageBox(&d, &out) != 0 || out < 0) return cancel;
@@ -2029,22 +2064,24 @@ static int choose(const char* title, const char* text, const char* const* button
 static void update_go(const char* branch, const char* version) {
     if (session_requested()) { info_box(SDL_MESSAGEBOX_INFORMATION, "Update", "Leave the session first (Wireless menu), then update.", g_win); return; }
     if (!update_project_dir()) {
-        info_box(SDL_MESSAGEBOX_INFORMATION, "Update", "This copy of the game wasn't made with BUILD.bat, so it can't update itself. "
-                 "Download the new version from https://github.com/" UPDATE_REPO " instead.", g_win);
+        char m[400];
+        snprintf(m, sizeof m, T("This copy of the game wasn't made with BUILD.bat, so it can't update itself. "
+                 "Download the new version from https://github.com/%s instead."), UPDATE_REPO);
+        info_box(SDL_MESSAGEBOX_INFORMATION, "Update", m, g_win);
         return;
     }
     char text[700];
-    snprintf(text, sizeof text, "Update to %s?\n\nThe game closes, downloads %s, builds it from your ROM again (a few minutes; "
+    snprintf(text, sizeof text, T("Update to %s?\n\nThe game closes, downloads %s, builds it from your ROM again (a few minutes; "
              "a window shows how far it is) and starts again. Your saves, settings and extras are kept, and the current "
-             "version is kept in the update folder in case you want to go back (update\\rollback.bat).", version, version);
+             "version is kept in the update folder in case you want to go back (update\\rollback.bat)."), version, version);
     { const char* b[2] = { "Update", "Cancel" }; if (choose("Update", text, b, 2, 0, 1) != 0) return; }
     backup_flush();
     settings_save();
-    if (g_win) SDL_SetWindowTitle(g_win, "Dragon Quest IX - downloading the update...");
+    if (g_win) { char t[200]; snprintf(t, sizeof t, "Dragon Quest IX - %s", T("downloading the update...")); SDL_SetWindowTitle(g_win, t); }
     char err[200] = "";
     if (update_install(branch, version, err, sizeof err)) exit(0);
-    char m[400]; snprintf(m, sizeof m, "The update couldn't be downloaded: %s.", err);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Update", m, g_win);
+    char m[400]; snprintf(m, sizeof m, T("The update couldn't be downloaded: %s."), err);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, T("Update"), m, g_win);
 }
 
 /* at start: a newer stable version */
@@ -2053,11 +2090,11 @@ static void update_offer(const UpdateInfo* u) {
     /* the nightly too, when it's newer still: an optional second choice */
     int nightly = u->nightly[0] && strcmp(u->nightly, u->stable) && update_newer(u->nightly, u->stable);
     char text[500];
-    snprintf(text, sizeof text, "Dragon Quest IX %s is available (you have %s).\n\nUpdate now?%s", u->stable, DQIX_VERSION,
-             nightly ? "\n\nOr try the nightly version: the newest work, but less tested." : "");
+    snprintf(text, sizeof text, T("Dragon Quest IX %s is available (you have %s).\n\nUpdate now?%s"), u->stable, DQIX_VERSION,
+             nightly ? T("\n\nOr try the nightly version: the newest work, but less tested.") : "");
     char upd[64], ngt[64];
-    snprintf(upd, sizeof upd, "Update to %s", u->stable);
-    snprintf(ngt, sizeof ngt, "Install nightly %s", u->nightly);
+    snprintf(upd, sizeof upd, T("Update to %s"), u->stable);
+    snprintf(ngt, sizeof ngt, T("Install nightly %s"), u->nightly);
     const char* b[4]; int id[4], nb = 0;
     id[nb] = 1; b[nb++] = upd;
     if (nightly) { id[nb] = 2; b[nb++] = ngt; }
@@ -2072,26 +2109,26 @@ static void update_offer(const UpdateInfo* u) {
 
 /* Help > Check for updates */
 static void update_menu(void) {
-    if (g_win) SDL_SetWindowTitle(g_win, "Dragon Quest IX - checking for updates...");
+    if (g_win) { char t[200]; snprintf(t, sizeof t, "Dragon Quest IX - %s", T("checking for updates...")); SDL_SetWindowTitle(g_win, t); }
     UpdateInfo u; update_check_now(&u);
     if (!u.ok) {
-        char m[300]; snprintf(m, sizeof m, "Couldn't check for updates: %s.", u.error[0] ? u.error : "no answer");
+        char m[300]; snprintf(m, sizeof m, T("Couldn't check for updates: %s."), u.error[0] ? u.error : T("no answer"));
         info_box(SDL_MESSAGEBOX_INFORMATION, "Updates", m, g_win);
         return;
     }
-    const char* tag_s = update_newer(u.stable, DQIX_VERSION) ? " (newer)" : !strcmp(u.stable, DQIX_VERSION) ? " (this one)" : " (older)";
-    const char* tag_n = update_newer(u.nightly, DQIX_VERSION) ? " (newer)" : !strcmp(u.nightly, DQIX_VERSION) ? " (this one)" : " (older)";
+    const char* tag_s = T(update_newer(u.stable, DQIX_VERSION) ? " (newer)" : !strcmp(u.stable, DQIX_VERSION) ? " (this one)" : " (older)");
+    const char* tag_n = T(update_newer(u.nightly, DQIX_VERSION) ? " (newer)" : !strcmp(u.nightly, DQIX_VERSION) ? " (this one)" : " (older)");
     char back[200] = "";
     if (update_newer(DQIX_VERSION, u.stable))
-        snprintf(back, sizeof back, "\n\nInstalling stable goes back to %s, an older version than this one. Your saves and settings are kept.", u.stable);
+        snprintf(back, sizeof back, T("\n\nInstalling stable goes back to %s, an older version than this one. Your saves and settings are kept."), u.stable);
     char text[900];
     snprintf(text, sizeof text,
-             "This copy: %s\n\nStable: %s%s\nTested; recommended for everyone.\n\nNightly: %s%s\nThe newest work: new features "
-             "and fixes first, but less tested.%s\n\nFriends playing together need the same version.",
+             T("This copy: %s\n\nStable: %s%s\nTested; recommended for everyone.\n\nNightly: %s%s\nThe newest work: new features "
+               "and fixes first, but less tested.%s\n\nFriends playing together need the same version."),
              DQIX_VERSION, u.stable, tag_s, u.nightly, tag_n, back);
     char bs[64], bn[64];
-    snprintf(bs, sizeof bs, "Install stable %s", u.stable);
-    snprintf(bn, sizeof bn, "Install nightly %s", u.nightly);
+    snprintf(bs, sizeof bs, T("Install stable %s"), u.stable);
+    snprintf(bn, sizeof bn, T("Install nightly %s"), u.nightly);
     const char* b[3]; int id[3], nb = 0;
     if (strcmp(u.stable, DQIX_VERSION)) { id[nb] = 1; b[nb++] = bs; }
     if (strcmp(u.nightly, DQIX_VERSION) && strcmp(u.nightly, u.stable)) { id[nb] = 2; b[nb++] = bn; }
@@ -2274,7 +2311,8 @@ static void do_action(int id) {
     case MI_REPORT: {
         extern char g_report_last_dir[300];
         report_write("F10 pressed");                               /* captured first: the moment you pressed it */
-        char* text = g_win ? ask_text(g_win, "Bug report " DQIX_VERSION,
+        char rt[100]; snprintf(rt, sizeof rt, "%s " DQIX_VERSION, T("Bug report"));
+        char* text = g_win ? ask_text(g_win, rt,
             "The report is saved. Describe what went wrong (what you did, what you expected, what happened) - "
             "as much as you like. Save adds it to the report; Skip keeps the report without a description.") : NULL;
         if (text && g_report_last_dir[0]) {
@@ -2284,7 +2322,7 @@ static void do_action(int id) {
         }
         if (g_win && g_report_last_dir[0]) report_send(g_report_last_dir, text);   /* send it? (asks first) */
         free(text);
-        if (g_win) SDL_SetWindowTitle(g_win, "Dragon Quest IX - report saved (see the reports folder)");
+        if (g_win) { char t[200]; snprintf(t, sizeof t, "Dragon Quest IX - %s", T("report saved (see the reports folder)")); SDL_SetWindowTitle(g_win, t); }
         g_fps_t0 = SDL_GetPerformanceCounter();                    /* keep that title up for a second */
         g_next_frame = SDL_GetPerformanceCounter();                /* the game waited while you typed */
         break;
@@ -2340,18 +2378,18 @@ static void do_action(int id) {
     case MI_TWO: if (g_gl) { g_two = !(g_two && !g_side_by_side && !g_single); g_corner = g_wide = g_side_by_side = g_single = 0; relayout = 1; } break;
     case MI_SINGLE:                                               /* U / left trigger: one screen; in widescreen the small one hides */
         if (g_wide && WIDE_GL && !g_side_by_side) { g_small_hide = !g_small_hide; notice(g_small_hide ? "Small screen hidden" : "Small screen shown"); }
-        else { g_single = !g_single; relayout = 1; notice(g_single ? "Single screen (%s)" : "Both screens", g_swap ? "top" : "bottom"); }
+        else { g_single = !g_single; relayout = 1; notice(g_single ? "Single screen (%s)" : "Both screens", T(g_swap ? "top" : "bottom")); }
         break;
     case MI_SWAP: if (!(g_wide && WIDE_GL && !g_side_by_side)) { g_swap = !g_swap; relayout = 1; } break;
     case MI_OPACITY1: case MI_OPACITY1 + 1: case MI_OPACITY1 + 2: case MI_OPACITY1 + 3:
         g_small_opacity = 100 - 25 * (id - MI_OPACITY1); notice("Small screen: %d%%", g_small_opacity); break;
     case MI_CORNER0: case MI_CORNER0 + 1: case MI_CORNER0 + 2: case MI_CORNER0 + 3: {
         static const char* const N[4] = { "top left", "top right", "bottom right", "bottom left" };
-        g_small_corner = id - MI_CORNER0; notice("Small screen: %s", N[g_small_corner]); break;
+        g_small_corner = id - MI_CORNER0; notice("Small screen: %s", T(N[g_small_corner])); break;
     }
     case MI_SSIZE0: case MI_SSIZE0 + 1: case MI_SSIZE0 + 2: {
         static const char* const N[3] = { "small", "medium", "large" };
-        g_small_size = id - MI_SSIZE0; notice("Small screen: %s", N[g_small_size]); break;
+        g_small_size = id - MI_SSIZE0; notice("Small screen: %s", T(N[g_small_size])); break;
     }
     case MI_RESET:
         if (session_requested()) { info_box(SDL_MESSAGEBOX_INFORMATION, "Reset", "Not while playing with friends: it would leave them out of step. Leave the session first (Wireless menu).", g_win); break; }
@@ -2381,7 +2419,7 @@ static void do_action(int id) {
         break;
     case MI_FARM_TARGET: {
         char prompt[200];
-        snprintf(prompt, sizeof prompt, "Stop farming once the party has this much gold (now %d):", g_farm_target);
+        snprintf(prompt, sizeof prompt, T("Stop farming once the party has this much gold (now %d):"), g_farm_target);
         char* t = g_win ? ask_text(g_win, "Gold target", prompt) : NULL;
         if (!t) break;
         long v = 0; for (char* c = t; *c; c++) if (*c >= '0' && *c <= '9' && v < 100000000) v = v * 10 + (*c - '0');   /* "10 000", "10.000 G" */
@@ -2417,12 +2455,19 @@ static void do_action(int id) {
         int lang = id - MI_LANG1 + 1;
         if (lang == g_fw_language) break;
         g_fw_language = lang;
+        ui_language_changed();                                  /* the menus follow at once, when they follow the game */
         char text[300];
-        snprintf(text, sizeof text, "The game will be in %s the next time it starts: close it and start it again.\n\n"
-                 "Your adventure log is the same in every language.", LANGUAGE_NAME[lang]);
-        info_box(SDL_MESSAGEBOX_INFORMATION, "Language", text, g_win);
+        snprintf(text, sizeof text, T("The game will be in %s the next time it starts: close it and start it again.\n\n"
+                 "Your adventure log is the same in every language."), LANGUAGE_NAME[lang]);
+        info_box(SDL_MESSAGEBOX_INFORMATION, T("Language"), text, g_win);
         break;
     }
+    case MI_UICONTRAST: g_ui_contrast = !g_ui_contrast; gamemenu_set_readability(g_ui_contrast, g_ui_text_size); break;
+    case MI_UISIZE0: case MI_UISIZE0 + 1: case MI_UISIZE0 + 2: g_ui_text_size = id - MI_UISIZE0; gamemenu_set_readability(g_ui_contrast, g_ui_text_size); break;
+    case MI_UILANG0: case MI_UILANG0 + 1: case MI_UILANG0 + 2: case MI_UILANG0 + 3: case MI_UILANG0 + 4: case MI_UILANG0 + 5:
+        g_ui_language = id - MI_UILANG0;
+        ui_language_changed();
+        break;
     case MI_MODERN_HELP:
         info_box(SDL_MESSAGEBOX_INFORMATION, "Modern",
             "Optional ways to play that the DS didn't have. Walking with the stick is on at first; the others are off. With them all off the game is exactly the original.\n\n"
@@ -2471,13 +2516,15 @@ static void do_action(int id) {
     case MI_CONTROLS: info_box(SDL_MESSAGEBOX_INFORMATION, "Controls", CONTROLS_TEXT, g_win); break;
     case MI_UPDATE: update_menu(); break;
     case MI_UPDATE_AUTO: g_update_auto = !g_update_auto; settings_save(); break;
-    case MI_ABOUT:
-        info_box(SDL_MESSAGEBOX_INFORMATION, "About",
-            "Dragon Quest IX for PC, " DQIX_VERSION " (" DQIX_VERSION_DATE "), built " __DATE__ "\n\n"
+    case MI_ABOUT: {
+        char text[600];
+        snprintf(text, sizeof text, T("Dragon Quest IX for PC, %s (%s), built %s\n\n"
             "Classic draws the game exactly like the DS; Enhanced draws its 3D\n"
             "on the graphics card at up to 4x.\n\n"
-            "DS Lite screen colours: Pokefan531's measured DS Lite profile.", g_win);
+            "DS Lite screen colours: Pokefan531's measured DS Lite profile."), DQIX_VERSION, DQIX_VERSION_DATE, __DATE__);
+        info_box(SDL_MESSAGEBOX_INFORMATION, "About", text, g_win);
         break;
+    }
     default:
         if (id >= MI_FONT0 && id < MI_FONT0 + N_FONTS) { snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont); }
         else if (id >= MI_SHELLC0 && id < MI_SHELLC0 + N_SHELLS) { g_opt.shell_color = id - MI_SHELLC0; g_color_chosen = 1; relayout = 1; }
@@ -2487,7 +2534,7 @@ static void do_action(int id) {
                 char prompt[200], name[120];
                 snprintf(name, sizeof name, "%s", cheats_name(i));
                 size_t n = strlen(name); if (n > 3 && !strcmp(name + n - 3, "...")) name[n - 3] = 0;
-                snprintf(prompt, sizeof prompt, "%s\n\nType the number you want, from 0 to %d:", name, cheats_max(i));
+                snprintf(prompt, sizeof prompt, T("%s\n\nType the number you want, from 0 to %d:"), name, cheats_max(i));
                 char* t = g_win ? ask_text(g_win, "Cheats", prompt) : NULL;
                 if (!t) return;                              /* Skip: stays off */
                 long v = -1; for (char* c = t; *c; c++) if (*c >= '0' && *c <= '9' && v < 100000000) v = (v < 0 ? 0 : v * 10) + (*c - '0');   /* "50 000", "50.000 G" */
@@ -2515,6 +2562,7 @@ static void game_menu_toggle(void) {
     if (gamemenu_is_open()) { gamemenu_close(); return; }
     menu_sync();
     gamemenu_set_font(g_hdfont);
+    gamemenu_set_readability(g_ui_contrast, g_ui_text_size);
     gamemenu_open();
 }
 
@@ -2648,7 +2696,7 @@ static void hotkey(int a) {
 static int g_cap_action = -1, g_cap_what;                    /* what: 0 key, 1 second key, 2 controller button */
 static int g_pad_resync;                                     /* a button just given out: don't fire it while still held */
 static void capture_done(const char* what) {
-    if (what) notice("%s: %s", g_ctl[g_cap_action].name, what); else notice("Not changed");
+    if (what) notice("%s: %s", T(g_ctl[g_cap_action].name), T(what)); else notice("Not changed");
     g_cap_action = -1;
     controls_save();
     controls_window_refresh();

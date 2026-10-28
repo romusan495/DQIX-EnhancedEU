@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nds.h"
+#include "uitext.h"
 #include "session.h"
 #include "cheats.h"
 
@@ -88,7 +89,7 @@ const char* cheats_name(int i) {
     char num[16] = "", grouped[24]; int n = snprintf(num, sizeof num, "%d", g_val[i]), k = 0;
     for (int j = 0; j < n; j++) { if (j && (n - j) % 3 == 0) grouped[k++] = ','; grouped[k++] = num[j]; }   /* 9,999,999 */
     grouped[k] = 0;
-    snprintf(names[i], sizeof names[i], CHEATS[g_list[i]].name, grouped);
+    snprintf(names[i], sizeof names[i], T(CHEATS[g_list[i]].name), grouped);   /* in the player's language (uitext.h) */
     return names[i];
 }
 int cheats_max(int i) { list_init(); return i >= 0 && i < g_n ? CHEATS[g_list[i]].max : 0; }

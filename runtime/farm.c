@@ -11,6 +11,7 @@
  * To the game it is just buttons, like a player pressing them. */
 #include <math.h>
 #include "nds.h"
+#include "uitext.h"
 #include "farm.h"
 
 int g_farm_on;
@@ -83,7 +84,7 @@ static int party_in_danger(char* who, size_t n) {
             who[k++] = (char)ch;
         }
         who[k] = 0;
-        if (!k) snprintf(who, n, "Someone");
+        if (!k) snprintf(who, n, "%s", T("Someone"));
         LOG_INFO("farm: %s has %d of %d HP\n", who, hp, max);
         return 1;
     }
@@ -245,7 +246,7 @@ void farm_input(uint16_t* keys, int* touch) {
     if (*keys || *touch) { stop("You pressed a button: the farm stopped so you can play."); return; }
     char who[64];
     if (party_in_danger(who, sizeof who)) {
-        char t[160]; snprintf(t, sizeof t, "%s is in danger: heal the party before farming more.", who);
+        char t[160]; snprintf(t, sizeof t, T("%s is in danger: heal the party before farming more."), who);
         stop(t); return;
     }
     if (!adventure_loaded()) { stop("The adventure isn't loaded any more."); return; }
@@ -254,7 +255,7 @@ void farm_input(uint16_t* keys, int* touch) {
     if (free_to_walk()) {
         F.busy = 0;
         if (gold >= 0 && gold >= g_farm_target) {
-            char t[160]; snprintf(t, sizeof t, "Done: the party has %d gold (target %d), after %d battles.", gold, g_farm_target, F.battles);
+            char t[160]; snprintf(t, sizeof t, T("Done: the party has %d gold (target %d), after %d battles."), gold, g_farm_target, F.battles);
             stop(t); return;
         }
         if (rd16(MAP_ID) != F.map) { stop("The party left the area where the farm started (a door or the edge of the map)."); return; }
