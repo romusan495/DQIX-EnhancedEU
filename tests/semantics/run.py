@@ -56,9 +56,11 @@ void cpu_breakpoint(Cpu* c, uint32_t a, uint32_t i) { (void)c; fprintf(stderr, "
 void cpu_unhandled(Cpu* c, uint32_t a, uint32_t w) { (void)c; fprintf(stderr, "unhandled %08x %08x\n", a, w); exit(4); }
 void cpu_exception_return(Cpu* c, uint32_t a) { (void)c; (void)a; exit(4); }
 int overlay_is_loaded(int id) { (void)id; return 0; }
-uint32_t g_call_budget = 1u << 30, g_loop_budget = 1u << 30;
-void recomp_budget_expired(Cpu* c) { (void)c; g_call_budget = 1u << 30; }
-void recomp_loop_expired(Cpu* c) { (void)c; g_loop_budget = 1u << 30; }
+uint32_t g_cyc;
+void recomp_budget_expired(Cpu* c) { (void)c; g_cyc = 0; }
+void recomp_loop_expired(Cpu* c) { (void)c; g_cyc = 0; }
+int gx_tag_begin(int tag) { (void)tag; return 0; }
+void gx_tag_end(int previous) { (void)previous; }
 void dispatch_call(Cpu* c, uint32_t t, uint32_t from) {
     for (unsigned i = 0; i < g_recomp_func_count; i++)
         if ((g_recomp_funcs[i].addr & ~1u) == (t & ~1u)) { g_recomp_funcs[i].fn(c); return; }
