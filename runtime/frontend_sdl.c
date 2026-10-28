@@ -96,6 +96,7 @@ static int g_pop_win[4];                                          /* widescreen:
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
 static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
 static int g_shop_cut = 118;                                      /* ...the row between the list and the panels under it */
+enum { SHOP_TX = 60, SHOP_TY = 33, SHOP_TW = 113, SHOP_TH = 58, SHOP_PAD = 3, SHOP_GAP = 3 };   /* the card's text, beside its icon; the description's window */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -341,8 +342,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
              * the panels under the list (who can equip it, how many held);
              * over the field, which stays whole */
             small[0] = small[1] = small[2] = small[3] = 0;
-            enum { TX = 60, TY = 33, TW = 113, TH = 58, PAD = 3 };       /* the card's text, beside its icon */
-            float L = (float)g_shop_cut, dh = g_pop_win[2] ? TH + 2 * PAD : 0, gap = 3;
+            float L = (float)g_shop_cut, dh = g_pop_win[2] ? SHOP_TH + 2 * SHOP_PAD : 0, gap = SHOP_GAP;
             float k = 192.0f / (192.0f + (dh > 0 ? dh + 2 * gap : 0)), x = (v->cw - 256 * k) / 2;
             float* q = v->piece[v->npiece++];
             q[4] = 3; q[5] = 0; q[6] = 0; q[7] = 256; q[8] = L;
@@ -354,8 +354,8 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                 q = v->piece[v->npiece++];                        /* the window */
                 q[9] = 2; q[0] = x + 8 * k; q[1] = (L + gap) * k; q[2] = 240 * k; q[3] = dh * k;
                 q = v->piece[v->npiece++];                        /* its text */
-                q[4] = 0; q[5] = TX; q[6] = TY; q[7] = TW; q[8] = TH; q[9] = 1;
-                q[0] = x + 18 * k; q[1] = (L + gap + PAD) * k; q[2] = TW * k; q[3] = TH * k;
+                q[4] = 0; q[5] = SHOP_TX; q[6] = SHOP_TY; q[7] = SHOP_TW; q[8] = SHOP_TH; q[9] = 1;   /* (the item's icon at its left: mapmarks_shop()) */
+                q[0] = x + (SHOP_DESC_X + SHOP_DESC_ICON + 8) * k; q[1] = (L + gap + SHOP_PAD) * k; q[2] = SHOP_TW * k; q[3] = SHOP_TH * k;
             }
             v->icons[0] = x; v->icons[1] = 0; v->icons[2] = 256 * k; v->icons[3] = 192 * k;
         } else if (page == 1) {
@@ -1508,15 +1508,16 @@ static void pop_update(int a_on_top) {
 static void shop_update(int a_on_top) {
     int side = 0, ok = top_page_mode() == 1 && !a_on_top && g_comp_has3d && gl_wide_shown(&side) == 1;
     const uint8_t* rgba; int changed;
-    g_shop = mapmarks_shop(ok ? g_engine_out[0] : NULL, g_comp_info, &rgba, &changed);
-    if (changed) gl_set_icons(g_shop ? rgba : NULL, MAPMARKS_W, MAPMARKS_H);
-    if (!g_shop) return;
     g_shop_cut = 118;
-    for (int y = 100; y < 140; y++) {
+    for (int y = 100; ok && y < 140; y++) {
         int n = 0;
         for (int x = 8; x < 248; x++) n += (g_comp_info[(y * 256 + x) * 4] & 3) == 1;
         if (n == 240) { g_shop_cut = y; break; }
     }
+    /* (the description's window, canvas_layout_for(), in the list's pixels; while the card shows) */
+    int desc_y = g_pop_win[2] ? g_shop_cut + SHOP_GAP + SHOP_PAD + (SHOP_TH - SHOP_DESC_ICON) / 2 : -1;
+    g_shop = mapmarks_shop(ok ? g_engine_out[0] : NULL, g_comp_info, desc_y, &rgba, &changed);
+    if (changed) gl_set_icons(g_shop ? rgba : NULL, MAPMARKS_W, MAPMARKS_H);
 }
 
 /* The map's markers (mapmarks.c) over the top screen, in whichever window
