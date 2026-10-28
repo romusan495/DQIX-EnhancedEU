@@ -1586,8 +1586,9 @@ static void draw_icon(uint16_t key, int x0, int y0, int size) {
         }
 }
 
-int mapmarks_shop(uint32_t* px, uint8_t* info, const uint8_t** rgba, int* changed) {
+int mapmarks_shop(uint32_t* px, uint8_t* info, int desc_y, const uint8_t** rgba, int* changed) {
     static uint32_t last_key;
+    static int sel;                                               /* the line the hand points at (it blinks: kept while hidden) */
     *rgba = g_icons; *changed = 0;
     uint32_t shop = rd32(SHOP_PTR);
     int n = 0, page = 0, lines = 0;
@@ -1608,9 +1609,21 @@ int mapmarks_shop(uint32_t* px, uint8_t* info, const uint8_t** rgba, int* change
         if (white < 6) { lines = 0; break; }
     }
     if (lines <= 0) { if (last_key) { last_key = 0; memset(g_icons, 0, sizeof g_icons); *changed = 1; } return 0; }
+    for (int i = 0; i < lines; i++) {
+        int yellow = 0;
+        for (int y = SHOP_Y0 + SHOP_DY * i; y < SHOP_Y0 + SHOP_DY * i + SHOP_DY; y++)
+            for (int x = 0; x < SHOP_X0; x++) {
+                uint32_t c = px[y * 256 + x];
+                yellow += ((c >> 16) & 255) > 180 && ((c >> 8) & 255) > 140 && (c & 255) < 100;
+            }
+        if (yellow >= 6) sel = i;
+    }
+    if (sel >= lines) sel = lines - 1;
     uint32_t key = 2166136261u;
     for (int i = 0; i < lines; i++) key = (key ^ rd16(shop + 0x70 + 2 * (page * SHOP_LINES + i))) * 16777619u;
     key = (key ^ (uint32_t)lines) * 16777619u;
+    key = (key ^ (uint32_t)sel) * 16777619u;
+    key = (key ^ (uint32_t)(desc_y + 1)) * 16777619u;
     if (!key) key = 1;
     if (key != last_key) {
         last_key = key; *changed = 1;
@@ -1619,6 +1632,8 @@ int mapmarks_shop(uint32_t* px, uint8_t* info, const uint8_t** rgba, int* change
             int s = (SHOP_DY + 1) * MAPMARKS_R, cx = (SHOP_X0 + SHOP_X1) * MAPMARKS_R / 2, cy = (SHOP_Y0 + SHOP_DY * i) * MAPMARKS_R + SHOP_DY * MAPMARKS_R / 2;
             draw_icon(rd16(shop + 0x70 + 2 * (page * SHOP_LINES + i)), cx - s / 2, cy - s / 2, s);
         }
+        if (desc_y >= 0)                                          /* the chosen one big, at the left of its description */
+            draw_icon(rd16(shop + 0x70 + 2 * (page * SHOP_LINES + sel)), SHOP_DESC_X * MAPMARKS_R, desc_y * MAPMARKS_R, SHOP_DESC_ICON * MAPMARKS_R);
     }
     /* the signs rubbed out: the window's own pixels from the line's first row */
     for (int i = 0; i < lines; i++) {

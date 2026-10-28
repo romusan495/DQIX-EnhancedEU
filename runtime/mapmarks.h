@@ -25,5 +25,9 @@ void mapmarks_hover(float x, float y);
  * composed with the 3D, gpu2d.c): 1 while a shop's buy list is on it. Its
  * lines' kind signs are rubbed out of px/info; *rgba: the items' icons over
  * that screen (premultiplied RGBA, MAPMARKS_W x MAPMARKS_H), *changed 1 when
- * that picture changed. */
-int mapmarks_shop(uint32_t* px, uint8_t* info, const uint8_t** rgba, int* changed);
+ * that picture changed. desc_y >= 0: the chosen item's icon too, big
+ * (SHOP_DESC_ICON square) at (SHOP_DESC_X, desc_y), where the layout puts
+ * its description. */
+#define SHOP_DESC_X    18
+#define SHOP_DESC_ICON 32
+int mapmarks_shop(uint32_t* px, uint8_t* info, int desc_y, const uint8_t** rgba, int* changed);
