@@ -241,7 +241,7 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     item(bsp, MI_BSPEED1, L"&Normal");
     item(bsp, MI_BSPEED1 + 1, L"&2x");
     item(bsp, MI_BSPEED1 + 2, L"&3x");
-    item(bsp, MI_BSPEED1 + 3, L"&4x");
+    item(bsp, MI_BSPEED4, L"&4x");
     sep(bsp);
     item(bsp, MI_BSPEED_TURN, L"Only while the &turn plays out (commands at the usual pace)");
     item(bsp, MI_BVICTORY, L"&Victory messages go by themselves (not after a level up)");

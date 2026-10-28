@@ -1810,7 +1810,7 @@ static void menu_sync(void) {
     menu_check(MI_HINTS, g_hints); menu_enable(MI_HINTS, g_gl);
     menu_check(MI_CONFIRM_BOTTOM, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A);
     for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
-    for (int i = 0; i < 4; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
+    for (int i = 0; i < 4; i++) { int id = i < 3 ? MI_BSPEED1 + i : MI_BSPEED4; menu_check(id, g_battle_speed == i + 1); menu_enable(id, !session_requested()); }
     menu_check(MI_BSPEED_TURN, g_battle_turn_only); menu_enable(MI_BSPEED_TURN, !session_requested() && g_battle_speed > 1);
     menu_check(MI_BVICTORY, g_battle_auto_victory); menu_enable(MI_BVICTORY, !session_requested());
     menu_check(MI_SAVEBAK, g_save_backups);
@@ -2444,7 +2444,8 @@ static void do_action(int id) {
         controls_save();
         break;
     case MI_SKIP0: case MI_SKIP0 + 1: case MI_SKIP0 + 2: g_skip_intro = id - MI_SKIP0; break;
-    case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: case MI_BSPEED1 + 3: g_battle_speed = id - MI_BSPEED1 + 1; break;
+    case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
+    case MI_BSPEED4: g_battle_speed = 4; break;
     case MI_BSPEED_TURN: g_battle_turn_only = !g_battle_turn_only; break;
     case MI_BVICTORY: g_battle_auto_victory = !g_battle_auto_victory; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
@@ -2991,6 +2992,7 @@ void frontend_frame(void) {
     }
     int speed = battle && g_battle_speed > 1 && !g_fast && !session_requested() ? g_battle_speed : 1;   /* Modern > Battle speed */
     sound_set_speed(speed);
+    g_battle_pace = speed;
     if (g_fast) {
         sound_discard();
         g_next_frame = now;
