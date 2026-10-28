@@ -226,6 +226,12 @@ static const char* FS_COMP =
     "uniform float u_s2d;\n"                                    /* smooth 2D: the width of an output pixel in DS pixels (0: off) */
     "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
     "uniform int u_only;\n"                                    /* the 3D screen apart: 1 its 2D alone (see-through where the 3D shows), 2 its 3D alone */
+    "uniform vec4 u_dlg;\n"                                    /* modern windows: the dialogue window (x0, y0, x1, y1, DS pixels), its line round it */
+    "vec3 dlgline(vec3 c, vec2 q) {\n"
+    "  if (u_dlg.z <= u_dlg.x || q.x < u_dlg.x || q.y < u_dlg.y || q.x >= u_dlg.z || q.y >= u_dlg.w) return c;\n"
+    "  float d = min(min(q.x - u_dlg.x, q.y - u_dlg.y), min(u_dlg.z - q.x, u_dlg.w - q.y));\n"
+    "  return d < 1.0 ? vec3(0.5) : c;\n"
+    "}\n"
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     /* Smooth 2D: xBR's corner rule (the same as xbr_upscale below): at each
      * corner of a DS pixel, if the neighbours across that corner form an
@@ -290,7 +296,7 @@ static const char* FS_COMP =
     "  if (u_only == 1 || (u_only == 2 && mode != 1)) {\n"
     "    if (u_only == 1) { o_color = vec4(col, 1.0); return; }\n"
     "    ivec2 sz0 = textureSize(u_3d, 0); vec4 s0 = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz0)), sz0 - 1), 0);\n"
-    "    o_color = vec4(s0.a > 0.0 ? s0.rgb : vec3(0.0), 1.0); return;\n"
+    "    o_color = vec4(dlgline(s0.a > 0.0 ? s0.rgb : vec3(0.0), vec2(dsx, uv.y * 192.0)), 1.0); return;\n"
     "  }\n"
 
     "  if (mode == 0) { o_color = vec4(col, 1.0); return; }\n"
@@ -315,6 +321,7 @@ static const char* FS_COMP =
     "    vec3 under = A > 0.0 ? c3 : c2;\n"
     "    o = min(col * eva + under * evb, vec3(1.0));\n"
     "  }\n"
+    "  o = dlgline(o, vec2(dsx, uv.y * 192.0));\n"
     "  int mbm = mb >> 5; float mbf = float(mb & 31) / 16.0;\n"
     "  if (mbm == 1) o = o + (1.0 - o) * mbf; else if (mbm == 2) o = o - o * mbf;\n"
     "  o_color = vec4(o, 1.0);\n"
@@ -669,6 +676,7 @@ static int g_smooth2d;                                         /* smooth 2D (FS_
 static int g_outline;                                          /* 0 the DS's outlines, 1 thin and soft, 2 none */
 static int g_texup;                                            /* upscale textures (xbr_upscale) */
 extern int g_winstyle;                                         /* window style (gpu2d.c) */
+extern int g_dlg_outline;                                      /* ...battles: the text box keeps its frame (frontend_sdl.c) */
 static uint64_t g_frameno;
 static uint8_t* g_decode;
 
@@ -1325,7 +1333,11 @@ static void gl_render_(const Frame3D* f) {
             if (y1 - y0 > 144.0f) black = 0;                        /* (not a fade over the whole screen) */
             if (front && !textured && black && b.translucent) { dlg[0] = fminf(dlg[0], x0); dlg[1] = fminf(dlg[1], y0); dlg[2] = fmaxf(dlg[2], x1); dlg[3] = fmaxf(dlg[3], y1); }
             float* o = g_verts + (size_t)b.first * VTX_FLOATS;
-            if (g_winstyle && front && !textured && black && b.translucent)   /* minimal windows (gpu2d.c): its panel fainter */
+            int modern = g_winstyle == 2 && !g_dlg_outline;
+            if (modern && front && textured && fmt == 3 && g_tex_frame) { nv = b.first; continue; }   /* modern: no frame (a line in FS_COMP instead) */
+            if (modern && front && !textured && black && b.translucent)   /* ...and the panel 55% black, like the other windows */
+                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = 17.0f;
+            else if (g_winstyle && front && !textured && black && b.translucent)   /* minimal windows (gpu2d.c): its panel fainter */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);
             else if (g_winstyle && front && textured && fmt == 3 && g_tex_frame)   /* its frame: a thin grey edge */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) { o[4] *= 0.4f; o[5] *= 0.4f; o[6] *= 0.4f; }
@@ -1733,7 +1745,7 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_3d"), 3);
     GLint loc_rect = p_glGetUniformLocation(prog_comp, "u_rect"), loc_has3d = p_glGetUniformLocation(prog_comp, "u_has3d");
     GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
-    GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only");
+    GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only"), loc_dlg = p_glGetUniformLocation(prog_comp, "u_dlg");
     p_glUniform1i(loc_only, 0);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
@@ -1760,6 +1772,9 @@ void gl_compose(int a_on_top, int lcd_on) {
         else p_glUniform4f(loc_rect, -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f);
         int split = wide && g_split;                                 /* the 3D alone here; its 2D apart, in only2d_tex */
         p_glUniform1i(loc_only, split ? 2 : 0);
+        if (eng == 0 && has3d && g_winstyle == 2 && !g_dlg_outline && g_dlg_box[2] > g_dlg_box[0] && g_dlg_box[3] > g_dlg_box[1])
+            p_glUniform4f(loc_dlg, g_dlg_box[0] - (float)g_wside, g_dlg_box[1], g_dlg_box[2] - (float)g_wside, g_dlg_box[3]);   /* (the box: in the widened 3D's columns) */
+        else p_glUniform4f(loc_dlg, 0, 0, 0, 0);
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
         if (split) {
             p_glUseProgram(prog_comp);
