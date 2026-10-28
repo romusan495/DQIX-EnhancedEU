@@ -11,13 +11,35 @@ jour : 2026-10-28 (audit du cahier des charges, `main` = `19741c6`, v31.9).
 | Tâche | Rôle | Thread | Branche / PR | État | Dépend de | Prochaine étape |
 |---|---|---|---|---|---|---|
 | Fiches du haut en pop-up, magasins sur un écran | Dev | [Dev] Fiches en pop-up au centre | PR #42, #44 | fusionné (v31.9) | — | Boîte description magasin : fin de fusion dans ce thread |
-| Cadre moderne sur toutes les fenêtres | Graph | [Graph] Cadre moderne sur toutes les fenêtres | `claude/project-thread-r80vbi` | en cours | PR #44 | Captures, accord de Romuald (touche `gpu2d.c`, `gl_render.c`) |
+| Cadre moderne sur toutes les fenêtres (+ fiches, confirmations, chargements du § 5.2) | Graph | [Graph] Cadre moderne sur toutes les fenêtres | `claude/project-thread-r80vbi` | en cours | PR #44 | Captures, accord de Romuald |
 | Police unique sans noms coupés | Langues | [Langues] Police unique sans noms coupés | — | en cours | — | Compte rendu du thread |
-| Menu d'options dans le jeu (Échap / bouton PS) | Dev | [Dev] Vers un vrai jeu PC | PR #33 | en pause (ouverte depuis le 23/10) | décision de Romuald | Fusionner après rebase sur `main`, ou fermer |
-| Tests automatiques réparés (`tests/semantics`, `tests/gpu3d`) | Dev | [Coord] Audit et feuille de route | `claude/project-thread-697cjl` | en revue | — | Revue, accord de Romuald |
-| Mise à jour de ce suivi (audit, feuille de route) | Intégration | [Coord] Audit et feuille de route | `claude/project-thread-697cjl` | en revue | — | Revue, accord de Romuald |
+| Menu d'options dans le jeu (Échap / bouton PS) | Dev | [Coord] Audit et feuille de route | PR #33 (`claude/project-thread-9e00md`) | en revue | — | `main` fusionné dedans (commit `7e47b35`, local : l'envoi sur la branche d'un autre fil a été refusé), testé EU + USA ; à pousser puis fusionner avec Romuald |
+| Tests automatiques réparés, test de fumée `tests/smoke/run.py` | Dev | [Coord] Audit et feuille de route | PR #45 | en revue | — | Revue, accord de Romuald |
+| Mise à jour de ce suivi (audit, feuille de route, idées) | Intégration | [Coord] Audit et feuille de route | PR #45 | en revue | — | Revue, accord de Romuald |
+| Combats plus lisibles et plus rapides | Dev | [Dev] Combats plus lisibles et plus rapides | `claude/project-thread-ep4nol` | en cours | — | Sans toucher aux boîtes de combat |
+| Inventaire et comparaison d'équipement | Dev | [Dev] Inventaire et comparaison d'équipement | — | en cours | — | Étude du sac en RAM |
+| Alchimie, collections et cartes au trésor (carnet, touche J) | Dev | [Dev] Alchimie, collections et cartes au trésor | `claude/project-thread-vbq30f` | en cours | — | — |
+| Journal des quêtes et progression | Dev | [Dev] Journal des quêtes et progression | — | en cours | — | — |
+| Boutons manette à l'écran, légende de la carte | Dev | [Dev] Boutons manette et légende de la carte | `claude/project-thread-g6uxea` | en cours | — | — |
+| Effets visuels, contrôle des packs de textures HD | Graph | [Graph] Effets visuels et contrôle des textures HD | — | en cours | — | — |
+| Menus PC en français, accessibilité | Langues | [Langues] Menus PC en français et accessibilité | `claude/project-thread-7yyjwb` | en cours | PR #33 | Rebaser après la fusion de #33 |
 | Caméra dézoomée en combat | Dev | — | — | à faire | — | Plan avant de coder (ne pas toucher aux boîtes de combat) |
 | BUILD : « cmp: commande introuvable » (`tools/build-game.sh`) | Intégration | — | — | à faire | — | Installer `diffutils` dans MSYS2 ou éviter `cmp` ; le build réussit quand même |
+
+### Fichiers partagés touchés par les fils en cours (2026-10-28 soir)
+Ordre de fusion conseillé : #33 d'abord (elle réécrit `menu_win32.c`), puis les
+autres rebasés un par un. Conflits probables signalés.
+
+| Fichier | Fils |
+|---|---|
+| `runtime/frontend_sdl.c` | #33, Boutons manette, Cadre moderne, Menus en français, Alchimie/carnet, Combats |
+| `runtime/menu_win32.c`, `runtime/menu.h` | #33, Boutons manette, Cadre moderne, Menus en français, Alchimie/carnet, Combats |
+| `runtime/gl_render.c` (`.h`) | #33 (`gl_set_menu`), Boutons manette (3e overlay), Alchimie/carnet (`gl_set_panel`) : mêmes lignes, à accorder ; Cadre moderne ; Combats si besoin |
+| `runtime/controls.c` / `.h` | #33, Boutons manette, Menus en français |
+| `build.mk` | #33 (`gamemenu.c`), Menus en français (`uitext.c`), Alchimie/carnet (`journal.c`) |
+| `runtime/gpu2d.c` | Cadre moderne |
+| `tools/build-game.sh`, `build-windows.sh` | Menus en français (copie de `lang/*.txt`) |
+| `runtime/mapmarks.c` | Boutons manette (légende) |
 
 Terminé depuis le 21/10 (détail dans `release-notes/v31.*.md`) : écran unique
 #2, réglages par défaut #15, mini-carte et suppression des dispositions #21 #23
@@ -109,8 +131,26 @@ validé par Romuald avant fusion.
 - Jeu EU sous xvfb (sauvegarde de test de Stornway, `input.txt` de
   `ecran-unique/test-combat`) : église, ville avec mini-carte et marqueurs,
   combat contre un Funghoul avec le HUD ; pas de plantage sur 5 400 images.
-- Non exécutés : build et jeu USA (le lot ne touche pas le jeu), parcours
-  complet, changement de langue en jeu.
+- Test de fumée `tests/smoke/run.py` (voir plus bas) : EU et USA, deux
+  passages chacun, écart 0,00 avec les références : le jeu est déterministe,
+  la moindre différence visible signale un changement.
+- Non exécutés : parcours complet, changement de langue en jeu, build Windows
+  complet (seuls les fichiers de la PR #33 ont été compilés avec mingw-w64).
+
+#### Test de fumée avant chaque fusion (cloud Linux)
+```
+apt-get install -y libsdl2-dev python3-yaml xvfb
+sh tools/build-game.sh <rom.nds>            # ~6 min la première fois
+python3 tests/smoke/run.py --game game \
+  --save <dqix.sav> --input <input.txt> --frames 2000,3300,5300 \
+  --out /tmp/fumee --ref <références>
+```
+Sauvegarde, recette et références (dérivées du jeu, jamais dans le dépôt) :
+`/mnt/project-files/tests-fumee/` (`input.txt`, `ref-eu/`, `ref-usa/`) avec la
+sauvegarde `/mnt/project-files/ecran-unique/test-combat/dqix.sav` : église de
+Stornway (2000), ville avec mini-carte (3300), combat contre un Funghoul en EU
+(5300). Un changement visuel voulu donne un écart : regarder les PNG puis
+refaire les références.
 
 ### Problèmes identifiés
 1. Tests automatiques cassés depuis l'ajout de `g_cyc` et des appels de
@@ -129,9 +169,9 @@ Chaque ligne = une tâche courte pour un thread, avec captures pour tout visuel.
 
 | # | Priorité | Tâche | Rôle | Risque | Valeur |
 |---|---|---|---|---|---|
-| 1 | P0 | Réparer les tests automatiques (ce lot) | Dev | très faible (`tests/` seul) | Détecte les régressions du recompilateur et de la 3D |
-| 2 | P0 | Script de test de fumée cloud : build EU + USA, recette d'entrée, captures aux images clés, comparaison avec des captures de référence (sauvegarde de test hors dépôt) | Dev / Intégration | faible (`tests/` seul) | Non-régression visuelle avant chaque fusion |
-| 3 | P0 | Décider du sort de la PR #33, puis la rebaser et la tester (EU + USA) | Dev | moyen (`frontend_sdl.c`, `menu_win32.c`) | Options au clavier et à la manette, en plein écran |
+| 1 | P0 | ✓ Réparer les tests automatiques (PR #45) | Dev | très faible (`tests/` seul) | Détecte les régressions du recompilateur et de la 3D |
+| 2 | P0 | ✓ (PR #45) Script de test de fumée cloud : build EU + USA, recette d'entrée, captures aux images clés, comparaison avec des captures de référence (sauvegarde de test hors dépôt) | Dev / Intégration | faible (`tests/` seul) | Non-régression visuelle avant chaque fusion |
+| 3 | P0 | PR #33 reprise par Romuald : `main` fusionné, testé EU + USA ; à pousser et fusionner | Dev | moyen (`frontend_sdl.c`, `menu_win32.c`) | Options au clavier et à la manette, en plein écran |
 | 4 | P1 | Terminer les fils en cours (cadre moderne, police unique, pop-up) | Graph, Langues, Dev | — | Interface homogène |
 | 5 | P1 | Interface PC traduite (FR d'abord) selon la langue choisie | Langues | moyen (fichiers partagés, après #3) | Cohérence pour un joueur francophone |
 | 6 | P1 | Contrôle des packs de textures : dimensions multiples de l'original, alpha, PNG illisibles, planche avant/après | Graph | très faible (outil à part) | Ressources remplaçables et restaurables en confiance |
@@ -141,9 +181,29 @@ Chaque ligne = une tâche courte pour un thread, avec captures pour tout visuel.
 | 10 | P2 | Retirer le code mort des anciennes dispositions | Dev | moyen | Seulement avec l'accord de Romuald |
 | 11 | P3 | Effets et éclairage, journal des cartes au trésor, encyclopédie | — | élevé | Après stabilisation |
 
+### Nouvelles idées du cahier (§ 5 à 9) et faisabilité
+Chacune a besoin de données du jeu. « Repères » = ce que le code ou la carte
+des symboles (`config/usa/arm9/symbols.txt`, ~9 % de noms) donne déjà ;
+coût : S = un soir, M = quelques jours, L = plus.
+
+| Idée | Fil | Repères déjà connus | Coût | Risque |
+|---|---|---|---|---|
+| Dégâts et altérations d'état plus visibles, temps morts réduits, animations accélérées | Combats | `CalculatePhysicalDamage` (0x020744c0), vitesse de combat (`farm.c` `party_in_battle`, `sound.c`) | M | moyen : ne pas toucher aux boîtes ni aux règles |
+| Comparaison d'équipement (+/− par membre), filtres, favoris, quantités | Inventaire | Fiches de membres 0x964 octets (`cheats.c`), `itemdt_en.nat` (`mapmarks.c`), le jeu a déjà son tri et son aperçu | M | faible si affichage seul |
+| Livre des recettes d'alchimie, ingrédients manquants | Alchimie | Aucun repère sur les recettes : à chercher dans les fichiers de la ROM | M-L | faible |
+| Monstres rencontrés, objets obtenus, boss vaincus | Alchimie / collections | Liste des monstres du jeu (page du haut), drapeaux de progression 0x021088D0 | M | faible |
+| Journal des cartes au trésor, grottes explorées, filtres | Alchimie / cartes | Bien nommé : `DetailedTreasureMapData`, `TreasureMapMetadata`, `GetTreasureMapTypeFromItemID`, `GameState::GetGrottoStruct` ; plan des grottes possible avec `FloorMapGenerator`/`FloorMap::GetTile` | M | faible |
+| Journal des quêtes (objectifs connus, sans solution) | Quêtes | Statut des quêtes 0x02108B10 (`mapmarks.c`), quartets dans la sauvegarde à 12300 | M | faible |
+| Compétences acquises / à venir, comparaison de vocations, ensembles d'équipement | Quêtes et progression | Points de compétence 0x020F3DB0 + 0x964 par membre (`cheats.c`) ; ensembles = écrire l'équipement en RAM | M (L pour les ensembles) | moyen pour les ensembles (modifie la partie) |
+| Boutons PS5/Xbox à la place de « X Menu », légende de la carte | Boutons manette | Panneau « X Menu » = un quad 3D déplacé (`gpu3d.c` `g_sign_move`) ; marqueurs (`mapmarks.c`) | S-M | faible |
+| Météo, eau, ombres, éclairage, effets de sort | Effets visuels | Nommés : `LightingManager` (20 fonctions), `AtmosphericEffectSet` (13) ; rendu GPU dans `gl_render.c` | L | élevé : rester sur des effets optionnels |
+| Contrôle des packs de textures (taille, alpha, avant/après) | Effets visuels / textures | `textures/dump`, `dump-2d`, `tools/textures-hd.c` | S | très faible (outil à part) |
+| Menus PC traduits, contraste, textes jamais coupés | Menus en français | Chaînes en dur dans `menu_win32.c` / `frontend_sdl.c` ; langue `g_fw_language` | M | moyen (fichiers partagés) |
+| Fiches de personnages, confirmations, messages système, chargements | Cadre moderne | Style minimal (`g_winstyle`), boîte de description #44 | M | moyen |
+| Défis facultatifs, quêtes annexes, encyclopédie, personnalisation | — | — | L | P3 : après stabilisation, étude d'équilibrage d'abord |
+
 ### Décisions attendues de Romuald
-- PR #33 (menu d'options dans le jeu) : la reprendre ou la fermer ?
-- Traduire les menus PC en français (puis DE/IT/ES) selon la langue du jeu ?
+- PR #33 et menus en français : décidé le 28/10 au soir (reprendre, traduire).
 - Retirer le code des anciennes dispositions (déjà invisibles) ou le laisser ?
 - `ROADMAP.md` : le réécrire pour ce fork (sans multijoueur) ou le garder tel
   que l'upstream ?
