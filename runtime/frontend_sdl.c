@@ -32,6 +32,7 @@
 #include "hdtext.h"
 #include "hdmovie.h"
 #include "bootskip.h"
+#include "gamemenu.h"
 #include "gl_render.h"
 #include "menu.h"
 #include "farm.h"
@@ -1212,7 +1213,15 @@ static void perf_write(FILE* f) {
 }
 
 /* DQIX_WINSHOT_AT=frame[,frame...]: save the whole window as shown (tests) */
+static char g_shot_next[32];                                    /* tests: save the next frame drawn there (DQIX_MENU_TEST) */
 static void window_shot_hook(int w, int h, int second) {
+    if (g_shot_next[0] && !second) {
+        uint8_t* rgb = gl_read_window(w, h);
+        FILE* f = fopen(g_shot_next, "wb");
+        if (f) { fprintf(f, "P6\n%d %d\n255\n", w, h); fwrite(rgb, 1, (size_t)w * h * 3, f); fclose(f); }
+        free(rgb);
+        g_shot_next[0] = 0;
+    }
     static char list[20000]; static int init;
     if (!init) { init = 1; const char* e = getenv("DQIX_WINSHOT_AT"); if (e) snprintf(list, sizeof list, ",%s,", e); }
     if (!list[0]) return;
@@ -1587,6 +1596,11 @@ static void present_gl(void) {
         if (mapmarks_update(&rgba)) gl_set_overlay(rgba, MAPMARKS_W, MAPMARKS_H);
     }
     int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
+    {   /* the in-game menu (Esc), over everything */
+        static int shown;
+        if (gamemenu_is_open()) { int ch; const uint8_t* p = gamemenu_picture(w, h, &ch); if (ch || !shown) gl_set_menu(p, w, h); shown = 1; }
+        else if (shown) { gl_set_menu(NULL, 0, 0); shown = 0; }
+    }
     GlPresent v; canvas_layout(&v, w, h);
     mapmarks_hover(-1, -1);
     map_overlay(&v, g_win, (pow >> 15) & 1);
@@ -2494,6 +2508,107 @@ static void do_action(int id) {
     if (id != MI_SHOT && id != MI_REPORT && id != MI_SEND_REPORT && id != MI_PAUSE && id != MI_TURBO) settings_save();
 }
 
+/* ---------------------------------------------------------------- the in-game menu (gamemenu.h) */
+static int g_pad_resync;                                     /* (below: a button just given out) */
+static void game_menu_toggle(void) {
+    if (!g_gl) { quit_ask(); return; }                       /* (it needs OpenGL; without it Esc asks to quit, as before) */
+    if (gamemenu_is_open()) { gamemenu_close(); return; }
+    menu_sync();
+    gamemenu_set_font(g_hdfont);
+    gamemenu_open();
+}
+
+static void game_menu_chose(int id) {
+    if (id <= 0) return;                                     /* Resume: closed already */
+    do_action(id);
+    gamemenu_changed();                                      /* new check marks */
+}
+
+static void hotkey(int a);
+/* An event while the menu is open: 1 if the menu took it. */
+static int game_menu_event(const SDL_Event* e) {
+    int id = 0;
+    switch (e->type) {
+    case SDL_KEYDOWN: {
+        if (g_cap_action >= 0) return 0;                     /* Controls is waiting for a key */
+        SDL_Scancode k = e->key.keysym.scancode;
+        int a = controls_key_action(k, e->key.keysym.mod);
+        if (k == SDL_SCANCODE_ESCAPE) { if (!e->key.repeat) gamemenu_close(); }
+        else if (k == SDL_SCANCODE_UP || a == CA_UP) id = gamemenu_key(GM_UP);
+        else if (k == SDL_SCANCODE_DOWN || a == CA_DOWN) id = gamemenu_key(GM_DOWN);
+        else if (k == SDL_SCANCODE_PAGEUP) id = gamemenu_key(GM_PAGEUP);
+        else if (k == SDL_SCANCODE_PAGEDOWN) id = gamemenu_key(GM_PAGEDOWN);
+        else if (e->key.repeat) break;
+        else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER || k == SDL_SCANCODE_SPACE || a == CA_A) {
+            if (k == SDL_SCANCODE_RETURN && (e->key.keysym.mod & KMOD_ALT)) do_action(MI_FULL);
+            else id = gamemenu_key(GM_OK);
+        }
+        else if (k == SDL_SCANCODE_BACKSPACE || k == SDL_SCANCODE_LEFT || a == CA_B) id = gamemenu_key(GM_BACK);
+        else if (a == CA_MENU) gamemenu_close();
+        else if (a == CA_FULL || a == CA_SHOT || a == CA_VOLDOWN || a == CA_VOLUP) { hotkey(a); gamemenu_changed(); }
+        break;
+    }
+    case SDL_CONTROLLERBUTTONDOWN: {
+        if (g_cap_action >= 0) return 0;
+        int b = e->cbutton.button;
+        if (b == g_ctl_pad[CA_A]) id = gamemenu_key(GM_OK);
+        else if (b == g_ctl_pad[CA_B]) id = gamemenu_key(GM_BACK);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_UP || b == g_ctl_pad[CA_UP]) id = gamemenu_key(GM_UP);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN || b == g_ctl_pad[CA_DOWN]) id = gamemenu_key(GM_DOWN);
+        else if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) id = gamemenu_key(GM_PAGEUP);
+        else if (b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) id = gamemenu_key(GM_PAGEDOWN);
+        else if (b == g_ctl_pad[CA_MENU] || b == SDL_CONTROLLER_BUTTON_GUIDE || b == SDL_CONTROLLER_BUTTON_START) gamemenu_close();
+        g_pad_resync = 1;                                    /* (not a shortcut too, once the menu is closed) */
+        break;
+    }
+    case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEWHEEL: {
+        if (!g_win || e->window.windowID != SDL_GetWindowID(g_win)) return 0;
+        if (e->type == SDL_MOUSEWHEEL) { gamemenu_wheel(e->wheel.y); break; }
+        int ww, wh, dw, dh; SDL_GetWindowSize(g_win, &ww, &wh); SDL_GL_GetDrawableSize(g_win, &dw, &dh);
+        int mx = e->type == SDL_MOUSEMOTION ? e->motion.x : e->button.x, my = e->type == SDL_MOUSEMOTION ? e->motion.y : e->button.y;
+        int click = e->type != SDL_MOUSEBUTTONDOWN ? 0 : e->button.button == SDL_BUTTON_LEFT ? 1 : e->button.button == SDL_BUTTON_RIGHT ? 2 : -1;
+        if (click < 0) break;
+        id = gamemenu_mouse(((float)mx + 0.5f) * (float)dw / (float)(ww > 0 ? ww : 1), ((float)my + 0.5f) * (float)dh / (float)(wh > 0 ? wh : 1), click);
+        break;
+    }
+    default: return 0;
+    }
+    game_menu_chose(id);
+    return 1;
+}
+
+/* the left stick moves through the menu (repeating while held) */
+static void game_menu_stick(void) {
+    static int dir; static Uint32 next;
+    int v = g_pad ? SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTY) : 0;
+    int d = v < -20000 ? -1 : v > 20000 ? 1 : 0;
+    Uint32 now = SDL_GetTicks();
+    if (!d) { dir = 0; return; }
+    if (d != dir) { dir = d; next = now + 350; }
+    else if ((Sint32)(now - next) < 0) return;
+    else next = now + 110;
+    gamemenu_key(d < 0 ? GM_UP : GM_DOWN);
+}
+
+/* tests: DQIX_MENU_TEST=frame,keys (U D O B; ',' = save the window as menuN.ppm, also done at the end) */
+static void game_menu_test(void) {
+    static long long at = -2; static const char* keys;
+    if (at == -2) { const char* e = getenv("DQIX_MENU_TEST"); at = e ? atoll(e) : -1; keys = e ? strchr(e, ',') : NULL; }
+    if (at < 0 || g_frame != (uint64_t)at || !g_gl) return;
+    game_menu_toggle();
+    int shot = 0;
+    for (const char* c = keys ? keys + 1 : ""; ; c++) {
+        if (*c == ',' || !*c) {
+            snprintf(g_shot_next, sizeof g_shot_next, "menu%d.ppm", shot++);
+            present();
+            if (!*c) break;
+            continue;
+        }
+        game_menu_chose(gamemenu_key(*c == 'U' ? GM_UP : *c == 'D' ? GM_DOWN : *c == 'O' ? GM_OK : GM_BACK));
+    }
+    gamemenu_close();
+}
+
 /* ---------------------------------------------------------------- hotkeys (Game > Controls) */
 static int wide_now(void) { return g_wide && WIDE_GL && !g_side_by_side; }
 static void hotkey(int a) {
@@ -2525,6 +2640,7 @@ static void hotkey(int a) {
     case CA_RESET: do_action(MI_RESET); break;
     case CA_SHOT: do_action(MI_SHOT); break;
     case CA_REPORT: do_action(MI_REPORT); break;
+    case CA_MENU: game_menu_toggle(); break;
     }
 }
 
@@ -2570,7 +2686,8 @@ static void handle_events(void) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         int mi = menu_command(&e);
-        if (mi) { do_action(mi); continue; }
+        if (mi) { do_action(mi); gamemenu_changed(); continue; }
+        if (gamemenu_is_open() && game_menu_event(&e)) continue;
         switch (e.type) {
         case SDL_QUIT: exit(0);                                   /* Ctrl+C, the system shutting down */
         case SDL_KEYDOWN: {
@@ -2578,7 +2695,7 @@ static void handle_events(void) {
             SDL_Scancode k = e.key.keysym.scancode;
             if (g_cap_action >= 0) { capture_key(k, e.key.keysym.mod); break; }   /* Game > Controls: the new key */
             int in2 = g_win2 && e.key.windowID == SDL_GetWindowID(g_win2);   /* typed in the second window */
-            if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else if (g_fullscreen) do_action(MI_FULL); else quit_ask(); break; }
+            if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else game_menu_toggle(); break; }   /* the in-game menu */
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }
             if (k == SDL_SCANCODE_G && (e.key.keysym.mod & KMOD_CTRL)) { do_action(MI_FARM); break; }   /* Modern > Farm gold by itself */
             int a = controls_key_action(k, e.key.keysym.mod);
@@ -2682,9 +2799,11 @@ void frontend_frame(void) {
         int tx, ty;
         static int dragging;                                  /* the press began on the touch screen */
         int held = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-        g_fe_touch = held && to_touch_in(SDL_GetMouseFocus(), mx, my, &tx, &ty, dragging);
+        g_fe_touch = held && !gamemenu_is_open() && to_touch_in(SDL_GetMouseFocus(), mx, my, &tx, &ty, dragging);
         dragging = g_fe_touch;
         if (g_fe_touch) { g_fe_tx = tx; g_fe_ty = ty; }
+        game_menu_test();
+        if (gamemenu_is_open()) g_fe_keys = 0;               /* the menu has the buttons (in a session the game goes on) */
         uint64_t tp = SDL_GetPerformanceCounter();
         static int shown;                                     /* Modern > Start: the logos run unseen (the window stays as first drawn: black) */
         if (!shown || !bootskip_active()) { present(); shown = 1; }
@@ -2697,6 +2816,13 @@ void frontend_frame(void) {
             g_paused = 0;
         }
         if (g_autosave_done) { g_autosave_done = 0; notice("Saved"); }   /* Modern > Save by itself */
+        if (gamemenu_is_open() && !session_requested()) {      /* the in-game menu: the game waits */
+            update_title(0);
+            while (gamemenu_is_open()) { handle_events(); game_menu_stick(); present(); SDL_Delay(15); }
+            g_next_frame = SDL_GetPerformanceCounter();
+            g_fps_t0 = 0;
+            g_pad_resync = 1;
+        }
         if (g_paused) {                                       /* Game > Pause: keep the window alive, the game waits */
             update_title(0);
             while (g_paused) { handle_events(); present(); SDL_Delay(15); }

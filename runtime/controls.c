@@ -33,6 +33,7 @@ const ControlAction g_ctl[CA_N] = {
     [CA_RESET] = { "reset", "Reset the game", -1 },
     [CA_SHOT] = { "screenshot", "Screenshot", -1 },
     [CA_REPORT] = { "bug_report", "Bug report", -1 },
+    [CA_MENU] = { "menu", "Options menu (in the game; Esc too)", -1 },
 };
 
 int g_ctl_key[CA_N][2];
@@ -60,6 +61,7 @@ void controls_defaults(void) {
     g_ctl_pad[CA_UP] = SDL_CONTROLLER_BUTTON_DPAD_UP; g_ctl_pad[CA_DOWN] = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
     g_ctl_pad[CA_LEFT] = SDL_CONTROLLER_BUTTON_DPAD_LEFT; g_ctl_pad[CA_RIGHT] = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
     g_ctl_pad[CA_MINIMAP] = SDL_CONTROLLER_BUTTON_RIGHTSTICK;     /* R3 */
+    g_ctl_pad[CA_MENU] = SDL_CONTROLLER_BUTTON_GUIDE;             /* the PS / Xbox / Home button */
 }
 
 /* ---------------------------------------------------------------- names */
