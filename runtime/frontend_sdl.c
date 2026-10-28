@@ -35,6 +35,7 @@
 #include "gl_render.h"
 #include "menu.h"
 #include "farm.h"
+#include "autosave.h"
 #include "cheats.h"
 #include "mapmarks.h"
 #include "version.h"
@@ -527,6 +528,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "skip_intro")) { int v = atoi(val); if (v >= 0 && v <= 2) g_skip_intro = v; }
         else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 3) g_battle_speed = v; }
         else if (!strcmp(key, "save_backups")) g_save_backups = atoi(val) != 0;
+        else if (!strcmp(key, "autosave")) g_autosave = atoi(val) != 0;
         else if (!strcmp(key, "cheats")) cheats_from_list(val);
         else if (!strcmp(key, "map_monsters")) g_mapmarks_monsters = atoi(val) != 0;
         else if (!strcmp(key, "interior_maps")) g_interior_maps = atoi(val) != 0;
@@ -619,6 +621,8 @@ static void settings_save(void) {
     fprintf(f, "skip_intro = %d\n", g_skip_intro);
     fprintf(f, "# Modern > Battle speed: battles go 1, 2 or 3 times as fast (not while playing with friends)\n");
     fprintf(f, "battle_speed = %d\n", g_battle_speed);
+    fprintf(f, "# Modern > Save by itself every 10 minutes (on the field, while free to walk; not while playing with friends): 0 or 1\n");
+    fprintf(f, "autosave = %d\n", g_autosave);
     fprintf(f, "# Game > Keep a copy of every save: the save as it was before each new one, in save-backups (the last 20): 0 or 1\n");
     fprintf(f, "save_backups = %d\n", g_save_backups);
     {   char on[400]; cheats_to_list(on, sizeof on);
@@ -1522,6 +1526,7 @@ static void menu_sync(void) {
     for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
     for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
     menu_check(MI_SAVEBAK, g_save_backups);
+    menu_check(MI_AUTOSAVE, g_autosave); menu_enable(MI_AUTOSAVE, !session_requested());
     for (int i = 0; i < cheats_count(); i++) {
         menu_check(MI_CHEAT0 + i, cheats_on(i)); menu_enable(MI_CHEAT0 + i, !session_requested());
         if (cheats_max(i)) menu_set_text(MI_CHEAT0 + i, cheats_name(i));       /* with the chosen number */
@@ -2128,6 +2133,7 @@ static void do_action(int id) {
     case MI_SKIP0: case MI_SKIP0 + 1: case MI_SKIP0 + 2: g_skip_intro = id - MI_SKIP0; break;
     case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
+    case MI_AUTOSAVE: g_autosave = !g_autosave; break;
     case MI_FULL2: second_window_fullscreen(); break;
     case MI_LCD: if (g_gl) g_opt.lcd = !g_opt.lcd; g_fps_t0 = 0; break;
     case MI_LCDCOL: g_opt.lcd_color = !g_opt.lcd_color; break;
@@ -2250,6 +2256,10 @@ static void do_action(int id) {
             "Battle speed: battles (and their victory messages) go 2 or 3 times as fast; the music keeps its pitch and skips ahead. "
             "The rest of the game stays at its own speed. Off while playing with friends far away.\n\n"
             "Map: show the monsters walking nearby: red dots on the map, to go for them or around them.\n\n"
+            "Save by itself every 10 minutes: the game saves as the priest would, wherever the party is, once the hero is free to walk "
+            "(never during a battle, a dialogue, a menu or a cut scene); Continue takes you back there. The 10 minutes count from the last "
+            "save, the church's too. It needs a save made once at a church first, and is off while playing with friends. "
+            "Game > Keep a copy of every save keeps the earlier ones in save-backups.\n\n"
             "All are also under View; F2 goes through the layouts.", g_win);
         break;
     case MI_SIZE1: case MI_SIZE2: case MI_SIZE3: case MI_SIZE4: g_scale = id - MI_SIZE1 + 1; relayout = 1; break;
@@ -2513,6 +2523,7 @@ void frontend_frame(void) {
             info_box(SDL_MESSAGEBOX_INFORMATION, "Farm gold by itself", g_farm_why, g_win);
             g_paused = 0;
         }
+        if (g_autosave_done) { g_autosave_done = 0; notice("Saved"); }   /* Modern > Save by itself */
         if (g_paused) {                                       /* Game > Pause: keep the window alive, the game waits */
             update_title(0);
             while (g_paused) { handle_events(); present(); SDL_Delay(15); }

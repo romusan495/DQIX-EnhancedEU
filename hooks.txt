@@ -8,3 +8,7 @@
 main 0205b36c GlyphBlit                    # draws one letter into a text window
 main 02001a40 Memcpy                       # memcpy: the letters' tags go along
 main 02045864 GlyphCell                    # draws one letter into its own texture (dialogue windows)
+
+# Modern > Save by itself (runtime/autosave.c): the field's frame, where the
+# adventure is saved every 10 minutes.
+ov017 0218d0ec FieldFrame                  # once a frame on the field
