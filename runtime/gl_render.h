@@ -44,6 +44,7 @@ typedef struct {
 void gl_hold(void);                                   /* keep this frame's picture (the map window during battles) */
 void gl_set_skin(const uint8_t* rgba, int w, int h);
 void gl_set_menu(const uint8_t* rgba, int w, int h);      /* the in-game menu over the whole window (premultiplied RGBA, rows top-down; NULL: none) */
+void gl_set_menu_box(const float* b);                     /* ...its window drawn under it in the minimal style: x0 y0 x1 y1 (window pixels, y down), line width (NULL: none) */
 void gl_set_overlay(const uint8_t* rgba, int w, int h);   /* a picture over the screens (premultiplied RGBA, rows top-down; NULL: none) */
 void gl_set_icons(const uint8_t* rgba, int w, int h);     /* another (a shop's icons), drawn after it */
 void gl_present(const GlPresent* v);

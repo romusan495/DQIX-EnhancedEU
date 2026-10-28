@@ -1598,8 +1598,8 @@ static void present_gl(void) {
     int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
     {   /* the in-game menu (Esc), over everything */
         static int shown;
-        if (gamemenu_is_open()) { int ch; const uint8_t* p = gamemenu_picture(w, h, &ch); if (ch || !shown) gl_set_menu(p, w, h); shown = 1; }
-        else if (shown) { gl_set_menu(NULL, 0, 0); shown = 0; }
+        if (gamemenu_is_open()) { int ch; const uint8_t* p = gamemenu_picture(w, h, &ch); if (ch || !shown) { gl_set_menu(p, w, h); gl_set_menu_box(gamemenu_box()); } shown = 1; }
+        else if (shown) { gl_set_menu(NULL, 0, 0); gl_set_menu_box(NULL); shown = 0; }
     }
     GlPresent v; canvas_layout(&v, w, h);
     mapmarks_hover(-1, -1);

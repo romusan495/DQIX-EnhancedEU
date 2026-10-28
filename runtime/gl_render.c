@@ -654,6 +654,7 @@ static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per 
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
 static GLuint overlay_tex[2]; static int overlay_on[2];   /* gl_set_overlay(), gl_set_icons() */
 static GLuint menu_tex; static int menu_on;         /* gl_set_menu() */
+static float menu_box[5];                           /* gl_set_menu_box(); menu_box[4] 0: none */
 static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
 static int g_ready;
 
@@ -1898,18 +1899,34 @@ static void draw_overlay(const GlPresent* v, const float* q, GLuint tex) {
     p_glDisable(GL_BLEND);
 }
 
-/* gl_set_menu()'s picture over the whole window. */
-static void draw_menu(void) {
+/* gl_set_menu()'s picture over the whole window, on its window of the minimal
+ * style (FS_COPY's u_mode 2, as draw_pieces' restyled windows). */
+static void draw_menu(const GlPresent* v) {
     p_glUseProgram(prog_copy);
+    p_glBindVertexArray(vao_quad);
+    p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   /* premultiplied */
+    if (menu_box[4] > 0) {
+        const float* b = menu_box;
+        p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), b[0] / (float)v->win_w * 2 - 1, 1 - b[3] / (float)v->win_h * 2,
+                      (b[2] - b[0]) / (float)v->win_w * 2, (b[3] - b[1]) / (float)v->win_h * 2);
+        p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_uv"), 0, 0, 1, 1);
+        p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_px"), b[2] - b[0], b[3] - b[1]);
+        p_glUniform1f(p_glGetUniformLocation(prog_copy, "u_line"), b[4]);
+        p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_mode"), 2);
+        p_glDrawArrays(GL_TRIANGLES, 0, 6);
+        p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_mode"), 0);
+    }
     p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, menu_tex); p_glBindSampler(0, 0);
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), -1, -1, 2, 2);
     p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_uv"), 0, 1, 1, -1);   /* rows top-down */
-    p_glBindVertexArray(vao_quad);
-    p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-    p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   /* premultiplied */
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
     p_glDisable(GL_BLEND);
+}
+
+void gl_set_menu_box(const float* b) {
+    if (b) memcpy(menu_box, b, sizeof menu_box); else menu_box[4] = 0;
 }
 
 void gl_set_menu(const uint8_t* rgba, int w, int h) {
@@ -1997,7 +2014,7 @@ void gl_present(const GlPresent* v) {
     if (v->npiece) draw_pieces(v, final_tex);
     if (overlay_on[0] && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v, v->overlay, overlay_tex[0]);
     if (overlay_on[1] && v->icons[2] > 0 && v->icons[3] > 0) draw_overlay(v, v->icons, overlay_tex[1]);
-    if (menu_on && !v->again) draw_menu();
+    if (menu_on && !v->again) draw_menu(v);
 }
 
 /* A console photo (RGBA, rows top-down), drawn around the screens. */

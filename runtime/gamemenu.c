@@ -246,15 +246,6 @@ static void box(float x0, float y0, float x1, float y1, float r, const float c[4
         over(x, y, c, box_cover(x + 0.5f, y + 0.5f, x0, y0, x1, y1, r));
 }
 
-/* a frame line of width w along the rounded box's edge */
-static void frame(float x0, float y0, float x1, float y1, float r, float w, const float c[4]) {
-    for (int y = (int)y0 - 1; y <= (int)y1 + 1; y++) for (int x = (int)x0 - 1; x <= (int)x1 + 1; x++) {
-        float px = x + 0.5f, py = y + 0.5f;
-        float a = box_cover(px, py, x0, y0, x1, y1, r) - box_cover(px, py, x0 + w, y0 + w, x1 - w, y1 - w, r > w ? r - w : 0);
-        over(x, y, c, a);
-    }
-}
-
 /* the game's cursor: a small arrow pointing right, tip at (x, y) */
 static void arrow(float x, float y, float s, const float c[4]) {
     for (int py = (int)(y - s) - 1; py <= (int)(y + s) + 1; py++) for (int px = (int)(x - s * 1.4f) - 1; px <= (int)x + 1; px++) {
@@ -298,9 +289,15 @@ static void check(float x, float y, float s, const float c[4]) {
     }
 }
 
-static const float C_VEIL[4] = { 0, 0, 0.02f, 0.55f }, C_WIN[4] = { 0.035f, 0.06f, 0.22f, 0.93f }, C_WHITE[4] = { 1, 1, 1, 1 };
-static const float C_DIM[4] = { 0.55f, 0.58f, 0.70f, 1 }, C_KEY[4] = { 0.70f, 0.74f, 0.88f, 1 }, C_SEL[4] = { 1, 1, 1, 0.10f };
-static const float C_TITLE[4] = { 0.98f, 0.86f, 0.50f, 1 };
+/* The window itself is drawn by the renderer in the minimal style of the
+ * game's restyled windows (gamemenu_box, gl_set_menu_box): see-through black
+ * with a grey line. Here: the veil and what is written in it. */
+static const float C_VEIL[4] = { 0, 0, 0, 0.45f }, C_WHITE[4] = { 1, 1, 1, 1 };
+static const float C_DIM[4] = { 0.60f, 0.60f, 0.60f, 1 }, C_KEY[4] = { 0.75f, 0.75f, 0.75f, 1 }, C_SEL[4] = { 1, 1, 1, 0.12f };
+static const float C_TITLE[4] = { 0.93f, 0.93f, 0.93f, 1 }, C_LINE[4] = { 0.5f, 0.5f, 0.5f, 1 };
+static float g_box[5];                            /* the window: x0 y0 x1 y1, line width (drawable pixels) */
+
+const float* gamemenu_box(void) { return g_open && g_box[4] > 0 ? g_box : NULL; }
 
 const uint8_t* gamemenu_picture(int w, int h, int* changed) {
     *changed = 0;
@@ -312,10 +309,6 @@ const uint8_t* gamemenu_picture(int w, int h, int* changed) {
     }
     g_dirty = 0; *changed = 1;
     make_rows();
-    for (size_t i = 0; i < (size_t)w * h; i++) {      /* the game darkened behind */
-        uint8_t* p = g_pic + i * 4;
-        p[0] = 0; p[1] = 0; p[2] = (uint8_t)(C_VEIL[2] * C_VEIL[3] * 255); p[3] = (uint8_t)(C_VEIL[3] * 255);
-    }
     float u = (float)h / 720.0f; if (u < 0.6f) u = 0.6f;
     if (u * 1100 > w * 0.92f) u = w * 0.92f / 1100;   /* narrow windows */
     float pw = fminf(w - 40 * u, 980 * u), title_px = 30 * u, row_px = 23 * u;
@@ -332,9 +325,17 @@ const uint8_t* gamemenu_picture(int w, int h, int* changed) {
     for (int k = 0; k < g_vis && g_top[g_depth] + k < g_nrows; k++) rows_h += (g_rows[g_top[g_depth] + k].kind == MENU_SEP ? SEP_H : 1) * g_rowh;
     float ph = head + rows_h + foot;
     g_px0 = (w - pw) / 2; g_px1 = g_px0 + pw; g_py0 = (h - ph) / 2; g_py1 = g_py0 + ph;
-    box(g_px0, g_py0, g_px1, g_py1, 14 * u, C_WIN);
-    frame(g_px0, g_py0, g_px1, g_py1, 14 * u, 3.5f * u, C_WHITE);
-    frame(g_px0 + 7 * u, g_py0 + 7 * u, g_px1 - 7 * u, g_py1 - 7 * u, 9 * u, 1.2f * u, (const float[4]){ 1, 1, 1, 0.35f });
+    g_px0 = floorf(g_px0); g_py0 = floorf(g_py0); g_px1 = ceilf(g_px1); g_py1 = ceilf(g_py1);
+    g_box[0] = g_px0; g_box[1] = g_py0; g_box[2] = g_px1; g_box[3] = g_py1; g_box[4] = 3.5f * u;
+    /* the game darkened all over, except under the window's frame line: inside,
+     * the veil over the window's own see-through black keeps a long list readable */
+    float e = ceilf(1.6f * g_box[4]);
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+        uint8_t* p = g_pic + ((size_t)y * w + x) * 4;
+        int in = x >= g_px0 && x < g_px1 && y >= g_py0 && y < g_py1;
+        int inner = x >= g_px0 + e && x < g_px1 - e && y >= g_py0 + e && y < g_py1 - e;
+        p[0] = p[1] = p[2] = 0; p[3] = in && !inner ? 0 : (uint8_t)(C_VEIL[3] * 255);
+    }
 
     /* the title: where we are */
     char title[400] = "Options";
@@ -343,6 +344,8 @@ const uint8_t* gamemenu_picture(int w, int h, int* changed) {
     float tx = g_px0 + 40 * u;
     while (text_width(title, title_px) > pw - 80 * u && title_px > 14 * u) title_px *= 0.92f;
     text(tx, g_py0 + 22 * u, title_px, C_TITLE, title);
+    for (int x = (int)(g_px0 + 18 * u); x < (int)(g_px1 - 18 * u); x++)   /* a line under it, as under the game's column titles */
+        for (int t = 0; t < (int)(1.5f * u + 0.5f); t++) over(x, (int)(g_py0 + head - 8 * u) + t, C_LINE, 1);
 
     /* the lines */
     g_rows_y0 = g_py0 + head;
@@ -360,7 +363,7 @@ const uint8_t* gamemenu_picture(int w, int h, int* changed) {
         }
         int sel = i == g_sel[g_depth];
         if (sel) {
-            box(g_px0 + 18 * u, y + 3 * u, g_px1 - 18 * u, y + g_rowh - 3 * u, 6 * u, C_SEL);
+            box(g_px0 + 18 * u, y + 3 * u, g_px1 - 18 * u, y + g_rowh - 3 * u, 0, C_SEL);
             arrow(g_px0 + 46 * u, y + g_rowh / 2, 8 * u, C_WHITE);
         }
         const float* col = r->kind == MENU_LABEL || !r->on ? C_DIM : C_WHITE;
