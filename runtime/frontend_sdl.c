@@ -307,9 +307,10 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
-        int top_menu = g_minimap && which == 0 && !pop && g_top_menu && in_adventure() && !g_hud_n && !g_hud_win[2];
+        int top_menu = g_minimap && which == 0 && !pop && g_top_menu && in_adventure() && !g_hud_n && !g_hud_win[2] && !g_small_blank;
         int no3d_menu = g_minimap && which < 0 && !pop && in_adventure() && mapmarks_top_page() && !g_small_blank;
-        if ((g_minimap && which == 1 && !pop && mapmarks_top_page()) || top_menu || no3d_menu) {
+        int card = g_minimap && which == 1 && !pop && mapmarks_top_page() && !g_small_blank;   /* (a cutscene: the other screen black) */
+        if (card || top_menu || no3d_menu) {
             /* an item's card on the top screen (Items, Equipment...), a menu
              * with its 3D model there (the monster list), or menus on both
              * screens without 3D (skill points): both screens whole, side by
