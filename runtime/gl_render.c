@@ -61,6 +61,7 @@
     X(void, glBindFramebuffer, (GLenum, GLuint)) \
     X(void, glFramebufferTexture2D, (GLenum, GLenum, GLenum, GLuint, GLint)) \
     X(GLenum, glCheckFramebufferStatus, (GLenum)) \
+    X(void, glBlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
     X(void, glDrawBuffers, (GLsizei, const GLenum*)) \
     X(void, glReadBuffer, (GLenum)) \
     X(void, glReadPixels, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*)) \
@@ -1060,6 +1061,25 @@ static void free_fbs(void) {
     if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); held_tex = held_fbo = 0; held_w = held_h = 0; }
 }
 
+/* Widescreen on/off (a frame drawn narrower, after a side by side layout):
+ * buffers of the new width, holding the picture on screen at its place, so
+ * the next frame doesn't show the 2D backdrop instead (pink in shops). */
+static void resize_fbs(int side) {
+    int keep = g_fb_shown >= 0 && g_fb[g_fb_shown].valid ? g_fb_shown : -1, oside = g_wside, ow = g_fb3_w;
+    GLuint old_fbo = 0, old_tex = 0;
+    if (keep >= 0) { old_fbo = g_fb[keep].post_fbo; old_tex = g_fb[keep].post; g_fb[keep].post_fbo = g_fb[keep].post = 0; }
+    free_fbs(); g_wside = side; make_fbs();
+    if (keep < 0) return;
+    p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_fb[0].post_fbo);
+    p_glClearColor(0, 0, 0, 0); p_glClear(GL_COLOR_BUFFER_BIT);
+    p_glBindFramebuffer(GL_READ_FRAMEBUFFER, old_fbo);
+    int dx = (side - oside) * g_scale;
+    p_glBlitFramebuffer(0, 0, ow, g_fb_h, dx, 0, dx + ow, g_fb_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    p_glDeleteTextures(1, &old_tex); p_glDeleteFramebuffers(1, &old_fbo);
+    g_fb[0].valid = 1; g_fb_shown = g_fb_latest = 0;
+}
+
 /* The largest 3D resolution this GPU can hold: widescreen up to 512 DS
  * pixels across, both screens 384 high in one texture. */
 static int max_scale(void) {
@@ -1213,7 +1233,7 @@ static void gl_render_(const Frame3D* f) {
         }
     }
     int side = f->width > 256 ? (f->width - 256) / 2 : 0;
-    if (side != g_wside) { free_fbs(); g_wside = side; make_fbs(); }   /* widescreen on/off: buffers of the new width */
+    if (side != g_wside) resize_fbs(side);                     /* widescreen on/off: buffers of the new width */
     g_half_w = (float)(256 + 2 * side) / 2.0f;
     uint16_t disp3d = IO16_(0x060);
     int textures_on = disp3d & 1;
@@ -1979,4 +1999,5 @@ int gl_read_3d(uint8_t* out, int* w, int* h) {
 /* Widescreen: which screen was composed wide last (0 top, 1 bottom, -1
  * none) and the DS pixels added each side. */
 int gl_wide_shown(int* side) { *side = g_wside; return g_wide_shown; }
+int gl_3d_ready(void) { return g_comp_has3d && g_fb_shown >= 0 && g_fb[g_fb_shown].valid; }
 void gl_set_hud_cut(int on) { g_cut = on != 0; }

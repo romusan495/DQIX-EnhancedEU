@@ -45,6 +45,7 @@ void gl_set_overlay(const uint8_t* rgba, int w, int h);   /* a picture over the 
 void gl_present(const GlPresent* v);
 uint8_t* gl_read_window(int w, int h);
 int gl_wide_shown(int* side);                         /* widescreen: the screen composed wide (0 top, 1 bottom, -1 none) */
+int gl_3d_ready(void);                                /* this frame's 3D is there to compose */
 void gl_set_hud_cut(int on);                          /* the next gl_compose(): the commands screen's card backdrops see-through (battle HUD, minimal windows) */
 uint8_t* gl_read_full(int* w, int* h);
 void gl_read_screens(uint32_t out[2][256 * 192]);

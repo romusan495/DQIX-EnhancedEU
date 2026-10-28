@@ -1215,17 +1215,18 @@ static void wide_update(int a_on_top) {
         for (int i = 0; i < 256 * 192 && blank; i += 7) if (px[i] & 0xFFFFFF) blank = 0;
         g_small_blank = blank;
     }
-    if (g_minimap) {   /* the minimap: is the game's 2D (a menu) under it? Then it fades out, and back once that's gone */
-        int under = 0;
-        if (which == 1 && g_comp_has3d) {
-            static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
-            int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
-            int x0 = c == 0 || c == 3 ? MINIMAP_GAP - S : 256 + S - SW[z] - MINIMAP_GAP, y0 = c < 2 ? MINIMAP_GAP : 192 - SH[z] - MINIMAP_GAP;   /* on the DS's picture (S more at the canvas' left) */
-            int n = 0, n2d = 0;
-            for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
-                for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) { n++; if ((g_comp_info[(y * 256 + x) * 4] & 3) == 0) n2d++; }
-            under = n > 0 && n2d * 20 > n;                       /* more than 5% */
-        }
+    if (g_minimap && which == 1 && g_comp_has3d) {   /* the minimap: is the game's 2D (a menu) under it? Then it fades out, and back once that's gone */
+        /* (only while it can show: no popping back over a shop's menu after its card) */
+        static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
+        int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
+        int x0 = c == 0 || c == 3 ? MINIMAP_GAP - S : 256 + S - SW[z] - MINIMAP_GAP, y0 = c < 2 ? MINIMAP_GAP : 192 - SH[z] - MINIMAP_GAP;   /* on the DS's picture (S more at the canvas' left) */
+        int n = 0, n2d = 0, nmix = 0;
+        for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
+            for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) {
+                int mode = g_comp_info[(y * 256 + x) * 4] & 3;
+                n++; n2d += mode == 0; nmix += mode == 2;
+            }
+        int under = n > 0 && (n2d * 20 > n || nmix * 8 > n);     /* more than 5%, or 12% of a see-through window (a shop's) */
         static int clear;                                         /* frames without 2D under it */
         clear = under ? 0 : clear + 1;
         if (under) g_mini_vis = fmaxf(0.0f, g_mini_vis - 1.0f / 6);
@@ -1381,6 +1382,12 @@ static void present_gl(void) {
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */
+    {   /* the 3D gone for a single frame in widescreen (a shop's menu after an item's
+         * card): the game's backdrop would flash (pink); the last picture stays */
+        static int held, side;
+        if (!held && (pow & 1) && gl_wide_shown(&side) >= 0 && !gl_3d_ready()) { held = 1; return; }
+        held = 0;
+    }
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
     gl_dump_hook();
