@@ -75,7 +75,7 @@ static inline uint16_t ext16(const uint8_t* p, uint32_t idx) { uint16_t v = 0; i
 #define PX_OPAQUE 0x10000u
 typedef struct { uint32_t col[256]; uint32_t src[256]; uint32_t tag[256]; int tags; uint8_t win[256]; int wins; uint8_t tint[256]; } BgLine;   /* raw 16-bit colour | PX_OPAQUE; src: where it came from (VRAM byte * 2 + high nibble); tag: HD text (hdtext.h); win: WIN_* (window styles); tint: g_hud_tint slot + 1 (a battle card's colour) */
 /* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite */
-typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; } ObjLine;
+typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; uint8_t mw[256]; } ObjLine;   /* mw: WIN_PANEL / WIN_LINE (modern windows made of sprites) */
 
 /* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
@@ -371,9 +371,71 @@ static int hd_sprite(Engine* e, int eng, int i, uint32_t disp, const uint8_t* ex
     return hdspr_hd[eng][i] = 1;
 }
 
+/* Modern windows made of sprites (the yes/no boxes): a frame of sprites in
+ * the windows' palette round a see-through panel sprite. At the frame's first
+ * line, each such window's rectangle is found from its white line (colour 10,
+ * its pixels joined); inside it, its sprites' pixels become the panel, their
+ * outer ones the line, and the frame's shading outside it is left out. */
+#define OBJ_WINS 16
+static int16_t g_objwin[2][OBJ_WINS][4];                            /* x0, y0, x1, y1 (inclusive) */
+static int g_objwin_n[2];
+static int obj_win_sprite(Engine* e, uint16_t a0, uint16_t a2) {   /* a plain 16-colour sprite in the windows' palette */
+    int mode = (a0 >> 10) & 3;
+    return !((a0 >> 8) & 1) && !((a0 >> 13) & 1) && mode < 2 && win_palette(e, 0x100 + (a2 >> 12) * 16u);
+}
+static void obj_windows(Engine* e, int eng) {
+    static uint8_t m[192][256];
+    static int16_t st[256 * 192][2];
+    uint32_t disp = R32(e, 0);
+    const uint8_t* oam = &g_oam[eng * 0x400];
+    g_objwin_n[eng] = 0;
+    memset(m, 0, sizeof m);
+    int any = 0;
+    for (int i = 0; i < 128; i++) {
+        uint16_t a0, a1, a2;
+        memcpy(&a0, oam + i * 8, 2); memcpy(&a1, oam + i * 8 + 2, 2); memcpy(&a2, oam + i * 8 + 4, 2);
+        if ((a0 & 0x200) || ((a0 >> 14) & 3) == 3 || !obj_win_sprite(e, a0, a2)) continue;
+        int shape = (a0 >> 14) & 3, sz = (a1 >> 14) & 3, w = obj_w[shape][sz], h = obj_h[shape][sz];
+        int ox = a1 & 0x1FF, oy = a0 & 0xFF;
+        if (ox >= 256) ox -= 512;
+        if (oy >= 192) oy -= 256;
+        for (int ly = 0; ly < h; ly++) for (int lx = 0; lx < w; lx++) {
+            int sx = ox + lx, sy = oy + ly;
+            if (sx < 0 || sx >= 256 || sy < 0 || sy >= 192) continue;
+            uint32_t src;
+            int tx = (a1 & 0x1000) ? w - 1 - lx : lx, ty = (a1 & 0x2000) ? h - 1 - ly : ly;
+            if (obj_index(e, disp, a2 & 0x3FF, 0, w, tx, ty, &src) == 10) { m[sy][sx] = 1; any = 1; }
+        }
+    }
+    if (!any) return;
+    for (int y0 = 0; y0 < 192; y0++) for (int x0 = 0; x0 < 256; x0++) {
+        if (m[y0][x0] != 1) continue;
+        int n = 0, bx0 = x0, by0 = y0, bx1 = x0, by1 = y0;
+        st[n][0] = (int16_t)x0; st[n][1] = (int16_t)y0; n++; m[y0][x0] = 2;
+        while (n) {
+            n--; int x = st[n][0], y = st[n][1];
+            if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+                int u = x + dx, v = y + dy;
+                if (u < 0 || u >= 256 || v < 0 || v >= 192 || m[v][u] != 1) continue;
+                m[v][u] = 2; st[n][0] = (int16_t)u; st[n][1] = (int16_t)v; n++;
+            }
+        }
+        if (bx1 - bx0 >= 8 && by1 - by0 >= 8 && g_objwin_n[eng] < OBJ_WINS) {
+            int16_t* r = g_objwin[eng][g_objwin_n[eng]++];
+            r[0] = (int16_t)bx0; r[1] = (int16_t)by0; r[2] = (int16_t)bx1; r[3] = (int16_t)by1;
+        }
+    }
+}
+
 static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
     uint32_t disp = R32(e, 0);
     const uint8_t* oam = &g_oam[eng * 0x400];
+    int modern = g_comp_gl && modern_windows();
+    static uint64_t found[2];                                       /* g_frame + 1: the windows found this frame */
+    if (found[eng] != g_frame + 1) { found[eng] = g_frame + 1; g_objwin_n[eng] = 0; if (modern) obj_windows(e, eng); }
+    if (!modern) g_objwin_n[eng] = 0;
+    memset(out->mw, 0, sizeof out->mw);
     const uint8_t* ext = (disp & 0x80000000u) ? ext_obj_pal(eng) : NULL;
     memset(out->col, 0, sizeof out->col);
     memset(out->prio, 4, sizeof out->prio);
@@ -443,6 +505,19 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 else col = pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + idx) * 2);
             }
             if (mode == 2) { if (opaque) out->win[sx] = 1; continue; }
+            int mw = 0;                                             /* modern: this pixel in a window of sprites */
+            if (g_objwin_n[eng] && mode < 2 && !c256 && obj_win_sprite(e, a0, a2)) {
+                uint32_t s2; uint8_t idx = obj_index(e, disp, tile, 0, w, tx, ty, &s2);
+                int in = -1;
+                for (int k = 0; k < g_objwin_n[eng] && in < 0; k++) { const int16_t* r = g_objwin[eng][k]; if (sx >= r[0] && sx <= r[2] && y >= r[1] && y <= r[3]) in = k; }
+                if (in < 0) { if (idx != 1 && (idx & 1) == 0) continue; }   /* (the frame's shading outside the line) */
+                else if (idx <= 1 || ((idx & 1) == 0 && idx <= 10)) {
+                    const int16_t* r = g_objwin[eng][in];
+                    mw = sx == r[0] || sx == r[2] || y == r[1] || y == r[3] ? WIN_LINE : WIN_PANEL;
+                    col = mw == WIN_LINE ? WIN_LINE_COL : palc(e, 0x100 + (a2 >> 12) * 16u, 1);
+                    opaque = 1;
+                }
+            }
             if (!opaque) {                                          /* clear pixel: still carries priority / mosaic */
                 if (!(out->col[sx] & PX_OPAQUE)) { out->prio[sx] = (uint8_t)prio; out->mos[sx] = (uint8_t)mosaic; }
                 continue;
@@ -453,6 +528,8 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 out->flag[sx] = mode == 3 ? (uint8_t)(0xC0 | ((a2 >> 12) + 1)) : mode == 1 ? 0x80 : 0x10;
                 out->mos[sx] = (uint8_t)mosaic;
                 out->src[sx] = objsrc;
+                out->mw[sx] = (uint8_t)mw;
+                if (mw) out->flag[sx] = mw == WIN_PANEL ? 0x80 : 0x10;   /* (the panel see-through, the line solid) */
             }
         }
     }
@@ -846,7 +923,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 }
             }
             v3 = v2; v2 = v1; v1 = v; front = L == 0 && bg_3d ? LAYER_3D : L >= 4 ? LAYER_OBJ : L;
-            win1 = L < 4 && (winl & (1 << L)) ? (L == paperL ? paperw : bgl[L].win[x]) : 0;
+            win1 = L >= 4 ? objl.mw[x] : (winl & (1 << L)) ? (L == paperL ? paperw : bgl[L].win[x]) : 0;
             pan1 = win1 == WIN_PANEL;
         }
         uint32_t ea = eva, eb = evb;
