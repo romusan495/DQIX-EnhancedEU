@@ -93,6 +93,7 @@ static int g_single;                                              /* one screen 
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
 static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
+static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -337,9 +338,8 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             small[0] = small[1] = small[2] = small[3] = 0;
             if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
                 float* q = v->piece[v->npiece++], w = (float)g_pop_win[2], h = (float)g_pop_win[3];
-                float k = fminf(1.0f, fminf(0.8f * v->cw / w, 0.8f * 192.0f / h));
                 q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
-                q[2] = w * k; q[3] = h * k; q[0] = (v->cw - q[2]) / 2; q[1] = (192 - q[3]) / 2;
+                q[2] = w * g_pop_at[2]; q[3] = h * g_pop_at[2]; q[0] = g_pop_at[0]; q[1] = g_pop_at[1];
             }
         }
         if (pop) {                                                /* first window: the field alone; second: the small screen, whole */
@@ -1371,6 +1371,44 @@ static void auto_scale(void) {
     if (++frames >= 30) { gl_render_set_scale(want); pending = frames = 0; }
 }
 
+/* Where the pop-up goes (g_pop_at): in the middle at 80%, unless that hides
+ * the game's menus or text on the field (2D in front of the 3D: g_comp_info,
+ * and the dialogue window, 3D: gl_dialog_box());
+ * then the place, as near the middle and as big (down to 55%) as hides least
+ * of them. It stays put until a place clearly better shows up. */
+static int g_pop_sum[193][257];                                   /* menu pixels above and left of each point of the DS's picture */
+static int g_pop_held;                                            /* g_pop_at is where the page was last frame */
+static float pop_cost(float x, float y, float k, float S, float w, float h, float k0) {
+    int a0 = (int)fmaxf(0, x - S), a1 = (int)fminf(256, x + w * k - S), b0 = (int)fmaxf(0, y), b1 = (int)fminf(192, y + h * k);   /* (canvas -> the DS's picture: S less) */
+    int n = a1 > a0 && b1 > b0 ? g_pop_sum[b1][a1] - g_pop_sum[b0][a1] - g_pop_sum[b1][a0] + g_pop_sum[b0][a0] : 0;
+    /* each step away from the middle, and each 5% smaller, counts as a few hidden pixels */
+    return (float)n + 2.0f * (fabsf(x + w * k / 2 - (128 + S)) + fabsf(y + h * k / 2 - 96)) + 400.0f * (k0 - k) / 0.05f;
+}
+static void pop_place(void) {
+    float S = (float)wide_side_target(), cw = 256 + 2 * S, w = (float)g_pop_win[2], h = (float)g_pop_win[3];
+    int side = 0, field = gl_wide_shown(&side) == 1 && g_comp_has3d, d[4], dlg = field && gl_dialog_box(d);
+    for (int y = 0; y < 192; y++)
+        for (int x = 0, row = 0; x < 256; x++) {
+            row += field && ((g_comp_info[(y * 256 + x) * 4] & 3) != 1 || (dlg && x >= d[0] && x < d[2] && y >= d[1] && y < d[3]));   /* (the dialogue window is 3D) */
+            g_pop_sum[y + 1][x + 1] = g_pop_sum[y][x + 1] + row;
+        }
+    float k0 = fminf(1.0f, fminf(0.8f * cw / w, 0.8f * 192.0f / h));
+    float bx = (cw - w * k0) / 2, by = (192 - h * k0) / 2, bk = k0, best = pop_cost(bx, by, bk, S, w, h, k0);
+    if (best > 0)
+        for (float k = k0; k >= 0.55f - 1e-3f; k -= 0.05f)
+            for (float y = 0; y + h * k <= 192.001f; y += 4)
+                for (float x = 0; x + w * k <= cw + 0.001f; x += 4) {
+                    float c = pop_cost(x, y, k, S, w, h, k0);
+                    if (c < best) { best = c; bx = x; by = y; bk = k; }
+                }
+    if (g_pop_held) {                                             /* where it was: still good enough? */
+        float px = g_pop_at[0], py = g_pop_at[1], pk = g_pop_at[2];
+        if (py + h * pk <= 192.5f && px + w * pk <= cw + 0.5f && pop_cost(px, py, pk, S, w, h, k0) <= best + 300.0f) return;
+    }
+    g_pop_at[0] = bx; g_pop_at[1] = by; g_pop_at[2] = bk;
+    g_pop_held = 1;
+}
+
 /* The top screen's page (top_page_mode() 1): which of its pixels are its
  * backdrop, left out of the pop-up (tagged 1 in the top byte, gl_set_top_cut()),
  * and the rest's bounds (g_pop_win). A backdrop of its own (the curtain behind
@@ -1378,6 +1416,7 @@ static void auto_scale(void) {
  * picture (an item's card) is cut into its parts by colour: the parchment
  * around them, and what touches the edge (the sky, the torn border), go. */
 static void pop_update(int a_on_top) {
+    if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
     g_pop_win[2] = 0;
     if (top_page_mode() != 1) return;
     enum { N = 256 * 192 };
@@ -1430,6 +1469,7 @@ static void pop_update(int a_on_top) {
     if (kept * 50 < N) return;                                    /* (nothing much left: not a page with windows) */
     for (int i = 0; i < N; i++) px[i] = (px[i] & 0xFFFFFF) | (bg[i] ? 1u << 24 : 0);
     g_pop_win[0] = x0; g_pop_win[1] = y0; g_pop_win[2] = x1 - x0 + 1; g_pop_win[3] = y1 - y0 + 1;
+    pop_place();
 }
 
 /* The map's markers (mapmarks.c) over the top screen, in whichever window

@@ -48,6 +48,7 @@ int gl_wide_shown(int* side);                         /* widescreen: the screen 
 int gl_3d_ready(void);                                /* this frame's 3D is there to compose */
 void gl_set_hud_cut(int on);                          /* the next gl_compose(): the commands screen's card backdrops see-through (battle HUD, minimal windows) */
 void gl_set_top_cut(int on);                          /* the next gl_compose(): the top screen's pixels tagged 1 (top byte) see-through (its pop-up) */
+int gl_dialog_box(int r[4]);                          /* the dialogue window on the last 3D frame: x0, y0, x1, y1 on the DS's picture; 0 when none */
 uint8_t* gl_read_full(int* w, int* h);
 void gl_read_screens(uint32_t out[2][256 * 192]);
 int gl_read_3d(uint8_t* out, int* w, int* h);

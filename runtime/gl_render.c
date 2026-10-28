@@ -622,6 +622,7 @@ static int g_wside, g_fb3_w;                                   /* widescreen: DS
 static int g_wide_shown = -1;                                  /* the screen composed wide last: 0 top, 1 bottom, -1 none */
 static int g_cut;                                               /* gl_set_hud_cut() */
 static int g_cut_top;                                           /* gl_set_top_cut() */
+static float g_dlg_box[4];                                      /* gl_dialog_box() */
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
@@ -1240,6 +1241,7 @@ static void gl_render_(const Frame3D* f) {
     int textures_on = disp3d & 1;
     /* vertices + batches */
     int nv = 0, nb = 0;
+    float dlg[4] = { 256, 192, 0, 0 };                           /* the dialogue window's panel, this frame (gl_dialog_box) */
     for (int i = 0; i < f->n; i++) {
         const Poly* p = f->order[i];
         int fmt = (p->teximg >> 26) & 7;
@@ -1279,19 +1281,21 @@ static void gl_render_(const Frame3D* f) {
             }
         }
         b.count = nv - b.first;
-        if (g_winstyle && !wire && ((p->attr >> 4) & 3) == 0) {     /* minimal windows (gpu2d.c): the dialogue window, drawn in 3D in front of all */
+        if (!wire && ((p->attr >> 4) & 3) == 0) {                   /* the dialogue window, drawn in 3D in front of all */
             int front = 1, black = 1;
-            float y0 = 192.0f, y1 = 0.0f;
+            float x0 = 256.0f, x1 = 0.0f, y0 = 192.0f, y1 = 0.0f;
             for (int k = 0; k < p->n; k++) {
                 if (p->v[k].zn > 1e-4f) front = 0;
                 if (p->v[k].r + p->v[k].g + p->v[k].b > 0.0f) black = 0;
+                x0 = fminf(x0, p->v[k].x); x1 = fmaxf(x1, p->v[k].x);
                 y0 = fminf(y0, p->v[k].y); y1 = fmaxf(y1, p->v[k].y);
             }
             if (y1 - y0 > 144.0f) black = 0;                        /* (not a fade over the whole screen) */
+            if (front && !textured && black && b.translucent) { dlg[0] = fminf(dlg[0], x0); dlg[1] = fminf(dlg[1], y0); dlg[2] = fmaxf(dlg[2], x1); dlg[3] = fmaxf(dlg[3], y1); }
             float* o = g_verts + (size_t)b.first * VTX_FLOATS;
-            if (front && !textured && black && b.translucent)       /* its panel: fainter */
+            if (g_winstyle && front && !textured && black && b.translucent)   /* minimal windows (gpu2d.c): its panel fainter */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);
-            else if (front && textured && fmt == 3 && g_tex_frame)  /* its frame: a thin grey edge */
+            else if (g_winstyle && front && textured && fmt == 3 && g_tex_frame)   /* its frame: a thin grey edge */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) { o[4] *= 0.4f; o[5] *= 0.4f; o[6] *= 0.4f; }
         }
         if (nb > 0) {
@@ -1303,6 +1307,7 @@ static void gl_render_(const Frame3D* f) {
         if (nb == g_bcap) { g_bcap = g_bcap ? g_bcap * 2 : 1024; g_batches = realloc(g_batches, sizeof(Batch) * (size_t)g_bcap); }
         g_batches[nb++] = b;
     }
+    memcpy(g_dlg_box, dlg, sizeof dlg);
 
     int target = g_fb_latest < 0 ? 0 : (g_fb_latest ^ 1);
     if (target == g_fb_shown) target ^= 1;
@@ -2003,3 +2008,8 @@ int gl_wide_shown(int* side) { *side = g_wside; return g_wide_shown; }
 int gl_3d_ready(void) { return g_comp_has3d && g_fb_shown >= 0 && g_fb[g_fb_shown].valid; }
 void gl_set_hud_cut(int on) { g_cut = on != 0; }
 void gl_set_top_cut(int on) { g_cut_top = on != 0; }
+int gl_dialog_box(int r[4]) {
+    if (g_dlg_box[2] <= g_dlg_box[0] || g_dlg_box[3] <= g_dlg_box[1]) return 0;
+    for (int i = 0; i < 4; i++) r[i] = (int)lroundf(g_dlg_box[i]);
+    return 1;
+}
