@@ -129,7 +129,8 @@ extern int g_winstyle;          /* Enhanced: windows like the DS (0), minimal (1
 extern int g_win_outline;       /* ...minimal: the commands screen's windows with their white line */
 extern int g_dlg_outline;       /* ...and the 3D screen's (the text box in battles) */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
-static int g_battle_speed = 1;  /* Modern > Battle speed: 1, 2 or 3 times as fast (not in a session) */
+static int g_battle_speed = 1;  /* Modern > Battle speed: 1 to 4 times as fast (not in a session) */
+static int g_battle_turn_only;  /* ...only while the turn plays out: choosing the commands at the usual pace */
 static int g_skip_intro = BOOTSKIP_LOGOS;   /* Modern > Start: skip the logos (1), and the opening movie (2) */
 static int g_all_options;       /* every option in the menus and on the keys (settings.ini all_options), else only the project's own setup */
 
@@ -582,7 +583,9 @@ static void settings_load(void) {
         else if (!strcmp(key, "farm_gold_target")) { long v = atol(val); if (v > 0 && v <= 9999999) g_farm_target = (int)v; }
         else if (!strcmp(key, "farm_fast_forward")) g_farm_fast = atoi(val) != 0;
         else if (!strcmp(key, "skip_intro")) { int v = atoi(val); if (v >= 0 && v <= 2) g_skip_intro = v; }
-        else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 3) g_battle_speed = v; }
+        else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 4) g_battle_speed = v; }
+        else if (!strcmp(key, "battle_speed_turn_only")) g_battle_turn_only = atoi(val) != 0;
+        else if (!strcmp(key, "battle_victory_auto")) g_battle_auto_victory = atoi(val) != 0;
         else if (!strcmp(key, "save_backups")) g_save_backups = atoi(val) != 0;
         else if (!strcmp(key, "autosave")) g_autosave = atoi(val) != 0;
         else if (!strcmp(key, "cheats")) cheats_from_list(val);
@@ -680,8 +683,12 @@ static void settings_save(void) {
     fprintf(f, "farm_fast_forward = %d\n", g_farm_fast);
     fprintf(f, "# Modern > Start: 0 the logos and the opening movie as on a DS, 1 skip the logos, 2 skip the opening movie too\n");
     fprintf(f, "skip_intro = %d\n", g_skip_intro);
-    fprintf(f, "# Modern > Battle speed: battles go 1, 2 or 3 times as fast (not while playing with friends)\n");
+    fprintf(f, "# Modern > Battle speed: battles go 1, 2, 3 or 4 times as fast (not while playing with friends);\n");
+    fprintf(f, "# turn_only 1: only while the turn plays out (the commands are chosen at the usual pace);\n");
+    fprintf(f, "# victory_auto 1: after a win, the messages turn their page by themselves (not after a level up): 0 or 1\n");
     fprintf(f, "battle_speed = %d\n", g_battle_speed);
+    fprintf(f, "battle_speed_turn_only = %d\n", g_battle_turn_only);
+    fprintf(f, "battle_victory_auto = %d\n", g_battle_auto_victory);
     fprintf(f, "# Modern > Save by itself every 10 minutes (on the field, while free to walk; not while playing with friends): 0 or 1\n");
     fprintf(f, "autosave = %d\n", g_autosave);
     fprintf(f, "# Game > Keep a copy of every save: the save as it was before each new one, in save-backups (the last 20): 0 or 1\n");
@@ -1402,6 +1409,26 @@ static void hud_update(int a_on_top) {
     if (n >= 1) g_hud_n = n;
 }
 
+/* Battles: someone's commands are on the commands screen, the game waits for
+ * the player (their panel is the tall one between the grey lines, as
+ * hud_update finds it; while the turn plays out every panel is short). Read
+ * from the commands screen's engine itself, so in every layout. */
+static int battle_commands_shown(void) {
+    const uint32_t* px = g_engine_out[1];                         /* in battles the 3D is on the top screen: engine B is the bottom one */
+    int y0 = -1;
+    for (int y = 0; y <= 192; y++) {
+        int n = 0;
+        if (y < 192) for (int x = 10; x < 120; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
+        if (y < 192 && n <= 100) { if (y0 < 0) y0 = y; continue; }
+        if (y0 >= 0 && y - y0 >= 50 && y - y0 <= 80) {             /* a band this tall: framed in white? */
+            int mid = (y0 + y) / 2;
+            for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) return 1;
+        }
+        y0 = -1;
+    }
+    return 0;
+}
+
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at
  * least 2x, at most what the GPU holds), so it is never stretched and the
  * extra detail smooths the edges. Changes after the size has stayed the same
@@ -1783,7 +1810,9 @@ static void menu_sync(void) {
     menu_check(MI_HINTS, g_hints); menu_enable(MI_HINTS, g_gl);
     menu_check(MI_CONFIRM_BOTTOM, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A);
     for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
-    for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
+    for (int i = 0; i < 4; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
+    menu_check(MI_BSPEED_TURN, g_battle_turn_only); menu_enable(MI_BSPEED_TURN, !session_requested() && g_battle_speed > 1);
+    menu_check(MI_BVICTORY, g_battle_auto_victory); menu_enable(MI_BVICTORY, !session_requested());
     menu_check(MI_SAVEBAK, g_save_backups);
     menu_check(MI_AUTOSAVE, g_autosave); menu_enable(MI_AUTOSAVE, !session_requested());
     for (int i = 0; i < cheats_count(); i++) {
@@ -2415,7 +2444,9 @@ static void do_action(int id) {
         controls_save();
         break;
     case MI_SKIP0: case MI_SKIP0 + 1: case MI_SKIP0 + 2: g_skip_intro = id - MI_SKIP0; break;
-    case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
+    case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: case MI_BSPEED1 + 3: g_battle_speed = id - MI_BSPEED1 + 1; break;
+    case MI_BSPEED_TURN: g_battle_turn_only = !g_battle_turn_only; break;
+    case MI_BVICTORY: g_battle_auto_victory = !g_battle_auto_victory; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
     case MI_AUTOSAVE: g_autosave = !g_autosave; break;
     case MI_FULL2: second_window_fullscreen(); break;
@@ -2947,6 +2978,14 @@ void frontend_frame(void) {
     uint64_t period = (uint64_t)(g_perf_freq / DS_FPS);
     int battle = party_in_battle();
     { static int was; if (battle != was) { LOG_INFO("battle %s\n", battle ? "begins" : "over"); was = battle; } }
+    {   /* ...only while the turn plays out: the usual pace from the moment someone's
+         * commands show, faster again once they have been gone a few frames */
+        static int gone = 1000;
+        int shown = battle && battle_commands_shown();
+        if (g_battle_turn_only && shown != (gone == 0)) LOG_INFO("battle: commands %s\n", shown ? "shown" : "gone");
+        gone = shown ? 0 : gone + (gone < 1000);
+        if (g_battle_turn_only && gone < 8) battle = 0;
+    }
     int speed = battle && g_battle_speed > 1 && !g_fast && !session_requested() ? g_battle_speed : 1;   /* Modern > Battle speed */
     sound_set_speed(speed);
     if (g_fast) {

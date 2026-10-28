@@ -49,6 +49,10 @@ int g_farm_stopped;
 /* the hero's experience (u32, in the hero's record): the game adds it, and
  * the gold, the moment the last monster falls, before the victory messages */
 #define HERO_EXP  (CHARS + 4 * CHAR_SIZE + 0x114)
+/* a member's level (u8): the vocation's now, and its entry in the table of
+ * every vocation's level (both seen going 1 -> 2 at a level up) */
+#define CHAR_LEVEL  0x13C
+#define CHAR_LEVEL2 0x757
 
 static uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, &g_main_ram[a & (MAIN_RAM_SIZE - 1)], 4); return v; }
 static uint16_t rd16(uint32_t a) { uint16_t v; memcpy(&v, &g_main_ram[a & (MAIN_RAM_SIZE - 1)], 2); return v; }
@@ -283,3 +287,40 @@ void farm_input(uint16_t* keys, int* touch) {
         else if (t >= 48 && t < 50) *keys = 1u << 0;      /* A */
     } else if (F.tick % 12 < 2) *keys = 1u << 0;
 }
+
+/* ---------------------------------------------------------------- the victory's messages */
+/* Modern > Battle speed > Victory messages go by themselves: once the battle
+ * is won (the game adds the experience or the gold the moment the last
+ * monster falls) the messages after it ("The funghoul is defeated", the
+ * experience, the gold, the items) turn their page by themselves, one a
+ * second, as if A were pressed. Not when someone goes up a level: the
+ * level up, its new skills and the Allocate Skill Points screen are the
+ * player's, so from there the buttons are left alone. Nothing else changes:
+ * the same messages, the same rewards. */
+int g_battle_auto_victory;
+
+void battle_victory_input(uint16_t* keys) {
+    static int in, won, done; static uint32_t exp0, gold0; static uint8_t lv0[N_CHARS][2];
+    if (!g_battle_auto_victory || g_farm_on || !party_in_battle()) { in = 0; return; }
+    if (!in) {                                             /* the battle begins */
+        in = 1; won = 0; done = 0;
+        exp0 = rd32(HERO_EXP); gold0 = rd32(GOLD);
+        for (int i = 0; i < N_CHARS; i++) {
+            lv0[i][0] = g_main_ram[CHARS + i * CHAR_SIZE + CHAR_LEVEL];
+            lv0[i][1] = g_main_ram[CHARS + i * CHAR_SIZE + CHAR_LEVEL2];
+        }
+        return;
+    }
+    if (done) return;
+    for (int i = 0; i < N_CHARS; i++)
+        if (g_main_ram[CHARS + i * CHAR_SIZE + CHAR_LEVEL] != lv0[i][0] || g_main_ram[CHARS + i * CHAR_SIZE + CHAR_LEVEL2] != lv0[i][1]) {
+            done = 1; LOG_INFO("battle: a level up: the messages wait for the player\n"); return;
+        }
+    if (!won) {
+        if (rd32(HERO_EXP) == exp0 && rd32(GOLD) <= gold0) return;
+        won = 1; LOG_INFO("battle: won\n");
+    }
+    if (*keys) { won = 1; return; }                        /* the player presses: the count starts again */
+    if (++won % 60 < 2 && won > 2) *keys = 1u << 0;        /* A, a short press each second */
+}
+

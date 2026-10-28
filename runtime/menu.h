@@ -33,7 +33,8 @@ enum {
     MI_MAPMARKS = 340, MI_MAPMARKS_OPENED, MI_MAPMONSTERS, MI_INTERIOR_MAPS,   /* the map: chests, pots and barrels marked, the monsters nearby, houses' plans (mapmarks.c) */
     MI_MAP_LEGEND = 345,                                                /* the map: a legend of its marks (mapmarks.c) */
     MI_HINTS = 346, MI_CONFIRM_BOTTOM,                                  /* the game's DS buttons as the player's own (hints.c); the controller's A on its bottom button */
-    MI_BSPEED1 = 350,                                                   /* battle speed: normal, 2x, 3x (+0..2) */
+    MI_BSPEED1 = 350,                                                   /* battle speed: normal, 2x, 3x, 4x (+0..3) */
+    MI_BSPEED_TURN = 355, MI_BVICTORY,                                  /* ...only while the turn plays out; the victory's messages by themselves */
     MI_SAVEBAK = 360,                                                   /* keep a copy of every save (card.c) */
     MI_AUTOSAVE = 365,                                                  /* Modern > Save by itself every 10 minutes (autosave.c) */
     MI_CHEATS_HELP = 370,
