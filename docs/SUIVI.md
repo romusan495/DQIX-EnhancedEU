@@ -13,13 +13,13 @@ jour : 2026-10-28 (audit du cahier des charges, `main` = `19741c6`, v31.9).
 | Fiches du haut en pop-up, magasins sur un écran | Dev | [Dev] Fiches en pop-up au centre | PR #42, #44 | fusionné (v31.9) | — | Boîte description magasin : fin de fusion dans ce thread |
 | Cadre moderne sur toutes les fenêtres (+ fiches, confirmations, chargements du § 5.2) | Graph | [Graph] Cadre moderne sur toutes les fenêtres | `claude/project-thread-r80vbi` | en cours | PR #44 | Captures, accord de Romuald |
 | Police unique sans noms coupés | Langues | [Langues] Police unique sans noms coupés | — | en cours | — | Compte rendu du thread |
-| Menu d'options dans le jeu (Échap / bouton PS) | Dev | [Coord] Audit et feuille de route | PR #33 (`claude/project-thread-9e00md`) | en revue | — | `main` fusionné dedans (commit `7e47b35`, local : l'envoi sur la branche d'un autre fil a été refusé), testé EU + USA ; à pousser puis fusionner avec Romuald |
-| Tests automatiques réparés, test de fumée `tests/smoke/run.py` | Dev | [Coord] Audit et feuille de route | PR #45 | en revue | — | Revue, accord de Romuald |
-| Mise à jour de ce suivi (audit, feuille de route, idées) | Intégration | [Coord] Audit et feuille de route | PR #45 | en revue | — | Revue, accord de Romuald |
+| Menu d'options dans le jeu (Échap / bouton PS), puis style moderne | Dev | [Coord] Audit et feuille de route | PR #33, PR suivante | fusionné (#33 `e17a0dd`) ; style moderne en revue | — | — |
+| Tests automatiques réparés, test de fumée `tests/smoke/run.py` | Dev | [Coord] Audit et feuille de route | PR #45 | fusionné | — | — |
+| Mise à jour de ce suivi (audit, feuille de route, idées) | Intégration | [Coord] Audit et feuille de route | PR #45 | fusionné | — | — |
 | Combats plus lisibles et plus rapides | Dev | [Dev] Combats plus lisibles et plus rapides | `claude/project-thread-ep4nol` | en cours | — | Sans toucher aux boîtes de combat |
 | Inventaire et comparaison d'équipement | Dev | [Dev] Inventaire et comparaison d'équipement | — | en cours | — | Étude du sac en RAM |
-| Alchimie, collections et cartes au trésor (carnet, touche J) | Dev | [Dev] Alchimie, collections et cartes au trésor | `claude/project-thread-vbq30f` | en cours | — | — |
-| Journal des quêtes et progression | Dev | [Dev] Journal des quêtes et progression | — | en cours | — | — |
+| Alchimie, collections et cartes au trésor (onglets du Journal) | Dev | [Dev] Alchimie, collections et cartes au trésor | `claude/project-thread-vbq30f` | en cours | Journal | Ajoute ses onglets au Journal du fil Quêtes |
+| Journal (onglets quêtes, progression ; alchimie et collections ajoutent les leurs) | Dev | [Dev] Journal des quêtes et progression | `claude/project-thread-utz7dx` | en cours | — | Un seul Journal, propriétaire = ce fil |
 | Boutons manette à l'écran, légende de la carte | Dev | [Dev] Boutons manette et légende de la carte | `claude/project-thread-g6uxea` | en cours | — | — |
 | Effets visuels, contrôle des packs de textures HD | Graph | [Graph] Effets visuels et contrôle des textures HD | — | en cours | — | — |
 | Menus PC en français, accessibilité | Langues | [Langues] Menus PC en français et accessibilité | `claude/project-thread-7yyjwb` | en cours | PR #33 | Rebaser après la fusion de #33 |
@@ -27,19 +27,19 @@ jour : 2026-10-28 (audit du cahier des charges, `main` = `19741c6`, v31.9).
 | BUILD : « cmp: commande introuvable » (`tools/build-game.sh`) | Intégration | — | — | à faire | — | Installer `diffutils` dans MSYS2 ou éviter `cmp` ; le build réussit quand même |
 
 ### Fichiers partagés touchés par les fils en cours (2026-10-28 soir)
-Ordre de fusion conseillé : #33 d'abord (elle réécrit `menu_win32.c`), puis les
-autres rebasés un par un. Conflits probables signalés.
+#33 est fusionnée : chaque fil rebase sur `main` avant sa PR, et les PR passent
+une par une. Conflits probables signalés.
 
 | Fichier | Fils |
 |---|---|
-| `runtime/frontend_sdl.c` | #33, Boutons manette, Cadre moderne, Menus en français, Alchimie/carnet, Combats |
-| `runtime/menu_win32.c`, `runtime/menu.h` | #33, Boutons manette, Cadre moderne, Menus en français, Alchimie/carnet, Combats |
-| `runtime/gl_render.c` (`.h`) | #33 (`gl_set_menu`), Boutons manette (3e overlay), Alchimie/carnet (`gl_set_panel`) : mêmes lignes, à accorder ; Cadre moderne ; Combats si besoin |
-| `runtime/controls.c` / `.h` | #33, Boutons manette, Menus en français |
-| `build.mk` | #33 (`gamemenu.c`), Menus en français (`uitext.c`), Alchimie/carnet (`journal.c`) |
+| `runtime/frontend_sdl.c` | Boutons manette, Cadre moderne, Menus en français, Journal (Quêtes + Alchimie), Combats, menu moderne |
+| `runtime/menu_win32.c`, `runtime/menu.h` | Boutons manette, Cadre moderne, Menus en français, Journal, Combats |
+| `runtime/gl_render.c` (`.h`) | menu moderne (`gl_set_menu_box`, `draw_menu`), Boutons manette (3e overlay), Journal (calque) : mêmes lignes de `gl_present`, à accorder ; Cadre moderne ; Combats si besoin |
+| `runtime/controls.c` / `.h` | Boutons manette, Menus en français, Journal |
+| `build.mk` | Menus en français (`uitext.c`), Journal (`journal.c`) |
 | `runtime/gpu2d.c` | Cadre moderne |
 | `tools/build-game.sh`, `build-windows.sh` | Menus en français (copie de `lang/*.txt`) |
-| `runtime/mapmarks.c` | Boutons manette (légende) |
+| `runtime/mapmarks.c` | Boutons manette (légende), Journal (lecteurs de la ROM rendus publics) |
 
 Terminé depuis le 21/10 (détail dans `release-notes/v31.*.md`) : écran unique
 #2, réglages par défaut #15, mini-carte et suppression des dispositions #21 #23
