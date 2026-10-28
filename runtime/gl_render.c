@@ -351,7 +351,20 @@ static const char* FS_MOVIE =
 static const char* FS_COPY =
     "#version 330 core\n"
     "in vec2 v_uv; out vec4 o_color; uniform sampler2D u_src;\n"
-    "void main() { o_color = texture(u_src, v_uv); }\n";
+    /* u_mode (draw_pieces): 1 dark letters on a light page become light letters on
+     * nothing (premultiplied); 2 no picture: a window of the minimal style,
+     * u_px its size and u_line one DS pixel, in window pixels */
+    "uniform int u_mode; uniform vec2 u_px; uniform float u_line;\n"
+    "void main() {\n"
+    "  if (u_mode == 2) {\n"
+    "    vec2 p = v_uv * u_px; float d = min(min(p.x, p.y), min(u_px.x - p.x, u_px.y - p.y)) / u_line;\n"
+    "    o_color = d < 0.6 ? vec4(vec3(0.08), 0.8) : d < 1.6 ? vec4(vec3(0.5), 1.0) : vec4(0.0, 0.0, 0.0, 0.55); return;\n"
+    "  }\n"
+    "  vec4 c = texture(u_src, v_uv);\n"
+    "  if (u_mode == 1) { float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114)), t = smoothstep(0.52, 0.32, L) * c.a;\n"
+    "    o_color = vec4(vec3(0.93) * t, t); return; }\n"
+    "  o_color = c;\n"
+    "}\n";
 
 /* Showing the screens in the window: exact pixels, or the DS Lite screen
  * (its LCD colours, pixel grid, backlight), optionally inside a drawn DS Lite.
@@ -1838,8 +1851,12 @@ static void draw_pieces(const GlPresent* v, GLuint src) {
     }
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
+    GLint loc_mode = p_glGetUniformLocation(prog_copy, "u_mode");
+    p_glUniform1f(p_glGetUniformLocation(prog_copy, "u_line"), v->sc);
     p_glBindVertexArray(vao_quad);
-    if (g_cut || g_cut_top || g_split) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
+    int restyled = 0;
+    for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) restyled |= v->piece[i][9] > 0.5f;
+    if (g_cut || g_cut_top || g_split || restyled) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
     for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) {
         const float* q = v->piece[i];
         if (q[2] <= 0 || q[3] <= 0) continue;
@@ -1851,8 +1868,15 @@ static void draw_pieces(const GlPresent* v, GLuint src) {
         /* the screen in the composed picture: the top one in the upper half, the DS's 256 columns after the sides */
         float vtop = ((int)(q[4] + 0.5f) & 1) ? 0.5f : 1.0f;
         p_glUniform4f(loc_uv, ((float)g_wside + q[5]) / W, vtop - (q[6] + q[8]) / 384.0f, q[7] / W, q[8] / 384.0f);
+        int mode = (int)(q[9] + 0.5f);
+        p_glUniform1i(loc_mode, mode);
+        if (mode == 2) {
+            p_glUniform4f(loc_uv, 0, 0, 1, 1);
+            p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_px"), q[2] * v->sc, q[3] * v->sc);
+        }
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
     }
+    p_glUniform1i(loc_mode, 0);
     p_glDisable(GL_BLEND);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 }

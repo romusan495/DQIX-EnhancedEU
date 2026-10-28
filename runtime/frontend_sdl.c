@@ -336,11 +336,13 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (page == 1 && g_shop && !second) {
             /* a shop's buy list (the field's screen): one column in the middle,
              * the list (each item's icon before its name, mapmarks_shop()),
-             * the item's description from its card on the top screen, then
+             * the item's description (the text of its card on the top screen,
+             * in a window of the minimal style as wide as the list's), then
              * the panels under the list (who can equip it, how many held);
              * over the field, which stays whole */
             small[0] = small[1] = small[2] = small[3] = 0;
-            float L = (float)g_shop_cut, dw = (float)g_pop_win[2], dh = (float)g_pop_win[3], gap = 3;
+            enum { TX = 60, TY = 33, TW = 113, TH = 58, PAD = 3 };       /* the card's text, beside its icon */
+            float L = (float)g_shop_cut, dh = g_pop_win[2] ? TH + 2 * PAD : 0, gap = 3;
             float k = 192.0f / (192.0f + (dh > 0 ? dh + 2 * gap : 0)), x = (v->cw - 256 * k) / 2;
             float* q = v->piece[v->npiece++];
             q[4] = 3; q[5] = 0; q[6] = 0; q[7] = 256; q[8] = L;
@@ -349,9 +351,11 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             q[4] = 3; q[5] = 0; q[6] = L; q[7] = 256; q[8] = 192 - L;
             q[0] = x; q[1] = 192 - (192 - L) * k; q[2] = 256 * k; q[3] = (192 - L) * k;
             if (dh > 0) {
-                q = v->piece[v->npiece++];
-                q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = dw; q[8] = dh;
-                q[0] = (v->cw - dw * k) / 2; q[1] = (L + gap) * k; q[2] = dw * k; q[3] = dh * k;
+                q = v->piece[v->npiece++];                        /* the window */
+                q[9] = 2; q[0] = x + 8 * k; q[1] = (L + gap) * k; q[2] = 240 * k; q[3] = dh * k;
+                q = v->piece[v->npiece++];                        /* its text */
+                q[4] = 0; q[5] = TX; q[6] = TY; q[7] = TW; q[8] = TH; q[9] = 1;
+                q[0] = x + 18 * k; q[1] = (L + gap + PAD) * k; q[2] = TW * k; q[3] = TH * k;
             }
             v->icons[0] = x; v->icons[1] = 0; v->icons[2] = 256 * k; v->icons[3] = 192 * k;
         } else if (page == 1) {
