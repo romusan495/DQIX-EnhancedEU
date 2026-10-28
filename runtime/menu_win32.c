@@ -189,6 +189,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(bsp, MI_BSPEED1, L"&Normal");
     item(bsp, MI_BSPEED1 + 1, L"&2x");
     item(bsp, MI_BSPEED1 + 2, L"&3x");
+    item(modern, MI_AUTOSAVE, L"Sa&ve by itself every 10 minutes (on the field, as at a church)");
     sep(modern);
     HMENU farm = sub(modern, L"Farm &gold by itself");
     item(farm, MI_FARM, L"&Farm here now\tCtrl+G");
