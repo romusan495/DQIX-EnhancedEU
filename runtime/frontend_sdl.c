@@ -307,9 +307,10 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
-        int top_menu = g_minimap && which == 0 && !pop && g_top_menu && in_adventure() && !g_hud_n && !g_hud_win[2];
+        int top_menu = g_minimap && which == 0 && !pop && g_top_menu && in_adventure() && !g_hud_n && !g_hud_win[2] && !g_small_blank;
         int no3d_menu = g_minimap && which < 0 && !pop && in_adventure() && mapmarks_top_page() && !g_small_blank;
-        if ((g_minimap && which == 1 && !pop && mapmarks_top_page()) || top_menu || no3d_menu) {
+        int card = g_minimap && which == 1 && !pop && mapmarks_top_page() && !g_small_blank;   /* (a cutscene: the other screen black) */
+        if (card || top_menu || no3d_menu) {
             /* an item's card on the top screen (Items, Equipment...), a menu
              * with its 3D model there (the monster list), or menus on both
              * screens without 3D (skill points): both screens whole, side by
@@ -326,10 +327,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             else small[0] = small[1] = small[2] = small[3] = 0;
         }
         if (which == 0 && (g_hud_n > 0 || g_hud_win[2]) && !g_peek && !(g_small_hide && !pop)) {
-            /* Battle HUD: the commands screen cut into its panels, over the 3D,
-             * stacked in the bottom left at half size: the one whose turn it
-             * is (the tall panel, with the commands) on top, the others below
-             * it in the party's order.
+            /* Battle HUD: the commands screen cut into its panels, over the 3D.
+             * The party's panels in a row along the top; the one whose turn it
+             * is (the tall panel, with the commands) bigger in the bottom left.
              * The map window keeps the last map (gl_hold() in present_gl). */
             if (second) {
                 if (pop) { v->held = 1; v->bot[0] = v->bot[1] = v->bot[2] = v->bot[3] = 0; v->top[0] = v->top[1] = 0; v->top[2] = 256; v->top[3] = 192; v->topx[0] = (float)side; v->topx[1] = 256; v->front = 0; }
@@ -340,19 +340,19 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[4] = 1; q[5] = (float)g_hud_win[0]; q[6] = (float)g_hud_win[1]; q[7] = w; q[8] = h;
                     q[2] = w * kw; q[3] = h * kw; q[0] = (v->cw - q[2]) / 2; q[1] = 6;
                 }
-                const float k = 0.5f, gap = 2;
-                float total = 0;
-                for (int i = 0; i < g_hud_n; i++) total += (float)(g_hud_band[i][1] - g_hud_band[i][0]) * k + gap;
-                float y = 192 - total;
-                for (int pass = 0; pass < 2; pass++)              /* the tall one first */
-                    for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
-                        float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]);
-                        if ((h >= 50) == pass) continue;
-                        float* q = v->piece[v->npiece++];
-                        q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
-                        q[0] = 4; q[1] = y; q[2] = 244 * k; q[3] = h * k;
-                        y += q[3] + gap;
+                int nrow = 0;
+                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50;
+                float slot = (v->cw - 4) / (float)(nrow > 4 ? nrow : 4), k = fminf((slot - 2) / 244.0f, 0.5f);
+                float x = (v->cw - slot * (float)nrow) / 2;               /* the row centred */
+                for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
+                    float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]), *q = v->piece[v->npiece++];
+                    q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
+                    if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
+                    else {                                                /* at most half the picture's height */
+                        float kb = fminf(0.62f, 110.0f / h);
+                        q[2] = 244 * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
                     }
+                }
             }
         }
     } else if (two || single) {
@@ -1215,17 +1215,18 @@ static void wide_update(int a_on_top) {
         for (int i = 0; i < 256 * 192 && blank; i += 7) if (px[i] & 0xFFFFFF) blank = 0;
         g_small_blank = blank;
     }
-    if (g_minimap) {   /* the minimap: is the game's 2D (a menu) under it? Then it fades out, and back once that's gone */
-        int under = 0;
-        if (which == 1 && g_comp_has3d) {
-            static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
-            int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
-            int x0 = c == 0 || c == 3 ? MINIMAP_GAP - S : 256 + S - SW[z] - MINIMAP_GAP, y0 = c < 2 ? MINIMAP_GAP : 192 - SH[z] - MINIMAP_GAP;   /* on the DS's picture (S more at the canvas' left) */
-            int n = 0, n2d = 0;
-            for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
-                for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) { n++; if ((g_comp_info[(y * 256 + x) * 4] & 3) == 0) n2d++; }
-            under = n > 0 && n2d * 20 > n;                       /* more than 5% */
-        }
+    if (g_minimap && which == 1 && g_comp_has3d) {   /* the minimap: is the game's 2D (a menu) under it? Then it fades out, and back once that's gone */
+        /* (only while it can show: no popping back over a shop's menu after its card) */
+        static const int SW[3] = { 64, 85, 128 }, SH[3] = { 48, 64, 96 };
+        int z = g_small_size < 0 || g_small_size > 2 ? 1 : g_small_size, c = g_small_corner & 3, S = wide_side_target();
+        int x0 = c == 0 || c == 3 ? MINIMAP_GAP - S : 256 + S - SW[z] - MINIMAP_GAP, y0 = c < 2 ? MINIMAP_GAP : 192 - SH[z] - MINIMAP_GAP;   /* on the DS's picture (S more at the canvas' left) */
+        int n = 0, n2d = 0, nmix = 0;
+        for (int y = y0 > 0 ? y0 : 0; y < y0 + SH[z] && y < 192; y += 2)
+            for (int x = x0 > 0 ? x0 : 0; x < x0 + SW[z] && x < 256; x += 2) {
+                int mode = g_comp_info[(y * 256 + x) * 4] & 3;
+                n++; n2d += mode == 0; nmix += mode == 2;
+            }
+        int under = n > 0 && (n2d * 20 > n || nmix * 8 > n);     /* more than 5%, or 12% of a see-through window (a shop's) */
         static int clear;                                         /* frames without 2D under it */
         clear = under ? 0 : clear + 1;
         if (under) g_mini_vis = fmaxf(0.0f, g_mini_vis - 1.0f / 6);
@@ -1270,11 +1271,12 @@ static void hud_update(int a_on_top) {
     }
     if (which != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the bottom screen's engine */
-    int sep[192], nsep = 0;
+    int sep[192], cut[192], nsep = 0;                             /* cut: a line the list's description box covers on the right (Spells, Items...) */
     for (int y = 0; y < 192; y++) {
-        int n = 0;
-        for (int x = 10; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
-        sep[y] = n > 200; nsep += sep[y];
+        int n = 0, nr = 0;
+        for (int x = 10; x < 120; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
+        for (int x = 130; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) nr++;
+        sep[y] = n > 100; cut[y] = sep[y] && nr < 50; nsep += sep[y] && !cut[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
         int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
@@ -1295,10 +1297,26 @@ static void hud_update(int a_on_top) {
         /* a member's panel: 30-45 rows (the one whose turn it is: up to 80), framed in white */
         int h = y - y0, mid = (y0 + y) / 2, framed = 0;
         for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) framed = 1;
+        if (!framed && n == 0) continue;                          /* above the panels (while the turn plays out): the backdrop */
+        if (!framed && n >= 2) break;                             /* below them: nothing more */
         if (n == 8 || h < 30 || h > 80 || !framed || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
-    if (n >= 2) g_hud_n = n;
+    if (n < 2) return;
+    /* a list open (Spells, Items...): its description box covers the right of
+     * the panels under the one whose turn it is. Those and the tall one in
+     * one piece, as on the DS; the others in the row. */
+    int a = -1, b = -1;
+    for (int i = 0; i < n; i++) if (g_hud_band[i][1] - g_hud_band[i][0] >= 50) a = b = i;
+    for (int i = 0; a >= 0 && i + 1 < n; i++)
+        for (int y = g_hud_band[i][1]; y < g_hud_band[i + 1][0]; y++)
+            if (cut[y]) { if (i < a) a = i; if (i + 1 > b) b = i + 1; break; }
+    if (a >= 0 && b > a) {
+        g_hud_band[a][1] = g_hud_band[b][1];
+        for (int i = b + 1; i < n; i++) { g_hud_band[i - (b - a)][0] = g_hud_band[i][0]; g_hud_band[i - (b - a)][1] = g_hud_band[i][1]; }
+        n -= b - a;
+    }
+    if (n >= 1) g_hud_n = n;
 }
 
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at
@@ -1364,6 +1382,12 @@ static void present_gl(void) {
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */
+    {   /* the 3D gone for a single frame in widescreen (a shop's menu after an item's
+         * card): the game's backdrop would flash (pink); the last picture stays */
+        static int held, side;
+        if (!held && (pow & 1) && gl_wide_shown(&side) >= 0 && !gl_3d_ready()) { held = 1; return; }
+        held = 0;
+    }
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
     gl_dump_hook();
