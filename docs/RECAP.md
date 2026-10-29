@@ -3,8 +3,9 @@
 État au 29 octobre 2026 (`main` = `780f520`, dernière version publiée v31.10).
 Écrit pour un deuxième développeur qui rejoint le projet avec son propre Claude.
 Ce document se lit par un humain comme par un Claude : chaque section est
-autonome, et les sections 10 à 12 expliquent comment les deux équipes Claude
-travaillent ensemble.
+autonome ; les sections 11 et 12 expliquent comment les deux équipes Claude
+travaillent ensemble, et la section 13 à quoi ce dépôt servira pour le futur
+remake du jeu sous Godot.
 
 Sommaire :
 1. Le projet en une page
@@ -19,7 +20,8 @@ Sommaire :
 10. Chantiers en cours et pistes restantes
 11. Coordonner deux équipes Claude sur le même dépôt
 12. Mise en place pour le deuxième développeur (pas à pas)
-13. Questions encore ouvertes
+13. Le projet remake (Godot) : à quoi sert ce dépôt
+14. Questions encore ouvertes
 
 ---
 
@@ -44,6 +46,9 @@ entrées) avec SDL2 et OpenGL.
 - Vision cible : un **cahier des charges** de modernisation (28/10) avec des
   priorités P0 stabilité, P1 écran unique / interface / graphismes, P2 confort,
   P3 contenu. Le multijoueur et le réseau sont **hors périmètre**.
+- Et après : quand la décompilation du jeu sera finie, le jeu sera **réécrit
+  sous Godot**, sur un seul écran et pensé pour le PC. Ce dépôt sert de banc
+  d'essai et de référence pour ce remake (section 13).
 
 Chiffres utiles : 14 815 fonctions ARM9 et 962 fonctions ARM7 recompilées ;
 environ 9 % des symboles ont un vrai nom (carte de `dqix-decomp`) ; 59 PR
@@ -535,14 +540,50 @@ Commits, branches et PR en anglais.
 
 ---
 
-## 13. Questions encore ouvertes
+## 13. Le projet remake (Godot) : à quoi sert ce dépôt
+
+Précisé par Romuald le 29/10. Le but final est un **remake** : quand la
+**décompilation** du jeu sera terminée, le jeu sera **réécrit avec le moteur
+Godot**, pensé dès le départ pour le PC, sur **un seul écran**, comme si le
+second écran de la DS n'avait jamais existé.
+
+Ce dépôt (le portage recompilé) est donc **le banc d'essai et la référence**
+du remake. Tout ce qui s'y fait doit pouvoir resservir. Concrètement, ce que
+le remake récupérera :
+
+| Ce qui est appris ici | Où le trouver | Utilité pour le remake |
+|---|---|---|
+| Les choix d'interface validés par Romuald (écran unique, carte en haut à droite, fiches en pop-up, HUD de combat, style Moderne, Journal, indications de boutons) | sections 6 et 7, captures, `release-notes/` | Cahier des charges de l'interface Godot, déjà testé en jeu |
+| Ce qui se trouvait sur l'écran du haut et où on l'a mis (carte, fiches, panneaux de combat, magasins) | `frontend_sdl.c` (`hud_update`, `pop_update`, `shop_update`), `mapmarks.c` | Inventaire des écrans à redessiner pour un seul écran |
+| Les données du jeu et leur format (recettes, quêtes, objets, compétences, collisions des cartes, rangs des coffres, films) | `mapmarks.c`, `romdata.h`, `journal*.c`, mémoire du projet | Lecteurs de données réutilisables pour importer les ressources dans Godot |
+| Les adresses RAM (personnages, sac, quêtes, or, vocations) | section 3, `cheats.c`, `journal*.c` | Recoupement avec la décompilation, tests de fidélité |
+| Les règles permanentes (pas de réseau, boîtes de combat, pas de données du jeu publiées) | section 6 | Restent valables, sauf décision contraire de Romuald |
+| Le test de fumée et les recettes d'entrées (jeu déterministe) | `tests/smoke/` | Comparer le remake au jeu d'origine scène par scène |
+
+Conséquences pour les deux équipes, dès maintenant :
+- **Documenter chaque décision d'interface** (pourquoi, capture avant/après)
+  dans la PR et dans `docs/SUIVI.md` : c'est la matière première du remake.
+- **Garder la lecture des données du jeu séparée de l'affichage** (comme
+  `romdata.h`), pour pouvoir la réutiliser ailleurs.
+- **Penser « PC d'abord »** : une nouveauté se conçoit pour un seul écran,
+  clavier, souris et manette, pas comme un réarrangement des deux écrans DS.
+- Le remake vivra dans **un dépôt séparé**, créé le moment venu. Il sera
+  **privé ou sans données du jeu** : du code réécrit à partir de la
+  décompilation et les ressources du jeu restent dérivés du jeu et ne se
+  publient pas. Seul un lanceur qui lit la ROM du joueur, comme ici, peut être
+  public. À décider avec Romuald avant de commencer.
+- La décompilation de référence est celle de **dqix-decomp** (domaine public),
+  dont vient déjà `config/usa/arm9`. Environ 9 % des fonctions y ont un nom
+  aujourd'hui : nommer les fonctions utiles au passage aide les deux projets.
+
+---
+
+## 14. Questions encore ouvertes
 
 - ~~Accès au dépôt~~ : réglé le 29/10, le deuxième développeur est
   **collaborateur** du dépôt.
-- **Le « remake »** : s'il s'agit d'une suite de ce dépôt (nouvelles
-  fonctionnalités, réécriture progressive du code du jeu), tout ce qui précède
-  s'applique. S'il s'agit d'un projet séparé (par exemple une réécriture complète
-  sous un autre moteur), mieux vaut un dépôt à part qui se sert de celui-ci comme
-  référence ; attention alors : du code du jeu réécrit à la main reste dérivé du
-  jeu et ne doit pas être publié.
+- ~~Le « remake »~~ : réglé le 29/10, voir la section 13 (réécriture Godot
+  après la décompilation, dans un dépôt séparé ; ce dépôt sert de référence).
+- La décompilation : qui la mène (dqix-decomp, le 2e développeur, une équipe
+  Claude ?) et à quel rythme ? À préciser entre Romuald et le 2e développeur.
 - ~~Ajouter ce récapitulatif au dépôt~~ : fait le 29/10 (`docs/RECAP.md`).
