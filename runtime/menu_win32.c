@@ -50,7 +50,7 @@ static int add(Menu parent, int kind, int id, const wchar_t* w, const char* utf8
     HMENU pm = parent ? g_hm[parent] : g_bar;
     wchar_t buf[200];
     if (!w && utf8 && MultiByteToWideChar(CP_UTF8, 0, utf8, -1, buf, 200)) w = buf;
-    if (pm) {
+    if (pm && i > 0) {                                /* (node 0 is the bar itself, not one of its menus) */
         if (kind == MENU_SUB) { g_hm[i] = CreatePopupMenu(); AppendMenuW(pm, MF_POPUP, (UINT_PTR)g_hm[i], w); }
         else if (kind == MENU_SEP) AppendMenuW(pm, MF_SEPARATOR, 0, NULL);
         else AppendMenuW(pm, kind == MENU_LABEL ? MF_STRING | MF_GRAYED : MF_STRING, (UINT_PTR)id, w);
