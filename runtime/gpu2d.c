@@ -8,6 +8,7 @@
 #include <string.h>
 #include "nds.h"
 #include "hdtext.h"
+#include "farm.h"
 #include "hdsprite.h"
 extern int g_comp_gl;                                           /* (below) GL composition: the 3D and HD text on the GPU */
 
@@ -75,7 +76,7 @@ static inline uint16_t ext16(const uint8_t* p, uint32_t idx) { uint16_t v = 0; i
 #define PX_OPAQUE 0x10000u
 typedef struct { uint32_t col[256]; uint32_t src[256]; uint32_t tag[256]; int tags; uint8_t win[256]; int wins; uint8_t tint[256]; } BgLine;   /* raw 16-bit colour | PX_OPAQUE; src: where it came from (VRAM byte * 2 + high nibble); tag: HD text (hdtext.h); win: WIN_* (window styles); tint: g_hud_tint slot + 1 (a battle card's colour) */
 /* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite */
-typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; uint8_t mw[256]; } ObjLine;   /* mw: WIN_PANEL / WIN_LINE (modern windows made of sprites) */
+typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; uint8_t mw[256]; uint32_t tag[256]; int tags; } ObjLine;   /* mw: WIN_PANEL / WIN_LINE (modern windows made of sprites); tag: HD text (letters drawn into sprites: messages, name plates) */
 
 /* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
@@ -475,6 +476,11 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
     if (found[eng] != g_frame + 1) { found[eng] = g_frame + 1; g_objwin_n[eng] = 0; if (modern) obj_windows(e, eng); }
     if (!modern) g_objwin_n[eng] = 0;
     memset(out->mw, 0, sizeof out->mw);
+    static uint64_t battle_at; static int battle;                   /* (not in battles: the party's cards keep the game's letters) */
+    if (battle_at != g_frame + 1) { battle_at = g_frame + 1; battle = party_in_battle(); }
+    int hd = g_hdtext_on && g_hdtext_any && g_comp_gl && !battle;
+    if (out->tags) memset(out->tag, 0, sizeof out->tag);
+    out->tags = 0;
     const uint8_t* ext = (disp & 0x80000000u) ? ext_obj_pal(eng) : NULL;
     memset(out->col, 0, sizeof out->col);
     memset(out->prio, 4, sizeof out->prio);
@@ -569,6 +575,8 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 out->src[sx] = objsrc;
                 out->mw[sx] = (uint8_t)mw;
                 if (mw) out->flag[sx] = mw == WIN_PANEL ? 0x80 : 0x10;   /* (the panel see-through, the line solid) */
+                uint32_t t = hd && mode < 2 && !c256 && objsrc ? hdtext_tag(objsrc) : 0;
+                out->tag[sx] = t; out->tags |= t != 0;
             }
         }
     }
@@ -974,6 +982,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     #define MARK3D 0xFFu                                            /* GL mode: the 3D layer, decided on the GPU */
     int hdl = 0;                                                    /* HD text: letters on this line (hdtext.h) */
     if (g_hdtext_on && dst && g_comp_gl) for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].tags && !(bg == 0 && bg_3d)) hdl = 1;
+    if (g_hdtext_on && dst && g_comp_gl && obj_on && objl.tags) hdl = 1;
     int cards_modern = cards_modern_on(eng) && dst;                 /* modern, in battles: the cards' boxes black, with a line round them */
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
@@ -987,13 +996,31 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
              * left out of the picture, the letter is drawn at full resolution */
             for (int k = norder - 1; k >= 0; k--) {
                 int L = order[k];
-                if (L >= 4) { if ((wm & 0x10) && (objl.col[x] & PX_OPAQUE) && objl.prio[x] == L - 4) break; continue; }
+                if (L >= 4) {
+                    if (!(wm & 0x10) || !(objl.col[x] & PX_OPAQUE) || objl.prio[x] != L - 4) continue;
+                    uint32_t t = objl.tag[x];
+                    if (t) {                                        /* a letter drawn into a sprite: its ink becomes the sprite's colour beside it */
+                        int ink = HDT_INK(t);
+                        if (ink) hdtext_seen_ink(eng, t, x, y, to_rgb6(master_bright(to6(objl.col[x]), mb)));
+                        else hdtext_seen(eng, t, x, y, 0, 0);
+                        g_hdtext_mask[eng][y * 256 + x] = 255;
+                        if (ink) {
+                            int q = -1;
+                            for (int d = 1; d <= 16 && q < 0; d++)       /* (the letters' sprite, or the window's under it) */
+                                q = x - d >= 0 && !HDT_INK(objl.tag[x - d]) && (objl.col[x - d] & PX_OPAQUE) ? x - d
+                                  : x + d <= 255 && !HDT_INK(objl.tag[x + d]) && (objl.col[x + d] & PX_OPAQUE) ? x + d : -1;
+                            if (q >= 0) { objl.col[x] = objl.col[q]; objl.flag[x] = objl.flag[q]; objl.mw[x] = objl.mw[q]; }
+                            else skipL = L;                         /* (a sprite of the letters alone: what's under it shows) */
+                        }
+                    }
+                    break;
+                }
                 if (L == 0 && bg_3d) { if (wm & 1) { if (gl3d) break; if (g_3d_present && (g_3d_line32[x] >> 24)) break; } continue; }
                 if (!(wm & (1 << L))) continue;
                 if (bgl[L].tags && bgl[L].tag[x]) { skipL = L; break; }
                 if (bgl[L].col[x] & PX_OPAQUE) break;
             }
-            if (skipL >= 0) {
+            if (skipL >= 0 && skipL < 4) {
                 uint32_t t = bgl[skipL].tag[x];
                 int ink = (bgl[skipL].col[x] & PX_OPAQUE) && HDT_INK(t);
                 hdtext_seen(eng, t, x, y, ink, ink ? to_rgb6(master_bright(to6(bgl[skipL].col[x]), mb)) : 0);
@@ -1004,7 +1031,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
          * stays, and where the game's ink was, the box's colour from beside the
          * letter, so what's behind the box doesn't show through the letter */
         int paperL = -1, paperw = 0; uint32_t paper = 0;
-        if (skipL >= 0) {
+        if (skipL >= 0 && skipL < 4) {
             const BgLine* bl = &bgl[skipL]; uint32_t t = bl->tag[x];
             if (!HDT_INK(t) && (bl->col[x] & PX_OPAQUE)) skipL = -1;
             else if (HDT_INK(t))

@@ -262,7 +262,7 @@ static HdGlyph* shown(int eng, uint32_t tag, int x, int y) {
     HdGlyph* s = &g_shown[eng][g_nshown[eng]];
     const Glyph* g = &g_glyphs[g_inst[inst].glyph];
     s->inst = inst; s->x = ox; s->y = oy; s->w = g->w; s->font = g->font; s->glyph = g_inst[inst].glyph;
-    s->color = 0; s->has_color = 0;
+    s->color = 0; s->has_color = 0; s->whole_box = 0;
     g_shown_hash[eng][h] = ++g_nshown[eng];
     return s;
 }
@@ -271,6 +271,12 @@ void hdtext_seen(int eng, uint32_t tag, int x, int y, int ink_shown, uint32_t rg
     g_hdtext_mask[eng][y * 256 + x] = 255;
     HdGlyph* s = shown(eng, tag, x, y);
     if (s && ink_shown && !s->has_color) { s->color = rgb; s->has_color = 1; }
+}
+
+void hdtext_seen_ink(int eng, uint32_t tag, int x, int y, uint32_t rgb) {
+    hdtext_seen(eng, tag, x, y, 1, rgb);
+    HdGlyph* s = shown(eng, tag, x, y);
+    if (s) s->whole_box = 1;
 }
 
 static uint32_t g_order_base;
@@ -283,6 +289,13 @@ static int by_order(const void* a, const void* b) { return inst_cmp(((const HdGl
 int hdtext_glyphs(int eng, const HdGlyph** out) {
     g_order_base = g_inst_next;
     qsort(g_shown[eng], (size_t)g_nshown[eng], sizeof(HdGlyph), by_order);
+    for (int i = 0; i < g_nshown[eng]; i++) {                  /* letters drawn into sprites: all their box (only their ink has tags) */
+        const HdGlyph* s = &g_shown[eng][i];
+        if (!s->whole_box) continue;
+        for (int y = s->y; y < s->y + 12; y++)
+            for (int x = s->x; x < s->x + s->w; x++)
+                if (x >= 0 && y >= 0 && x < 256 && y < 192) g_hdtext_mask[eng][y * 256 + x] = 255;
+    }
     *out = g_shown[eng];
     return g_nshown[eng];
 }
@@ -290,7 +303,17 @@ int hdtext_glyphs(int eng, const HdGlyph** out) {
 /* ---------------------------------------------------------------- letters in textures */
 typedef struct { uint32_t inst; int ox, oy; uint8_t rgba[4]; } CellLetter;
 
-static int by_inst(const void* a, const void* b) { return inst_cmp(((const CellLetter*)a)->inst, ((const CellLetter*)b)->inst); }
+/* drawing order; copies of one letter (a battle message's letter over its
+ * shadow) the darker first: a copy drawn again keeps its first instance
+ * (new_inst), so the order they were drawn in may not show in theirs */
+static int by_inst(const void* a, const void* b) {
+    const CellLetter* p = a; const CellLetter* q = b;
+    if (g_inst[p->inst].glyph == g_inst[q->inst].glyph) {
+        int lp = p->rgba[0] * 2 + p->rgba[1] * 5 + p->rgba[2], lq = q->rgba[0] * 2 + q->rgba[1] * 5 + q->rgba[2];
+        if (lp != lq) return lp < lq ? -1 : 1;
+    }
+    return inst_cmp(p->inst, q->inst);
+}
 
 uint32_t hdtext_texture_key(const uint8_t* p, int w, int h) {
     if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;
@@ -346,6 +369,31 @@ int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t*
                 o[3] = (uint8_t)lroundf(na * 255.0f);
             }
     }
+    return 1;
+}
+
+/* The one letter a texture holds (the dialogue windows' letters: a texture
+ * each; in battles drawn twice, its shadow beside it), its glyph, where its
+ * box starts in it (the leftmost copy's) and how far right the other copies
+ * go (copies: 0 for one); 0 if none or other letters. */
+int hdtext_texture_letter(const uint8_t* p, int w, int h, int* glyph, int* ox, int* copies) {
+    if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;
+    uint32_t off; int gl = -1, lx = 99, rx = -99;
+    if (!page_for(p, 0, &off)) return 0;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            uint32_t* pg = page_for(p + (y * w + x) / 2, 0, &off);
+            uint32_t t = pg ? pg[off + (x & 1)] : 0;
+            if (!(t & 0x80000000u) || !HDT_INK(t)) continue;
+            uint32_t inst = HDT_INST(t);
+            if (!g_inst[inst].used || (gl >= 0 && g_inst[inst].glyph != gl)) return 0;
+            gl = g_inst[inst].glyph;
+            int bx = x - (int)HDT_LX(t);
+            if (bx < lx) lx = bx;
+            if (bx > rx) rx = bx;
+        }
+    if (gl < 0) return 0;
+    *glyph = gl; *ox = lx; *copies = rx - lx;
     return 1;
 }
 
@@ -489,50 +537,114 @@ static void thicken(uint8_t* px, int stride, int W, int H) {
         }
 }
 
+/* Where the PC font's letter goes in the game's letter's box (HD pixels):
+ * its size (sx across, scale down), its bitmap's box from (ox, oy) and its
+ * advance's edges (lsb, rsb: the font's spacing either side of it). 0: the
+ * game's own letter is shown (no such character, a space, no font). */
+typedef struct { int cp; float sx, scale; int bw, bh, ox, oy; float lsb, rsb, space; } Placed;
+static int place(const Glyph* g, Placed* pl) {
+    int W = g->w * HDT_R;
+    int inkx0 = 99, inkx1 = -1;
+    for (int y = 0; y < 12; y++) for (int x = 0; x < g->w; x++) if ((g->rows[y] >> x) & 1) { if (x < inkx0) inkx0 = x; if (x > inkx1) inkx1 = x; }
+    if (inkx1 < 0) return 0;                                    /* a space */
+    int cp = g_tt_data ? codepoint(g->str) : 0;
+    if (!cp || cp == ' ' || !stbtt_FindGlyphIndex(&g_tt, cp)) return 0;
+    int top, base; font_metrics(g->font, &top, &base);
+    int hx0, hy0, hx1, hy1;
+    if (!stbtt_GetCodepointBox(&g_tt, 'H', &hx0, &hy0, &hx1, &hy1) || hy1 <= 0) hy1 = 1400;
+    static float size = -1;                                     /* capitals a little lower than the game's: PC fonts are wider */
+    if (size < 0) { const char* e = getenv("DQIX_HD_TEXT_SIZE"); size = e ? (float)atof(e) : 0.9f; if (size <= 0) size = 0.9f; }
+    float scale = (float)((base - top + 1) * HDT_R) * size / (float)hy1, sx = scale;
+    int bx0, by0, bx1, by1;
+    stbtt_GetCodepointBitmapBox(&g_tt, cp, sx, scale, &bx0, &by0, &bx1, &by1);
+    if (bx1 - bx0 > W) {                                        /* wider than the game's letter (m, w): narrowed to fit, not cut */
+        sx = scale * (float)W / (float)(bx1 - bx0);
+        stbtt_GetCodepointBitmapBox(&g_tt, cp, sx, scale, &bx0, &by0, &bx1, &by1);
+    }
+    int bw = bx1 - bx0, bh = by1 - by0;
+    if (bw <= 0 || bh <= 0 || bw > 400 || bh > 400) return 0;
+    float cx = (float)(inkx0 + inkx1 + 1) * HDT_R / 2.0f;      /* centred on the game's letter */
+    int ox = (int)lroundf(cx - (float)bw / 2.0f);
+    if (ox + bw > W) ox = W - bw;
+    if (ox < 0) ox = 0;
+    int adv, lsb, x0, y0, x1, y1;
+    stbtt_GetCodepointHMetrics(&g_tt, cp, &adv, &lsb);
+    if (!stbtt_GetCodepointBox(&g_tt, cp, &x0, &y0, &x1, &y1)) x1 = x0 = 0;
+    pl->cp = cp; pl->sx = sx; pl->scale = scale; pl->bw = bw; pl->bh = bh; pl->ox = ox; pl->oy = (base + 1) * HDT_R + by0;
+    pl->lsb = (float)lsb * sx; pl->rsb = (float)(adv - x1) * sx;
+    int sadv, slsb; stbtt_GetCodepointHMetrics(&g_tt, ' ', &sadv, &slsb);
+    pl->space = (float)sadv * scale;
+    return 1;
+}
+
 int hdtext_render(int glyph, uint8_t* out, int stride, int* w) {
     if (glyph < 0 || glyph >= g_nglyphs) return 0;
     const Glyph* g = &g_glyphs[glyph];
     *w = g->w;
     int W = g->w * HDT_R, H = 12 * HDT_R;
     for (int v = 0; v < H; v++) memset(out + v * stride, 0, (size_t)W);
-    int inkx0 = 99, inkx1 = -1;
-    for (int y = 0; y < 12; y++) for (int x = 0; x < g->w; x++) if ((g->rows[y] >> x) & 1) { if (x < inkx0) inkx0 = x; if (x > inkx1) inkx1 = x; }
-    if (inkx1 < 0) return 1;                                    /* a space */
-    int cp = g_tt_data ? codepoint(g->str) : 0;
-    if (cp && cp != ' ' && stbtt_FindGlyphIndex(&g_tt, cp)) {
-        int top, base; font_metrics(g->font, &top, &base);
-        int hx0, hy0, hx1, hy1;
-        if (!stbtt_GetCodepointBox(&g_tt, 'H', &hx0, &hy0, &hx1, &hy1) || hy1 <= 0) hy1 = 1400;
-        static float size = -1;                                 /* capitals a little lower than the game's: PC fonts are wider */
-        if (size < 0) { const char* e = getenv("DQIX_HD_TEXT_SIZE"); size = e ? (float)atof(e) : 0.9f; if (size <= 0) size = 0.9f; }
-        float scale = (float)((base - top + 1) * HDT_R) * size / (float)hy1, sx = scale;
-        int bx0, by0, bx1, by1;
-        stbtt_GetCodepointBitmapBox(&g_tt, cp, sx, scale, &bx0, &by0, &bx1, &by1);
-        if (bx1 - bx0 > W) {                                    /* wider than the game's letter (m, w): narrowed to fit, not cut */
-            sx = scale * (float)W / (float)(bx1 - bx0);
-            stbtt_GetCodepointBitmapBox(&g_tt, cp, sx, scale, &bx0, &by0, &bx1, &by1);
-        }
-        int bw = bx1 - bx0, bh = by1 - by0;
-        if (bw > 0 && bh > 0 && bw <= 400 && bh <= 400) {
-            unsigned char* bm = malloc((size_t)bw * (size_t)bh);
-            stbtt_MakeCodepointBitmap(&g_tt, bm, bw, bh, bw, sx, scale, cp);
-            float cx = (float)(inkx0 + inkx1 + 1) * HDT_R / 2.0f;    /* centred on the game's letter */
-            int ox = (int)lroundf(cx - (float)bw / 2.0f), oy = (base + 1) * HDT_R + by0;
-            if (ox + bw > W) ox = W - bw;
-            if (ox < 0) ox = 0;
-            for (int v = 0; v < bh; v++)
-                for (int u = 0; u < bw; u++) {
-                    int X = ox + u, Y = oy + v;
-                    if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
-                    uint8_t c = bm[v * bw + u];
-                    if (c > out[Y * stride + X]) out[Y * stride + X] = c;
-                }
-            free(bm);
-            thicken(out, stride, W, H);
-            return 1;
-        }
+    int ink = 0;
+    for (int y = 0; y < 12; y++) ink |= g->rows[y];
+    if (!ink) return 1;                                         /* a space */
+    Placed pl;
+    if (place(g, &pl)) {
+        int bw = pl.bw, bh = pl.bh;
+        unsigned char* bm = malloc((size_t)bw * (size_t)bh);
+        stbtt_MakeCodepointBitmap(&g_tt, bm, bw, bh, bw, pl.sx, pl.scale, pl.cp);
+        for (int v = 0; v < bh; v++)
+            for (int u = 0; u < bw; u++) {
+                int X = pl.ox + u, Y = pl.oy + v;
+                if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+                uint8_t c = bm[v * bw + u];
+                if (c > out[Y * stride + X]) out[Y * stride + X] = c;
+            }
+        free(bm);
+        thicken(out, stride, W, H);
+        return 1;
     }
     render_original(g, out, stride);
     thicken(out, stride, W, H);
     return 1;
+}
+
+/* The PC letter's advance in the game's letter's box: from its left edge to
+ * its right one (DS pixels), its ink plus the font's own spacing. 0: the
+ * game's letter (spaced as the game spaces it). Kept per glyph and font. */
+static struct { uint32_t gen; float l, r, space; int ok; } g_adv[MAX_GLYPHS];
+static int advance(int glyph, float* l, float* r, float* space) {
+    if (glyph < 0 || glyph >= g_nglyphs) return 0;
+    if (g_adv[glyph].gen != g_font_gen) {
+        Placed pl;
+        g_adv[glyph].gen = g_font_gen;
+        g_adv[glyph].ok = place(&g_glyphs[glyph], &pl);
+        if (g_adv[glyph].ok) {
+            /* a blank the game's letter has in it (French " :", " !", " ?" are
+             * one letter each, the space in front included) stays */
+            const Glyph* g = &g_glyphs[glyph];
+            int inkx0 = 99, inkx1 = -1;
+            for (int y = 0; y < 12; y++) for (int x = 0; x < g->w; x++) if ((g->rows[y] >> x) & 1) { if (x < inkx0) inkx0 = x; if (x > inkx1) inkx1 = x; }
+            int before = inkx0 >= 2 ? inkx0 : 0, after = g->w - 1 - inkx1 >= 2 ? g->w - 1 - inkx1 : 0;
+            g_adv[glyph].l = ((float)pl.ox - pl.lsb) / HDT_R - (float)before;
+            g_adv[glyph].r = ((float)(pl.ox + pl.bw) + pl.rsb) / HDT_R + (float)after;
+            g_adv[glyph].space = pl.space / HDT_R;
+        }
+    }
+    *l = g_adv[glyph].l; *r = g_adv[glyph].r; *space = g_adv[glyph].space;
+    return g_adv[glyph].ok;
+}
+
+float hdtext_follow(int ga, float xa, int gb, float xb, float shift, float k, float extra) {
+    if (ga < 0 || ga >= g_nglyphs || gb < 0 || gb >= g_nglyphs || xb <= xa) return 0;
+    float gap = (xb - xa) / k - (float)g_glyphs[ga].w;           /* the game puts 1 pixel between letters */
+    if (gap > 8.0f) return 0;                                    /* another column, another window: as the game has it */
+    if (gap < 0) return shift;                                   /* over the letter before (its outline or shadow): moved with it */
+    const char *sa = g_glyphs[ga].str, *sb = g_glyphs[gb].str;  /* between figures: the game's spacing (numbers stay lined up) */
+    if (sa[0] >= '0' && sa[0] <= '9' && !sa[1] && sb[0] >= '0' && sb[0] <= '9' && !sb[1]) return shift;
+    float al, ar, as, bl, br, bs;
+    if (!advance(ga, &al, &ar, &as) || !advance(gb, &bl, &br, &bs)) return shift;
+    /* the strokes made heavier (thicken) take from the space between letters: given back */
+    static float track = -1;
+    if (track < 0) { const char* e = getenv("DQIX_HD_TEXT_TRACK"); track = e ? (float)atof(e) : 0.6f; if (track < 0) track = 0; }
+    float sp = gap > 2.0f ? as + track : 0;                      /* a space between them: the PC font's */
+    return (xa + shift + (ar + track + sp + extra) * k) - (xb + bl * k);
 }

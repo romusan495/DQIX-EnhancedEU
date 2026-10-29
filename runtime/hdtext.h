@@ -28,9 +28,11 @@ uint32_t hdtext_tag(uint32_t src2);           /* the tag of a VRAM pixel: src2 =
 #define HDT_TAG(inst, x, y, ink) (0x80000000u | (uint32_t)(inst) << 13 | (uint32_t)(x) << 8 | (uint32_t)(y) << 4 | (uint32_t)(ink))
 
 /* per frame, from the 2D engines */
-typedef struct { int x, y, w; int font, glyph; uint32_t color; int has_color; uint32_t inst; } HdGlyph;   /* glyph: for hdtext_render */
+typedef struct { int x, y, w; int font, glyph; uint32_t color; int has_color; uint32_t inst; int whole_box; } HdGlyph;   /* glyph: for hdtext_render; whole_box: shown in all its box (hdtext_seen_ink) */
 void hdtext_frame_start(void);
 void hdtext_seen(int eng, uint32_t tag, int x, int y, int ink_shown, uint32_t rgb);   /* a letter's pixel shows at (x, y) (its ink in this colour) */
+/* a letter's ink shows at (x, y), where only its ink carries tags (letters drawn into sprites): it shows in all its box */
+void hdtext_seen_ink(int eng, uint32_t tag, int x, int y, uint32_t rgb);
 extern uint8_t g_hdtext_mask[2][256 * 192];   /* 255 where a letter's box shows */
 int hdtext_glyphs(int eng, const HdGlyph** out);                    /* this frame's letters, in drawing order */
 
@@ -39,6 +41,7 @@ int hdtext_glyphs(int eng, const HdGlyph** out);                    /* this fram
  * gets its letters at full resolution, in the colours they show; 0: no letters */
 int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t* out);
 uint32_t hdtext_texture_key(const uint8_t* p, int w, int h);       /* which letters it holds (0: none) */
+int hdtext_texture_letter(const uint8_t* p, int w, int h, int* glyph, int* ox, int* copies);   /* the one letter it holds (1), where its box starts, its shadow's offset */
 
 /* the letters at high resolution: R pixels per DS pixel, 12 rows */
 #define HDT_R 8
@@ -47,4 +50,11 @@ const char* hdtext_font_name(void);
 int hdtext_font_ok(void);                     /* the TrueType font was found */
 /* coverage (0-255) of one letter, (w * HDT_R) x (12 * HDT_R); 0 if unknown */
 int hdtext_render(int glyph, uint8_t* out, int stride, int* w);
+/* Letters at the PC font's own spacing: a at xa (its box, DS pixels; moved
+ * by shift), b next at xb on the same line: how far b moves across. A space
+ * between them is the PC font's; figures side by side and the game's own
+ * letters keep the game's spacing; a gap wider than a space (another column)
+ * starts again from 0. k: DS pixels per pixel of the letters (1: the usual);
+ * extra: DS pixels a takes beyond its letter (its shadow). */
+float hdtext_follow(int ga, float xa, int gb, float xb, float shift, float k, float extra);
 uint32_t hdtext_font_gen(void);               /* changes when the font does (the GPU's copies are stale) */
