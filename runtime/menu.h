@@ -43,7 +43,7 @@ enum {
     MI_SOFTSHADOW = 390,                                                /* Graphics > Soft shadows in corners (gl_render.c FS_POST) */
     MI_CHEAT0 = 700,                                                    /* Cheats: one per code (+0..cheats_count()-1, cheats.c) */
 };
-#define N_FONTS 15                                                      /* MI_FONT0 + i */
+#define N_FONTS 16                                                      /* MI_FONT0 + i */
 
 /* shell_names: the console colours, in order (MI_SHELLC0 + i); all: every
  * option, else only the project's own setup (the rest from settings.ini) */

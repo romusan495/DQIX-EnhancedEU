@@ -36,7 +36,7 @@ static float g_row_y[MAX_ROWS + 1];               /* ...where each one starts (s
 
 static stbtt_fontinfo g_font;
 static unsigned char* g_font_data;
-static char g_font_name[256] = "Marcellus.ttf";
+static char g_font_name[256] = "SourceSans3.ttf";
 static int g_font_state;                          /* 0 not tried, 1 ok, -1 none */
 
 /* ---------------------------------------------------------------- the rows */
@@ -167,8 +167,10 @@ static int font_load(void) {
     if (g_font_state) return g_font_state > 0;
     g_font_state = -1;
     char paths[6][300]; int n = 0;
-    if (strstr(g_font_name, ".ttf")) snprintf(paths[n++], 300, "fonts/%s", g_font_name);
-    snprintf(paths[n++], 300, "fonts/Marcellus.ttf");
+    /* Source Sans 3's variable file is drawn at its lightest (the HD text thickens it): its regular cut here */
+    if (!strcmp(g_font_name, "SourceSans3.ttf")) snprintf(paths[n++], 300, "fonts/SourceSans3-Regular.ttf");
+    else if (strstr(g_font_name, ".ttf")) snprintf(paths[n++], 300, "fonts/%s", g_font_name);
+    snprintf(paths[n++], 300, "fonts/SourceSans3-Regular.ttf");
     const char* win = getenv("WINDIR");
     if (win) snprintf(paths[n++], 300, "%s\\Fonts\\segoeui.ttf", win);
     snprintf(paths[n++], 300, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");

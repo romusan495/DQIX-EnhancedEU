@@ -86,9 +86,9 @@ static int g_softshadow;                                                        
 static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
 static int g_hdtext = 1;                                          /* Enhanced: the game's text drawn at full resolution (hdtext.h) */
 static int g_hdmovie = 1;                                         /* Enhanced: the movies from movies/ in HD (hdmovie.h) */
-static char g_hdfont[256] = "Marcellus.ttf";                      /* ...with this font ("original": the game's letters, smoothed) */
+static char g_hdfont[256] = "SourceSans3.ttf";                    /* ...with this font ("original": the game's letters, smoothed) */
 static const char* const g_fonts[N_FONTS] = { "original", "georgia.ttf", "pala.ttf", "constan.ttf", "times.ttf", "segoeui.ttf",   /* MI_FONT0 + i: Windows' */
-    "Lora.ttf", "CrimsonPro.ttf", "Alegreya.ttf", "Spectral.ttf", "EBGaramond.ttf", "Philosopher.ttf", "Marcellus.ttf", "Nunito.ttf", "Fredoka.ttf" };   /* ours (fonts/) */
+    "Lora.ttf", "CrimsonPro.ttf", "Alegreya.ttf", "Spectral.ttf", "EBGaramond.ttf", "Philosopher.ttf", "Marcellus.ttf", "Nunito.ttf", "Fredoka.ttf", "SourceSans3.ttf" };   /* ours (fonts/) */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
 static int g_small_opacity = 25;                                  /* widescreen: how solid the small screen over the field is (O), % */
 static int g_wide_dyn = 1;                                        /* widescreen: 0 basic (the corner stays), 1 dynamic (experimental: slides for menus) */
@@ -626,6 +626,9 @@ static void settings_load(void) {
         }
     }
     fclose(f);
+    /* the fonts the menu showed before Source Sans 3 became the only one there (the others: all_options) */
+    if (!g_all_options && (!strcmp(g_hdfont, "Marcellus.ttf") || !strcmp(g_hdfont, "original")))
+        snprintf(g_hdfont, sizeof g_hdfont, "%s", "SourceSans3.ttf");
     /* the colour counts once the player picked one (before nightly5 it was saved either way) */
     if (g_color_chosen) {
         for (int i = 0; i < N_DRAWN; i++) if (!strcmp(color, SHELLS[i].key)) g_opt.shell_color = i;
