@@ -51,6 +51,7 @@
 #include "nds.h"
 #include "text.h"
 #include "mapmarks.h"
+#include "romdata.h"
 
 int g_mapmarks = 1;
 int g_mapmarks_opened = 1;
@@ -291,9 +292,7 @@ static uint8_t* gpc_file(const uint8_t* d, uint32_t n, const char* name, uint32_
 }
 
 /* ---------------------------------------------------------------- the script format */
-#define REC_MAX 64
-typedef struct { int tag, n; uint8_t type[REC_MAX]; uint32_t v[REC_MAX]; } Rec;   /* n: the words kept (at most REC_MAX) */
-
+/* (Rec: romdata.h) */
 /* The next record from *p (stops at `end` or the 0xFFFF end mark). */
 static int rec_next(const uint8_t* b, uint32_t end, uint32_t* p, Rec* r) {
     if (*p + 4 > end) return 0;
@@ -1743,3 +1742,10 @@ int mapmarks_shop(uint32_t* px, uint8_t* info, int desc_y, const uint8_t** rgba,
     }
     return 1;
 }
+
+/* ---------------------------------------------------------------- shared readers (romdata.h) */
+const uint8_t* romdata_file(const char* path, uint32_t* size) { return rom_file(path, size); }
+uint8_t* romdata_gpc_file(const uint8_t* d, uint32_t n, const char* name, uint32_t* size) { return gpc_file(d, n, name, size); }
+int romdata_rec_next(const uint8_t* b, uint32_t end, uint32_t* p, Rec* r) { return rec_next(b, end, p, r); }
+void romdata_clean_name(const char* s, char* out, size_t cap) { clean_name(s, out, cap); }
+const char* romdata_item_name(uint16_t key) { load_names(g_fw_language); return item_name(key); }
