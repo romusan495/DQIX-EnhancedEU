@@ -84,10 +84,14 @@ int g_winstyle = 2;                                                 /* 0 like th
                                                                     /* out of battles square windows, a dark see-through panel and a thin grey line round it */
 int g_win_outline;                                                  /* minimal: the commands screen's windows keep their white line (frontend_sdl.c: the experience and level-up windows) */
 int g_dlg_outline;                                                  /* ...and the 3D screen's (frontend_sdl.c: in battles, the text box) */
-enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX, WIN_LINE };
+enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX, WIN_LINE, WIN_INK };   /* WIN_INK: a letter drawn on a battle card */
 static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
-    return palc(e, palbase, 2) == 0x2108 && palc(e, palbase, 4) == 0x4210 && palc(e, palbase, 8) == 0x6B5A && palc(e, palbase, 10) == 0x7FFF;
+    if (palc(e, palbase, 2) == 0x2108 && palc(e, palbase, 4) == 0x4210 && palc(e, palbase, 8) == 0x6B5A && palc(e, palbase, 10) == 0x7FFF) return 1;
+    /* modern: a window greyed while another is open over it (the battle
+     * commands under a list of spells): the same frame in darker greys */
+    return g_winstyle == 2 && palc(e, palbase, 1) == 0x18C6 && palc(e, palbase, 2) == 0x1084 && palc(e, palbase, 4) == 0x318C
+        && palc(e, palbase, 8) == 0x4210 && palc(e, palbase, 10) == 0x5294;
 }
 /* The party's cards in battles (commands screen): a backdrop in the member's
  * colour (9) framed in white (14, 15) with grey lines between cards (4),
@@ -113,7 +117,8 @@ static int tint_slot(uint16_t c) {
  * only the straight parts of its white line (colour 10), in grey, carried on
  * to where they meet: the rounded corner's steps left out, the corner square. */
 #define WIN_LINE_COL 0x4210                                         /* the line's grey (128) */
-static int modern_windows(void) { return g_winstyle == 2 && !g_dlg_outline; }
+/* (in battles, the commands screen too: the party's cards and their menus, see compose_line) */
+static int modern_windows(int eng) { return g_winstyle == 2 && (!g_dlg_outline || eng == 1); }
 static uint16_t map_ent(uint32_t mapbase, uint32_t w, uint32_t h, int tx, int ty) {
     tx &= (int)(w >> 3) - 1; ty &= (int)(h >> 3) - 1;
     uint32_t sb = (tx >> 5) + (ty >> 5) * (w >> 8);
@@ -220,7 +225,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     uint32_t winpal = 0, cardpal = 0, ramppal = 0, inkpal = 0, winchecked = 0;
     uint8_t tints[16] = { 0 };                                      /* a card palette's colour (its g_hud_tint slot + 1) */   /* palettes (bits): the windows', the cards', a gradient, letters on a panel */
     out->wins = 0;
-    int modern = ws && modern_windows();
+    int modern = ws && modern_windows(eng);
     for (int x = 0; x < 256;) {
         uint32_t xx = (x + hofs) & (w - 1);
         uint32_t tx = xx >> 3;
@@ -253,8 +258,8 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 }
                 int k = 0;
                 if (winpal & b)                                     /* (the panel even inside a letter's box, not its shading) */
-                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? ((eng == 1 ? g_win_outline : g_dlg_outline) ? 0 : WIN_EDGE) : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
-                else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
+                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? ((eng == 1 ? g_win_outline : g_dlg_outline) && !modern ? 0 : WIN_EDGE) : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : idx ? WIN_INK : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
                 if (modern && (winpal & b) && k) {
@@ -454,7 +459,7 @@ static void obj_windows(Engine* e, int eng) {
 static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
     uint32_t disp = R32(e, 0);
     const uint8_t* oam = &g_oam[eng * 0x400];
-    int modern = g_comp_gl && modern_windows();
+    int modern = g_comp_gl && modern_windows(eng);
     static uint64_t found[2];                                       /* g_frame + 1: the windows found this frame */
     if (found[eng] != g_frame + 1) { found[eng] = g_frame + 1; g_objwin_n[eng] = 0; if (modern) obj_windows(e, eng); }
     if (!modern) g_objwin_n[eng] = 0;
@@ -721,6 +726,42 @@ static void capture_line(int y, const uint32_t* line6) {
 
 static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* line6, uint32_t* dst, uint16_t mb);
 
+/* Modern windows in battles: the party's cards on the commands screen keep
+ * only their dark boxes (name, HP/MP, orders), see-through black like the
+ * other windows' panel, each with the thin grey line round it; a piece of a
+ * box with nothing in it (the strip a list's description box leaves of the
+ * orders' boxes) is left out. compose_line marks where the boxes are
+ * (1 the box, 2 something on it: a letter, a number, a bar); once the
+ * picture is whole, card_boxes() draws the lines (in the top byte, as
+ * gl_render.c reads it: 255 the line, 1 left out). */
+static uint8_t g_card_mask[256 * 192];
+int g_comp_win_px[2];                                               /* last frame: pixels of a window's panel in front, per engine (frontend_sdl.c) */
+static int g_comp_win_px_n[2];
+static int cards_modern_on(int eng) { return eng == 1 && g_comp_gl && g_winstyle == 2 && g_dlg_outline; }
+static void card_boxes(uint32_t* out) {
+    static int32_t stack[256 * 192];
+    static uint8_t seen[256 * 192];
+    memset(seen, 0, sizeof seen);
+    for (int i0 = 0; i0 < 256 * 192; i0++) {
+        if (!g_card_mask[i0] || seen[i0]) continue;
+        /* one box (its pixels joined side by side): something on it? */
+        int top = 0, full = 0;
+        stack[top++] = i0; seen[i0] = 1;
+        for (int s = 0; s < top; s++) {
+            int i = stack[s], x = i & 255, y = i >> 8;
+            full |= g_card_mask[i] == 2;
+            int nb[4] = { x > 0 ? i - 1 : -1, x < 255 ? i + 1 : -1, y > 0 ? i - 256 : -1, y < 191 ? i + 256 : -1 };
+            for (int k = 0; k < 4; k++) if (nb[k] >= 0 && g_card_mask[nb[k]] && !seen[nb[k]]) { seen[nb[k]] = 1; stack[top++] = nb[k]; }
+        }
+        for (int s = 0; s < top; s++) {
+            int i = stack[s], x = i & 255, y = i >> 8;
+            if (!full) { out[i] = (out[i] & 0xFFFFFF) | 1u << 24; continue; }
+            int edge = x == 0 || x == 255 || y == 0 || y == 191 || !g_card_mask[i - 1] || !g_card_mask[i + 1] || !g_card_mask[i - 256] || !g_card_mask[i + 256];
+            if (edge && g_card_mask[i] == 1) out[i] = (out[i] & 0xFFFFFF) | 255u << 24;
+        }
+    }
+}
+
 static void render_engine_line(int eng, int y) {
     Engine* e = &g_eng[eng];
     uint32_t* dst = &g_engine_out[eng][y * 256];
@@ -745,7 +786,10 @@ static void render_engine_line(int eng, int y) {
             for (int x = 0; x < 256; x++) line6[x] = 0x3F3F3F;
         } else composed = 1;
     }
+    if (y == 0) { g_comp_win_px[eng] = g_comp_win_px_n[eng]; g_comp_win_px_n[eng] = 0; }
+    if (cards_modern_on(eng) && y == 0) memset(g_card_mask, 0, sizeof g_card_mask);
     if (composed) compose_line(e, eng, y, disp, line6, dmode == 1 ? dst : NULL, mb);
+    if (cards_modern_on(eng) && y == 191) card_boxes(g_engine_out[eng]);
     if (dmode == 0) for (int x = 0; x < 256; x++) dst[x] = to_rgb6(0x3F3F3F);           /* screen off: white */
     else if (dmode == 2 || dmode == 3) {                            /* a VRAM bank shown directly (FIFO mode: unsupported, black) */
         int b = (disp >> 18) & 3;
@@ -799,11 +843,11 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         }
         for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
             BgLine* l = &bgl[bg];
-            if (!modern_windows()) for (int x = 0; x < 256; x++) if (edge[x] && l->win[x] == WIN_PANEL && (l->col[x] & PX_OPAQUE)) l->col[x] = 0x5294 | PX_OPAQUE;
+            if (!modern_windows(eng)) for (int x = 0; x < 256; x++) if (edge[x] && l->win[x] == WIN_PANEL && (l->col[x] & PX_OPAQUE)) l->col[x] = 0x5294 | PX_OPAQUE;
         }
         /* modern: no gap between the line and the panel, where the frame's
          * shading was beside the line and the panel didn't reach */
-        if (modern_windows()) {
+        if (modern_windows(eng)) {
             int kind[256];                                          /* 0 nothing, WIN_PANEL or WIN_LINE (front-most window pixel); its layer */
             int8_t lay[256];
             for (int x = 0; x < 256; x++) {
@@ -892,6 +936,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     #define MARK3D 0xFFu                                            /* GL mode: the 3D layer, decided on the GPU */
     int hdl = 0;                                                    /* HD text: letters on this line (hdtext.h) */
     if (g_hdtext_on && dst && g_comp_gl) for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].tags && !(bg == 0 && bg_3d)) hdl = 1;
+    int cards_modern = cards_modern_on(eng) && dst;                 /* modern, in battles: the cards' boxes black, with a line round them */
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
         int front = LAYER_BACKDROP;                                 /* v1's layer (g_engine_layer) */
@@ -970,7 +1015,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         }
         uint32_t ea = eva, eb = evb;
         if (pan1) {                                                 /* minimal: a quarter fainter; modern: 55% black (the game's 10/16 a little fainter), like the item's description in shops */
-            ea = modern_windows() ? (eva * 9 + 5) / 10 : eva * 3 / 4;     /* (in proportion: a window the game fades in stays faded) */
+            ea = modern_windows(eng) ? (eva * 9 + 5) / 10 : eva * 3 / 4;     /* (in proportion: a window the game fades in stays faded) */
             eb = evb + (eva - ea); if (eb > 16) eb = 16;
         }
         else if (win1 == WIN_LINE) { ea = 16; eb = 0; }              /* (the line solid) */
@@ -1025,9 +1070,23 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             uint32_t c = 1;
             if (win1 != WIN_CLEAR) {
                 c = 2;
-                for (int k = norder - 1; k >= 0; k--) { int L = order[k]; if (L < 4 && (winl & (1 << L)) && bgl[L].tint[x]) { c = 2 + bgl[L].tint[x]; break; } }
+                if (!cards_modern) for (int k = norder - 1; k >= 0; k--) { int L = order[k]; if (L < 4 && (winl & (1 << L)) && bgl[L].tint[x]) { c = 2 + bgl[L].tint[x]; break; } }
             }
             dst[x] |= c << 24;
+        }
+        g_comp_win_px_n[eng] += pan1;
+        if (cards_modern) {                                         /* where the cards' boxes are (card_boxes()) */
+            uint8_t m = 0;
+            if (win1 == WIN_BOX) m = skipL >= 0 ? 2 : 1;
+            else if (win1 == WIN_INK) m = 2;
+            else if (!win1 || win1 == WIN_CLEAR)                    /* a sprite in front (numbers, the HP bars): the box behind it */
+                for (int k = norder - 1; k >= 0; k--) {
+                    int L = order[k];
+                    if (L >= 4 || !(winl & (1 << L)) || !(wm & (1 << L)) || !bgl[L].win[x]) continue;
+                    if (bgl[L].win[x] == WIN_BOX || bgl[L].win[x] == WIN_INK) m = front != L ? 2 : 1;
+                    break;
+                }
+            g_card_mask[y * 256 + x] = m;
         }
     }
     #undef MARK3D

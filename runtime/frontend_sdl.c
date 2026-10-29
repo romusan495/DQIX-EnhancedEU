@@ -130,6 +130,7 @@ extern int g_comp_gl;
 extern int g_winstyle;          /* Enhanced: windows like the DS (0), minimal (1) or modern (2), gpu2d.c */
 extern int g_win_outline;       /* ...minimal: the commands screen's windows with their white line */
 extern int g_dlg_outline;       /* ...and the 3D screen's (the text box in battles) */
+extern int g_comp_win_px[2];    /* gpu2d.c: last frame, pixels of a window's panel per engine */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
 static int g_battle_speed = 1;  /* Modern > Battle speed: 1 to 4 times as fast (not in a session) */
 static int g_battle_turn_only;  /* ...only while the turn plays out: choosing the commands at the usual pace */
@@ -325,6 +326,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         else { small[0] = small[1] = 2 * t; small[2] = 256.0f / 3; small[3] = 64; }
         if (g_small_blank && t > 0.99f) small[2] = small[3] = 0;   /* black (battle intros, fades): leave the field whole */
         if (g_minimap && !in_adventure()) small[2] = small[3] = 0;
+        /* battles: nothing to choose on the commands screen (what it shows while
+         * the battle ends, the cards between the orders and the turn): not shown */
+        if (g_minimap && which == 0 && g_hud && g_winstyle && !g_hud_n && !g_hud_win[2] && g_comp_win_px[1] < 64) small[2] = small[3] = 0;
         v->front = small == v->bot;                               /* the small one in front */
         v->alpha = 1.0f + (g_small_alpha - 1.0f) * t;            /* see-through (O) while it is over the field */
         if (g_minimap && which != 0) {                            /* the minimap: fades out while a menu is under it */
@@ -406,7 +410,8 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
                     else {                                                /* at most half the picture's height */
                         float kb = fminf(0.62f, 110.0f / h);
-                        q[2] = 244 * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
+                        q[7] = 250;                                   /* (to the screen's edge: a list's window goes on to it, its line with it) */
+                        q[2] = q[7] * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
                     }
                 }
             }

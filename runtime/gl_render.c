@@ -329,6 +329,7 @@ static const char* FS_COMP =
     "  if (u_has3d == 0) {\n"
     /* (premultiplied: the HUD's pieces are see-through there) */
     "    int k = u_cut != 0 ? int(texelFetch(u_col, p2, 0).a * 255.0 + 0.5) : 0;\n"
+    "    if (k == 255) { o_color = vec4(vec3(0.5), 1.0); return; }\n"                     /* modern: the line round a card's box */
     "    if (k > 2) { o_color = vec4(u_tint[min(k - 3, 7)] * 0.6, 0.6); return; }\n"
     "    if (k != 0) { o_color = vec4(0.0, 0.0, 0.0, k == 1 ? 0.0 : 0.55); return; }\n"
     "    o_color = vec4(u_s2d > 0.0 && !side ? smooth2d(p2, fr) : col, 1.0); return;\n"
