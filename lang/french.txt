@@ -314,6 +314,15 @@ fr = Carte : montrer les m&onstres qui rôdent (points rouges)
 en = Map: a plan of the &rooms inside buildings (drawn from their walls)
 fr = Carte : un plan des &pièces dans les bâtiments (tracé d'après leurs murs)
 
+en = Show the game's &buttons as on your controller or keyboard
+fr = Afficher les &boutons du jeu comme sur votre manette ou clavier
+
+en = Controller: confirm with the &bottom button (Cross / A), cancel with the right one
+fr = Manette : valider avec le &bouton du bas (Croix / A), annuler avec celui de droite
+
+en = Map: a &legend of the marks (under the place's name)
+fr = Carte : une &légende des repères (sous le nom du lieu)
+
 en = &Start (takes effect next launch)
 fr = &Démarrage (au prochain lancement)
 

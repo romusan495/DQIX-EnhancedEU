@@ -314,6 +314,15 @@ de = Karte: &Monster in der Nähe zeigen (rote Punkte)
 en = Map: a plan of the &rooms inside buildings (drawn from their walls)
 de = Karte: ein Plan der &Räume in Gebäuden (aus ihren Wänden gezeichnet)
 
+en = Show the game's &buttons as on your controller or keyboard
+de = &Tasten des Spiels wie auf Controller oder Tastatur zeigen
+
+en = Controller: confirm with the &bottom button (Cross / A), cancel with the right one
+de = Controller: mit der &unteren Taste (Kreuz / A) bestätigen, mit der rechten abbrechen
+
+en = Map: a &legend of the marks (under the place's name)
+de = Karte: eine &Legende der Markierungen (unter dem Ortsnamen)
+
 en = &Start (takes effect next launch)
 de = &Start (beim nächsten Start)
 

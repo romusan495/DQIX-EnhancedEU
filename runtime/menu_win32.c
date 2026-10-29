@@ -84,6 +84,8 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     item(game, MI_VOLUME, L"&Volume...\t- / =");
     item(game, MI_MUTE, L"&Mute");
     item(game, MI_CONTROLS_EDIT, L"&Controls...");
+    item(game, MI_HINTS, L"Show the game's &buttons as on your controller or keyboard");
+    item(game, MI_CONFIRM_BOTTOM, L"Controller: confirm with the &bottom button (Cross / A), cancel with the right one");
     sep(game);
     item(game, MI_SAVEBAK, L"&Keep a copy of every save (save-backups folder)");
     sep(game);
@@ -227,6 +229,7 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     item(modern, MI_MAPMARKS_OPENED, L"Map: also mark the ones already &emptied or done (greyed)");
     item(modern, MI_MAPMONSTERS, L"Map: show the m&onsters walking nearby (red dots)");
     item(modern, MI_INTERIOR_MAPS, L"Map: a plan of the &rooms inside buildings (drawn from their walls)");
+    item(modern, MI_MAP_LEGEND, L"Map: a &legend of the marks (under the place's name)");
     sep(modern);
     Menu st = sub(modern, L"&Start (takes effect next launch)");
     item(st, MI_SKIP0, L"&Logos and opening movie, as on a DS");

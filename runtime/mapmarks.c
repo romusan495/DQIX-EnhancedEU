@@ -56,6 +56,7 @@ int g_mapmarks = 1;
 int g_mapmarks_opened = 1;
 int g_mapmarks_monsters = 1;
 int g_interior_maps = 1;
+int g_map_legend = 1;
 
 /* ---------------------------------------------------------------- the game's memory */
 #define FIELD_PTR   0x0F33E0       /* 0 until an adventure is loaded (farm.c) */
@@ -886,7 +887,7 @@ static void draw_mark(const Mark* m, int hover) {
     if (b->kind == K_QUEST) a = m->opened == 3 ? 0.6f : 1.0f;     /* opened: the quests' state there */
     /* a light halo: seen on the map's sand as on its grass */
     if (hover) rbox(cx, cy, 4.6f * R, 4.0f * R, 2.0f * R, 0xFFFFFF, 0.95f);
-    else rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);
+    else if (b->kind != K_POT) rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);   /* (a pot: as the legend shows it, without, Romuald's choice) */
     switch (b->kind) {
     case K_POT:
         glyph_pot(cx, cy, R, m->opened, a);
@@ -1075,6 +1076,100 @@ static void draw_tooltip(const Mark* m) {
         for (int x = 0; x < tw - 2 * pad; x++) {
             uint32_t t = g_txt[y * MAPMARKS_W + x];
             if (t) blend(x0 + pad + x, y0 + pad + y, g_line[y / lh].c, (float)((t >> 16) & 255) / 255.0f);
+        }
+}
+
+/* ---------------------------------------------------------------- the legend
+ * Under the place's name (top right): a sample of each kind of mark the map
+ * shows now, and its name. */
+enum { L_HERE, L_MONSTER, L_CHEST, L_BLUE, L_POT, L_BARREL, L_EMPTIED, L_SHELF, L_RECIPES, L_QUEST1, L_QUEST2, L_QUEST3, L_BUILDING, L_N };
+#define LEG_TOP 17                 /* top-screen pixels: under the place's name */
+#define LEG_RIGHT 254
+#define LEG_ROW 8
+
+static const char* legend_name(int l) {
+    static const char* const t[L_N][5] = {
+        { "You are here", "Vous \xC3\xAAtes ici", "Du bist hier", "Sei qui", "Est\xC3\xA1s aqu\xC3\xAD" },
+        { "Monster", "Monstre", "Monster", "Mostro", "Monstruo" },
+        { 0 }, { 0 }, { 0 }, { 0 },                              /* kind_name() */
+        { "Already emptied", "D\xC3\xA9j\xC3\xA0 vid\xC3\xA9", "Schon geleert", "Gi\xC3\xA0 svuotato", "Ya vaciado" },
+        { 0 },
+        { "Alchemy recipes", "Recettes d'alchimie", "Alchemie-Rezepte", "Ricette alchemiche", "Recetas de alquimia" },
+        { "Quest to take", "Qu\xC3\xAA" "te \xC3\xA0 prendre", "Neuer Auftrag", "Missione da accettare", "Misi\xC3\xB3n por aceptar" },
+        { "Quest in progress", "Qu\xC3\xAA" "te en cours", "Auftrag in Arbeit", "Missione in corso", "Misi\xC3\xB3n en curso" },
+        { "Quest completed", "Qu\xC3\xAA" "te termin\xC3\xA9" "e", "Auftrag erledigt", "Missione completata", "Misi\xC3\xB3n completada" },
+        { "In the building", "Dans le b\xC3\xA2timent", "Im Geb\xC3\xA4" "ude", "Nell'edificio", "En el edificio" },
+    };
+    static const int kind[L_N] = { 0, 0, K_CHEST, K_BLUE, K_POT, K_BARREL, 0, K_SHELF };
+    return t[l][0] ? t[l][lang_index()] : kind_name(kind[l]);
+}
+
+static void legend_sample(int l, float cx, float cy, float R) {
+    switch (l) {
+    case L_HERE:
+        rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, 0xFFFFFF, 1);
+        rbox(cx, cy, 2.4f * R - 2, 2.4f * R - 2, 2.4f * R - 2, 0x2A6CE0, 1);
+        break;
+    case L_MONSTER:
+        rbox(cx, cy, 1.9f * R, 1.9f * R, 1.9f * R, 0xFFF8E0, 0.8f);
+        rbox(cx, cy, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 0xE0302A, 1);
+        break;
+    case L_CHEST: glyph_chest(cx, cy, R, 0xD0402E, 0xF2C94C, 1); break;
+    case L_BLUE: glyph_chest(cx, cy, R, 0x3C78E0, 0xF2C94C, 1); break;
+    case L_POT: glyph_pot(cx, cy, R, 0, 1); break;
+    case L_BARREL: glyph_barrel(cx, cy, R, 0, 1); break;
+    case L_EMPTIED: glyph_chest(cx, cy, R, 0x8A8A8A, 0xB0B0B0, 0.6f); break;
+    case L_SHELF: glyph_book(cx, cy, R, book_color(0, 0), 1); break;
+    case L_RECIPES: glyph_book(cx, cy, R, book_color(1, 0), 1); break;
+    case L_QUEST1: case L_QUEST2: case L_QUEST3: glyph_quest(cx, cy, R, l - L_QUEST1 + 1, 1); break;
+    default:                                                     /* a building's badge */
+        rbox(cx, cy, 3.6f * R, 3.0f * R, 1.2f * R, 0xFFF8E0, 0.9f);
+        rbox(cx, cy, 3.6f * R - 2, 3.0f * R - 2, 1.2f * R - 2, 0x3A2A1A, 0.92f);
+        glyph_chest(cx, cy, R * 0.7f, 0xD0402E, 0xF2C94C, 1);
+        break;
+    }
+}
+
+static void draw_legend(void) {
+    int has[L_N] = { 0 }, n = 0;
+    for (int i = 0; i < g_nmark; i++) {
+        const Mark* m = &g_mark[i];
+        if (m->door == -3) has[L_HERE] = 1;
+        else if (m->door == -2) has[L_MONSTER] = 1;
+        else if (m->door >= 0) {                                 /* a badge: what it holds too */
+            has[L_BUILDING] = 1;
+            if (m->closed) has[L_CHEST] = 1;
+            if (m->emptied || m->jars_done) has[L_EMPTIED] = 1;
+            if (m->jars) has[m->barrels * 2 >= m->jars + m->jars_done ? L_BARREL : L_POT] = 1;
+            if (m->shelves) has[m->recipes ? L_RECIPES : L_SHELF] = 1;
+            if (m->quests && m->opened >= 1 && m->opened <= 3) has[L_QUEST1 + m->opened - 1] = 1;
+        } else {
+            const Spot* b = &held(g_here)->s[m->spot];
+            if (b->kind == K_QUEST) { if (m->opened >= 1 && m->opened <= 3) has[L_QUEST1 + m->opened - 1] = 1; }
+            else if (b->kind == K_SHELF) { const Book* bk = find_book(g_places[g_here].num, b->idx); has[bk && bk->recipes ? L_RECIPES : L_SHELF] = 1; }
+            else if (m->opened) has[L_EMPTIED] = 1;
+            else has[b->kind == K_BLUE ? L_BLUE : b->kind == K_POT ? L_POT : b->kind == K_BARREL ? L_BARREL : L_CHEST] = 1;
+        }
+    }
+    for (int l = 0; l < L_N; l++) n += has[l];
+    if (!n) return;
+    float px = 5.6f * MAPMARKS_R, R = MAPMARKS_R * 0.95f;
+    int row = LEG_ROW * MAPMARKS_R, pad = 2 * MAPMARKS_R, icon = 10 * MAPMARKS_R, tw = 0, k = 0;
+    if (n * row > TXT_H) return;
+    memset(g_txt, 0, sizeof(uint32_t) * MAPMARKS_W * (size_t)(n * row));
+    for (int l = 0; l < L_N; l++) if (has[l]) {
+        int w = text_draw(g_txt, MAPMARKS_W, n * row, 0, k++ * row + (row - (int)(px * 1.2f)) / 2, px, 0xFFFFFF, legend_name(l));
+        if (w > tw) tw = w;
+    }
+    int w = icon + tw + 2 * pad, h = n * row + 2 * pad, x0 = LEG_RIGHT * MAPMARKS_R - w, y0 = LEG_TOP * MAPMARKS_R;
+    if (x0 < 2) x0 = 2;
+    rbox(x0 + w / 2.0f, y0 + h / 2.0f, w / 2.0f, h / 2.0f, 2.0f * MAPMARKS_R, 0x101418, 0.72f);
+    k = 0;
+    for (int l = 0; l < L_N; l++) if (has[l]) legend_sample(l, (float)(x0 + pad + icon / 2), (float)(y0 + pad + k++ * row + row / 2), R);
+    for (int y = 0; y < n * row; y++)
+        for (int x = 0; x < tw && x0 + pad + icon + x < MAPMARKS_W; x++) {
+            uint32_t t = g_txt[y * MAPMARKS_W + x];
+            if (t) blend(x0 + pad + icon + x, y0 + pad + y, 0xF4F0E6, (float)((t >> 16) & 255) / 255.0f);
         }
 }
 
@@ -1482,6 +1577,7 @@ int mapmarks_update(const uint8_t** rgba) {
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;
     key = (key ^ (uint32_t)g_here) * 16777619u;
     key = (key ^ (uint32_t)g_plan_on) * 16777619u;
+    key = (key ^ (uint32_t)g_map_legend) * 16777619u;
     if (!g_nmark && !g_plan_on) { int changed = had; had = 0; last_key = 0; return changed; }
     if (had && key == last_key) return 0;
     had = 1; last_key = key;
@@ -1489,6 +1585,7 @@ int mapmarks_update(const uint8_t** rgba) {
     else memset(g_img, 0, sizeof g_img);
     for (int pass = 0; pass < 2; pass++)                          /* the monsters first, under the rest */
         for (int i = 0; i < g_nmark; i++) if (i != g_hover && (g_mark[i].door == -2) == !pass) draw_mark(&g_mark[i], 0);
+    if (g_map_legend) draw_legend();
     if (g_hover >= 0) { draw_mark(&g_mark[g_hover], 1); draw_tooltip(&g_mark[g_hover]); }
     *rgba = g_img;
     return 1;

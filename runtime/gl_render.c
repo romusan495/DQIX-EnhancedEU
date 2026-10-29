@@ -652,7 +652,7 @@ static float g_half_w = 128.0f;                                /* the frame bein
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
-static GLuint overlay_tex[2]; static int overlay_on[2];   /* gl_set_overlay(), gl_set_icons() */
+static GLuint overlay_tex[2 + GL_LAYERS]; static int overlay_on[2 + GL_LAYERS];   /* gl_set_overlay(), gl_set_icons(), then gl_set_layer()'s */
 static GLuint menu_tex; static int menu_on;         /* gl_set_menu() */
 static float menu_box[5];                           /* gl_set_menu_box(); menu_box[4] 0: none */
 static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
@@ -2014,6 +2014,8 @@ void gl_present(const GlPresent* v) {
     if (v->npiece) draw_pieces(v, final_tex);
     if (overlay_on[0] && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v, v->overlay, overlay_tex[0]);
     if (overlay_on[1] && v->icons[2] > 0 && v->icons[3] > 0) draw_overlay(v, v->icons, overlay_tex[1]);
+    for (int i = 0; i < GL_LAYERS; i++)                           /* the layers, in their order (under the in-game menu) */
+        if (overlay_on[2 + i] && v->layer[i][2] > 0 && v->layer[i][3] > 0) draw_overlay(v, v->layer[i], overlay_tex[2 + i]);
     if (menu_on && !v->again) draw_menu(v);
 }
 
@@ -2047,6 +2049,7 @@ static void set_overlay(int i, const uint8_t* rgba, int w, int h) {
 }
 void gl_set_overlay(const uint8_t* rgba, int w, int h) { set_overlay(0, rgba, w, h); }
 void gl_set_icons(const uint8_t* rgba, int w, int h) { set_overlay(1, rgba, w, h); }
+void gl_set_layer(int id, const uint8_t* rgba, int w, int h) { if (id >= 0 && id < GL_LAYERS) set_overlay(2 + id, rgba, w, h); }
 
 /* The window as shown (for tests): top-down RGB, caller frees. */
 uint8_t* gl_read_window(int w, int h) {

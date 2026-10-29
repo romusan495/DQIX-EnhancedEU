@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include "gpu3d.h"
 
+/* Pictures drawn over the screens besides the map's and the shop's (gl_set_layer):
+ * one per user, in drawing order. Each is placed every frame by GlPresent.layer. */
+enum { GL_LAYER_HINT,                                 /* a button's sign over the game's (hints.c) */
+       GL_LAYERS };
+
 int gl_render_init(int scale);                        /* 0 on failure (use the software path) */
 void gl_render_set_scale(int scale);
 #define GL_MAX_SCALE 12                               /* the highest 3D resolution offered */
@@ -39,6 +44,7 @@ typedef struct {
     int held;                                         /* show the picture kept by gl_hold() instead of this frame's */
     float overlay[4];                                 /* where to draw gl_set_overlay()'s picture on the canvas (w 0: not) */
     float icons[4];                                   /* ...and gl_set_icons()' */
+    float layer[GL_LAYERS][4];                        /* ...and each gl_set_layer()'s (w 0: not this frame) */
 } GlPresent;
 #define GL_MAX_PIECES 8
 void gl_hold(void);                                   /* keep this frame's picture (the map window during battles) */
@@ -47,6 +53,7 @@ void gl_set_menu(const uint8_t* rgba, int w, int h);      /* the in-game menu ov
 void gl_set_menu_box(const float* b);                     /* ...its window drawn under it in the minimal style: x0 y0 x1 y1 (window pixels, y down), line width (NULL: none) */
 void gl_set_overlay(const uint8_t* rgba, int w, int h);   /* a picture over the screens (premultiplied RGBA, rows top-down; NULL: none) */
 void gl_set_icons(const uint8_t* rgba, int w, int h);     /* another (a shop's icons), drawn after it */
+void gl_set_layer(int id, const uint8_t* rgba, int w, int h);   /* more pictures (GL_LAYER_...), drawn after those in id order, under the in-game menu; NULL: none */
 void gl_present(const GlPresent* v);
 uint8_t* gl_read_window(int w, int h);
 int gl_wide_shown(int* side);                         /* widescreen: the screen composed wide (0 top, 1 bottom, -1 none) */

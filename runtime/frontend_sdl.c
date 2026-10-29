@@ -46,6 +46,7 @@
 #include "text.h"
 #include "controls.h"
 #include "uitext.h"
+#include "hints.h"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -69,6 +70,8 @@ static int g_two;                                                 /* two windows
 static SDL_Window* g_win2;                                        /* ...the second one (the top screen, or the bottom one when swapped) */
 static int g_win2_full, g_win2_rect[4];                           /* ...fullscreen; where it was as a window (w = 0: not yet) */
 static int g_wide_pop = 0;                                        /* widescreen: the small screen in its own window (the field alone; no longer offered) */
+static int g_hints = 1;                                           /* the DS buttons the game shows ("X Menu"): the player's own (hints.c) */
+static int g_hint_pad = -1;                                       /* ...the last used: 1 the controller, 0 the keyboard, -1 not yet */
 static int g_minimap = 1;                                         /* widescreen: the map small in a corner of the one window (no second window), not in battles */
 static int g_map_shown = 1;                                       /* ...shown (Modern > Map in the top right corner) */
 static float g_mini_vis = 1.0f;                                   /* ...1 shown, 0 gone (the game's 2D under it: a menu) */
@@ -584,6 +587,8 @@ static void settings_load(void) {
         else if (!strcmp(key, "cheats")) cheats_from_list(val);
         else if (!strcmp(key, "map_monsters")) g_mapmarks_monsters = atoi(val) != 0;
         else if (!strcmp(key, "interior_maps")) g_interior_maps = atoi(val) != 0;
+        else if (!strcmp(key, "map_legend")) g_map_legend = atoi(val) != 0;
+        else if (!strcmp(key, "button_hints")) g_hints = atoi(val) != 0;
         else if (!strcmp(key, "walk_any_direction")) g_analog_walk = atoi(val) != 0;   /* (the older analog_walk, off by default then, is ignored) */
         else if (!strcmp(key, "fullscreen")) g_fullscreen = atoi(val) != 0;
         else if (!strcmp(key, "dslite_filter")) g_opt.lcd = atoi(val) != 0;
@@ -687,6 +692,10 @@ static void settings_save(void) {
     fprintf(f, "map_monsters = %d\n", g_mapmarks_monsters);
     fprintf(f, "# Modern > Map: inside buildings, a plan of the room drawn from its walls (the game shows the town): 0 or 1\n");
     fprintf(f, "interior_maps = %d\n", g_interior_maps);
+    fprintf(f, "# the map: a legend of its marks, under the place's name: 0 or 1\n");
+    fprintf(f, "map_legend = %d\n", g_map_legend);
+    fprintf(f, "# the game's DS buttons (the field's \"X Menu\") as on your controller or keyboard, whichever you used last: 0 or 1\n");
+    fprintf(f, "button_hints = %d\n", g_hints);
     fprintf(f, "# 0 or 1 (F11)\n");
     fprintf(f, "fullscreen = %d\n", g_fullscreen);
     fprintf(f, "# DS Lite screen filter (F6) and its parts: 0 or 1; backlight: low, medium, high, max\n");
@@ -1559,6 +1568,42 @@ static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
     if (lx >= t[0] && lx < t[0] + t[2] && ly >= t[1] && ly < t[1] + t[3]) mapmarks_hover((lx - t[0]) * 256 / t[2], (ly - t[1]) * 192 / t[3]);
 }
 
+/* The field's "X Menu" sign (moved to the bottom right, gpu3d.c): its X
+ * button drawn as the one the DS's X is on (Game > Controls), on the
+ * controller or the keyboard, whichever was used last (hints.c). Where the
+ * button is on the sign: in the sign's own pixels, from its top left. */
+#define HINT_PX 128
+#define SIGN_BTN_X 6.4f
+#define SIGN_BTN_Y 23.8f
+#define SIGN_BTN_R 4.8f
+static void hint_update(GlPresent* v) {
+    static uint8_t img[HINT_PX * HINT_PX * 4];
+    static char shown[96];
+    int side = 0, pad = g_hint_pad < 0 ? g_pad != NULL : g_hint_pad && g_pad;
+    if (!g_hints || !g_sign_move || g_frame - g_sign_frame >= 4 || gl_wide_shown(&side) != 1 || v->bot[2] <= 0 || v->botx[1] <= 0) return;
+    int style = HINT_KEYBOARD, face = HINT_OTHER, b = pad ? g_ctl_pad[CA_X] : CTL_NONE;
+    char lab[64] = "", key[96];
+    if (b != CTL_NONE) {
+        style = g_ctl_pad_style == CTL_STYLE_PLAYSTATION ? HINT_PLAYSTATION : g_ctl_pad_style == CTL_STYLE_XBOX ? HINT_XBOX :
+                g_ctl_pad_style == CTL_STYLE_NINTENDO ? HINT_NINTENDO : HINT_GENERIC;
+        face = b == SDL_CONTROLLER_BUTTON_B ? HINT_RIGHT : b == SDL_CONTROLLER_BUTTON_A ? HINT_BOTTOM : b == SDL_CONTROLLER_BUTTON_Y ? HINT_TOP :
+               b == SDL_CONTROLLER_BUTTON_X ? HINT_LEFT : HINT_OTHER;
+        if (face == HINT_OTHER) controls_pad_name(b, lab, sizeof lab);
+    } else controls_key_name(g_ctl_key[CA_X][g_ctl_key[CA_X][0] ? 0 : 1], lab, sizeof lab);
+    {   /* tests: DQIX_HINT_STYLE=keyboard|generic|playstation|xbox|nintendo */
+        static const char* t = (const char*)-1; if (t == (const char*)-1) t = getenv("DQIX_HINT_STYLE");
+        static const char* const names[5] = { "keyboard", "generic", "playstation", "xbox", "nintendo" };
+        for (int i = 0; t && i < 5; i++) if (!strcmp(t, names[i])) { style = i; face = i ? HINT_TOP : HINT_OTHER; if (!i) controls_key_name(g_ctl_key[CA_X][0], lab, sizeof lab); }
+    }
+    snprintf(key, sizeof key, "%d %d %s", style, face, lab);
+    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hint_draw(img, HINT_PX, HINT_PX, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, HINT_PX, HINT_PX); }
+    float kx = v->bot[2] / v->botx[1], ky = v->bot[3] / 192.0f, r = SIGN_BTN_R + 0.5f;
+    float cx = (float)g_sign_rect[0] + SIGN_BTN_X, cy = (float)g_sign_rect[1] + SIGN_BTN_Y;
+    float* q = v->layer[GL_LAYER_HINT];
+    q[0] = v->bot[0] + (cx - r - v->botx[0] + (float)side) * kx; q[1] = v->bot[1] + (cy - r) * ky;
+    q[2] = 2 * r * kx; q[3] = 2 * r * ky;
+}
+
 static void present_gl(void) {
     auto_scale();
     g_wide_side = g_classic ? 0 : wide_side_target();            /* the next 3D frames (only the picture changes) */
@@ -1614,6 +1659,7 @@ static void present_gl(void) {
         else if (shown) { gl_set_menu(NULL, 0, 0); gl_set_menu_box(NULL); shown = 0; }
     }
     GlPresent v; canvas_layout(&v, w, h);
+    hint_update(&v);
     mapmarks_hover(-1, -1);
     map_overlay(&v, g_win, (pow >> 15) & 1);
     gl_present(&v);
@@ -1731,6 +1777,9 @@ static void menu_sync(void) {
     menu_check(MI_MAPMARKS_OPENED, g_mapmarks_opened); menu_enable(MI_MAPMARKS_OPENED, g_gl && g_mapmarks);
     menu_check(MI_MAPMONSTERS, g_mapmarks_monsters); menu_enable(MI_MAPMONSTERS, g_gl && g_mapmarks);
     menu_check(MI_INTERIOR_MAPS, g_interior_maps); menu_enable(MI_INTERIOR_MAPS, g_gl);
+    menu_check(MI_MAP_LEGEND, g_map_legend); menu_enable(MI_MAP_LEGEND, g_gl && g_mapmarks);
+    menu_check(MI_HINTS, g_hints); menu_enable(MI_HINTS, g_gl);
+    menu_check(MI_CONFIRM_BOTTOM, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A);
     for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
     for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
     menu_check(MI_SAVEBAK, g_save_backups);
@@ -2355,6 +2404,14 @@ static void do_action(int id) {
     case MI_MAPMARKS_OPENED: g_mapmarks_opened = !g_mapmarks_opened; break;
     case MI_MAPMONSTERS: g_mapmarks_monsters = !g_mapmarks_monsters; break;
     case MI_INTERIOR_MAPS: g_interior_maps = !g_interior_maps; break;
+    case MI_MAP_LEGEND: g_map_legend = !g_map_legend; break;
+    case MI_HINTS: g_hints = !g_hints; break;
+    case MI_CONFIRM_BOTTOM:                                       /* the controller's A and B (confirm, cancel) trade buttons */
+        controls_set_pad(CA_A, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A ? SDL_CONTROLLER_BUTTON_B : SDL_CONTROLLER_BUTTON_A);
+        if (g_ctl_pad[CA_B] == g_ctl_pad[CA_A] || g_ctl_pad[CA_B] == CTL_NONE)
+            g_ctl_pad[CA_B] = g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A ? SDL_CONTROLLER_BUTTON_B : SDL_CONTROLLER_BUTTON_A;
+        controls_save();
+        break;
     case MI_SKIP0: case MI_SKIP0 + 1: case MI_SKIP0 + 2: g_skip_intro = id - MI_SKIP0; break;
     case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
@@ -2747,14 +2804,17 @@ static void handle_events(void) {
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }
             if (k == SDL_SCANCODE_G && (e.key.keysym.mod & KMOD_CTRL)) { do_action(MI_FARM); break; }   /* Modern > Farm gold by itself */
             int a = controls_key_action(k, e.key.keysym.mod);
+            { int o = controls_key_owner((int)k, NULL); if (o >= 0 && o < CA_N_DS) g_hint_pad = 0; }   /* a DS button on the keyboard */
             if (a == CA_FULL && in2) { second_window_fullscreen(); settings_save(); break; }
             if (a >= 0) hotkey(a);
             break;
         }
         case SDL_CONTROLLERBUTTONDOWN:
+            g_hint_pad = 1;
             if (g_cap_action >= 0) capture_pad(e.cbutton.button);
             break;
         case SDL_CONTROLLERAXISMOTION:
+            if (e.caxis.value > 16000 || e.caxis.value < -16000) g_hint_pad = 1;
             if (g_cap_action >= 0 && e.caxis.value > 16000 && (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT))
                 capture_pad(e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? CTL_PAD_LT : CTL_PAD_RT);
             break;
