@@ -179,13 +179,14 @@ static const char* FS_POST =
     "uniform int u_estep; uniform float u_emix;\n"                       /* outlines: neighbour distance, how much of the outline colour */
     "uniform int u_fog; uniform int u_fog_alpha_only; uniform vec4 u_fogcol; uniform float u_fogtab[32];\n"
     "uniform int u_fogoff; uniform int u_fogshift; uniform int u_wbuf;\n"
-    "uniform float u_ao; uniform float u_aorad; uniform int u_aomode; uniform float u_aomax;\n"                    /* soft shadows: strength (0 off), reach in pixels */
+    "uniform float u_ao; uniform float u_aorad;\n"                    /* soft shadows: strength (0 off), reach in pixels */
     /* Soft shadows in corners and under things: a pixel whose neighbours are
-     * nearer on average than itself sits in a hollow (where a wall meets the
-     * floor, under a shelf, behind a pot) and gets darker. Measured on 1/w,
-     * which is flat across any flat surface on screen, so walls and floors
-     * at any angle stay as they are; a neighbour much nearer (a character in
-     * front of a far wall) is another object and doesn't count (no halos). */
+     * nearer than itself on both sides, along a line through it, sits in a
+     * hollow (where a wall meets the floor, under a counter, behind a pot)
+     * and gets darker. Measured on 1/w (1 - z with the z-buffer), which is
+     * flat across any flat surface on screen, so walls and floors at any
+     * angle stay as they are; nearer on one side only is the edge of
+     * something in front (a character before a wall): no halo round it. */
     "float invw(ivec2 q) { float d = texelFetch(u_depth, q, 0).r; return u_wbuf != 0 ? 1.0 / max(d, 1e-6) : 1.0 - d; }\n"
     "float hollow(ivec2 p) {\n"
     "  ivec2 sz = textureSize(u_depth, 0); float c0 = max(invw(p), 1e-6), s = 0.0, n = 0.0;\n"
@@ -195,11 +196,9 @@ static const char* FS_POST =
     "    ivec2 q1 = clamp(p + o, ivec2(0), sz - 1), q2 = clamp(p - o, ivec2(0), sz - 1);\n"
     "    if (texelFetch(u_attr, q1, 0).a < 0.5 || texelFetch(u_attr, q2, 0).a < 0.5) continue;\n"   /* nothing drawn there */
     "    float d1 = (invw(q1) - c0) / c0, d2 = (invw(q2) - c0) / c0;\n"
-    /* nearer on both sides: a hollow; on one side only: the edge of something in front */
-    "    float h = u_aomode != 0 ? min(d1, d2) : 0.5 * (d1 + d2);\n"
-    "    s += clamp(h, 0.0, u_aomax) * (1.0 - smoothstep(u_aomax, 3.0 * u_aomax, max(d1, d2))); n += 1.0;\n"
+    "    s += clamp(min(d1, d2), 0.0, 0.02) * (1.0 - smoothstep(0.02, 0.06, max(d1, d2))); n += 1.0;\n"   /* (much nearer: another object) */
     "  }\n"
-    "  return n > 0.0 ? clamp(s / (n * u_aomax), 0.0, 1.0) : 0.0;\n"
+    "  return n > 0.0 ? clamp(s / (n * 0.02), 0.0, 1.0) : 0.0;\n"
     "}\n"
     "void main() {\n"
     "  ivec2 p = ivec2(gl_FragCoord.xy);\n"
@@ -1555,10 +1554,7 @@ static void gl_render_(const Frame3D* f) {
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_wbuf"), f->wbuf);
     { static float aos = -1, aor; if (aos < 0) { const char* e = getenv("DQIX_SOFTSHADOW"); aos = e ? (float)atof(e) : 0.6f; e = getenv("DQIX_SOFTSHADOW_REACH"); aor = e ? (float)atof(e) : 6.0f; }   /* tests: strength, reach in DS pixels */
       p_glUniform1f(p_glGetUniformLocation(prog_post, "u_ao"), g_softshadow ? aos : 0.0f);
-      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_aorad"), aor * (float)g_scale);
-      static int aom = -1; static float aox; if (aom < 0) { const char* e = getenv("DQIX_SOFTSHADOW_MODE"); aom = e ? atoi(e) : 1; e = getenv("DQIX_SOFTSHADOW_MAX"); aox = e ? (float)atof(e) : 0.02f; }
-      p_glUniform1i(p_glGetUniformLocation(prog_post, "u_aomode"), aom);
-      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_aomax"), aox); }
+      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_aorad"), aor * (float)g_scale); }
     p_glUniform4f(p_glGetUniformLocation(prog_post, "u_rect"), -1, -1, 2, 2);
     p_glUniform4f(p_glGetUniformLocation(prog_post, "u_uv"), 0, 0, 1, 1);
     p_glBindVertexArray(vao_quad);
