@@ -904,23 +904,53 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 }
             }
             /* the panel stops at the line: where the frame's outer shading
-             * hid a row or column of it beyond the line, left out */
-            WinLayer wl[4]; int bx[4], by[4], have = 0;
+             * hid a row or column of it beyond the line, or a panel tile's
+             * see-through corner was filled beyond it (a name plate over a
+             * dialogue window, beside the plate), left out */
+            WinLayer wl[4]; int bx[4], by[4];
+            for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) text_layer(e, eng, bg, y, &wl[bg], &bx[bg], &by[bg]);
+            static const int dir[4][2] = { { 0, 1 }, { 0, -1 }, { 1, 0 }, { -1, 0 } };
             for (int x = 0; x < 256; x++) {
                 if (kind[x] != WIN_PANEL || lay[x] < 0) continue;
-                int f = -1, p = lay[x];
-                for (int bg = 0; bg < 4; bg++) if (bg != p && (winl & (1 << bg)) && (bgl[bg].win[x] == WIN_EDGE || bgl[bg].win[x] == WIN_SHADE)) f = bg;
-                if (f < 0) continue;
-                for (int bg = 0; bg < 4; bg++) if ((bg == f || bg == p) && !(have & (1 << bg))) { have |= 1 << bg; text_layer(e, eng, bg, y, &wl[bg], &bx[bg], &by[bg]); }
-                int fx = (x + bx[f]) & (int)(wl[f].w - 1), px = (x + bx[p]) & (int)(wl[p].w - 1), out = 0;
-                static const int dir[4][2] = { { 0, 1 }, { 0, -1 }, { 1, 0 }, { -1, 0 } };
-                for (int d = 0; d < 4 && !out; d++)
-                    for (int k = 1; k <= 3; k++)
-                        if (win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k)) {
-                            out = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
-                            break;
-                        }
+                int p = lay[x], px = (x + bx[p]) & (int)(wl[p].w - 1), out = 0;
+                int filled = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px, by[p]) == 0;
+                for (int f = 0; f < 4 && !out; f++) {
+                    if (f == p || !(winl & (1 << f))) continue;
+                    if (!filled && bgl[f].win[x] != WIN_EDGE && bgl[f].win[x] != WIN_SHADE) continue;
+                    int fx = (x + bx[f]) & (int)(wl[f].w - 1);
+                    for (int d = 0; d < 4 && !out; d++)
+                        for (int k = 1; k <= (filled ? 6 : 3); k++)
+                            if (win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k)) {
+                                out = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
+                                break;
+                            }
+                }
                 if (out) { bgl[p].col[x] = 0; bgl[p].win[x] = 0; kind[x] = 0; lay[x] = -1; }
+            }
+            /* ...and reaches it: a row of the frame's shading between the line
+             * and the panel (above or below), the panel */
+            for (int x = 0; x < 256; x++) {
+                if (kind[x]) continue;
+                for (int f = 0; f < 4 && !kind[x]; f++) {
+                    if (!(winl & (1 << f)) || (bgl[f].win[x] != WIN_EDGE && bgl[f].win[x] != WIN_SHADE)) continue;
+                    int fx = (x + bx[f]) & (int)(wl[f].w - 1);
+                    for (int d = -1; d <= 1 && !kind[x]; d += 2)          /* the line on that side, the panel on the other */
+                        for (int k = 1; k <= 2 && !kind[x]; k++) {
+                            if (!win_line(&wl[f], fx, by[f] + d * k)) continue;
+                            for (int p = 0; p < 4 && !kind[x]; p++) {
+                                if (!(winl & (1 << p))) continue;
+                                int px = (x + bx[p]) & (int)(wl[p].w - 1);
+                                for (int j = 1; j <= 2; j++) {
+                                    int py = (by[p] - d * j) & (int)(wl[p].h - 1);
+                                    if (win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px, py) != 1) continue;
+                                    uint16_t ent = map_ent(wl[p].mapbase, wl[p].w, wl[p].h, px >> 3, py >> 3);
+                                    bgl[p].col[x] = palc(e, (ent >> 12) * 16u, 1) | PX_OPAQUE; bgl[p].win[x] = WIN_PANEL; bgl[p].wins |= WIN_PANEL;
+                                    kind[x] = WIN_PANEL; lay[x] = (int8_t)p;
+                                    break;
+                                }
+                            }
+                        }
+                }
             }
             for (int x = 1; x < 255; x++) {
                 if (kind[x]) continue;

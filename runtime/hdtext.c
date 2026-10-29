@@ -76,6 +76,14 @@ void hdtext_forget(const uint8_t* p, int size) {
     if (pg) memset(pg + off, 0, (size_t)size * 2 * sizeof(uint32_t));   /* (writes never cross a 4 KB page: they're aligned) */
 }
 
+void hdtext_write(const uint8_t* p, const uint8_t* v, int size) {
+    uint32_t off; uint32_t* pg = page_for(p, 0, &off);
+    if (!pg) return;
+    for (int i = 0; i < size; i++)
+        for (int k = 0; k < 2; k++)
+            if (p[i] != v[i] || !(pg[off + 2 * i + k] & HDT_WIN)) pg[off + 2 * i + k] = 0;
+}
+
 void hdtext_copy(uint32_t dst, uint32_t src, uint32_t bytes) {
     if (!g_hdtext_any) return;
     while (bytes) {
@@ -180,7 +188,7 @@ void hook_GlyphBlit(Cpu* c, void (*orig)(Cpu*)) {
                     int ink = (rows[y] >> x) & 1;
                     uint32_t* t = &pg[off + (X & 1)];
                     if (ink || !(*t & 0x80000000u) || !HDT_INK(*t))   /* another letter's ink stays */
-                        *t = HDT_TAG(inst, x, y, ink);
+                        *t = HDT_TAG(inst, x, y, ink) | HDT_WIN;
                 }
                 break;
             }

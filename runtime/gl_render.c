@@ -1807,8 +1807,8 @@ static void draw_text(int eng, int top, float W, float wside) {
     int nv = 0;
     int per_row = ATLAS / SLOT_W;
     static float dx[4096];                                        /* each letter moved along its line (hdtext_follow) */
-    {   static int line[4096]; int m = n < 4096 ? n : 4096;
-        for (int i = 0; i < m; i++) { line[i] = i; dx[i] = 0; }
+    {   static int line[4096]; int m = 0;
+        for (int i = 0; i < n && i < 4096; i++) { dx[i] = 0; if (gl[i].has_color) line[m++] = i; }   /* (a letter none of whose ink shows: no say in the spacing) */
         g_line_glyphs = gl;
         qsort(line, (size_t)m, sizeof *line, by_line_glyph);
         if (hdtext_font_ok() && !party_in_battle())             /* (not in battles: the party's cards as the game has them) */

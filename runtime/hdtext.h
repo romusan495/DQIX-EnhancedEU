@@ -17,6 +17,7 @@ extern int g_hdtext_any;                      /* some memory carries tags */
 
 /* memory */
 void hdtext_forget(const uint8_t* p, int size);                    /* a write: what was there is gone */
+void hdtext_write(const uint8_t* p, const uint8_t* v, int size);   /* ...before it: a text window's letter written again unchanged stays (HDT_WIN) */
 void hdtext_copy(uint32_t dst, uint32_t src, uint32_t bytes);       /* a copy (after the bytes moved) */
 uint32_t hdtext_tag(uint32_t src2);           /* the tag of a VRAM pixel: src2 = byte address * 2 + high nibble */
 
@@ -26,6 +27,7 @@ uint32_t hdtext_tag(uint32_t src2);           /* the tag of a VRAM pixel: src2 =
 #define HDT_LY(t)    (((t) >> 4) & 15)
 #define HDT_INK(t)   ((t) & 1)
 #define HDT_TAG(inst, x, y, ink) (0x80000000u | (uint32_t)(inst) << 13 | (uint32_t)(x) << 8 | (uint32_t)(y) << 4 | (uint32_t)(ink))
+#define HDT_WIN      2u                       /* (bit 1) a text window's letter (GlyphBlit): written again unchanged, it keeps its tags */
 
 /* per frame, from the 2D engines */
 typedef struct { int x, y, w; int font, glyph; uint32_t color; int has_color; uint32_t inst; int whole_box; } HdGlyph;   /* glyph: for hdtext_render; whole_box: shown in all its box (hdtext_seen_ink) */
