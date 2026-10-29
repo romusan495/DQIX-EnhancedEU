@@ -746,6 +746,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
  * picture is whole, card_boxes() draws the lines (in the top byte, as
  * gl_render.c reads it: 255 the line, 1 left out). */
 static uint8_t g_card_mask[256 * 192];
+static uint8_t g_win_cover[256 * 192];                              /* (modern, battles) a window's panel or line here, in front or not */
 int g_comp_win_px[2];                                               /* last frame: pixels of a window's panel in front, per engine (frontend_sdl.c) */
 static int g_comp_win_px_n[2];
 static int cards_modern_on(int eng) { return eng == 1 && g_comp_gl && g_winstyle == 2 && g_dlg_outline; }
@@ -771,6 +772,32 @@ static void card_boxes(uint32_t* out) {
             if (edge && g_card_mask[i] == 1) out[i] = (out[i] & 0xFFFFFF) | 255u << 24;
         }
     }
+}
+
+/* The battle HUD (frontend_sdl.c, a list open): on rows y0..y1 only the
+ * windows, the cards there left out with all that is on them (the other
+ * members while one chooses a spell: names, icons, the orders' OK) */
+void gpu_cards_hide(int eng, int y0, int y1) {
+    if (!cards_modern_on(eng)) return;
+    if (y0 < 0) y0 = 0;
+    if (y1 > 192) y1 = 192;
+    static uint8_t keep[256 * 192];                                 /* by a window (4 pixels across: a letter's ink between its panel's pixels) */
+    for (int y = y0; y < y1; y++)
+        for (int x = 0; x < 256; x++) {
+            int k = 0;
+            for (int d = -4; d <= 4 && !k; d++) k = x + d >= 0 && x + d < 256 && g_win_cover[y * 256 + x + d];
+            keep[y * 256 + x] = (uint8_t)k;
+        }
+    for (int i = y0 * 256; i < y1 * 256; i++)
+        if (!keep[i]) { g_engine_out[eng][i] = (g_engine_out[eng][i] & 0xFFFFFF) | 1u << 24; g_hdtext_mask[eng][i] = 0; }
+    int n = 0;                                                      /* (and their HD sprites: the members' job icons) */
+    for (int k = 0; k < g_hdsprite_n[eng]; k++) {
+        const HdSprite* sp = &g_hdsprites[eng][k];
+        int cx = sp->x + sp->w / 2, cy = sp->y + sp->h / 2;
+        if (cy >= y0 && cy < y1 && cx >= 0 && cx < 256 && !keep[cy * 256 + cx]) continue;
+        g_hdsprites[eng][n++] = *sp;
+    }
+    g_hdsprite_n[eng] = n;
 }
 
 static void render_engine_line(int eng, int y) {
@@ -1098,6 +1125,9 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                     break;
                 }
             g_card_mask[y * 256 + x] = m;
+            uint8_t wc = obj_on && objl.mw[x] != 0;
+            for (int L = 0; L < 4 && !wc; L++) wc = (winl & (1 << L)) && (wm & (1 << L)) && (bgl[L].win[x] == WIN_PANEL || bgl[L].win[x] == WIN_LINE);
+            g_win_cover[y * 256 + x] = wc;
         }
     }
     #undef MARK3D

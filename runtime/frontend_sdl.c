@@ -104,6 +104,7 @@ static float g_pop_at[3];                                         /* ...where on
 static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
 static int g_shop_cut = 118;                                      /* ...the row between the list and the panels under it */
 enum { SHOP_TX = 60, SHOP_TY = 33, SHOP_TW = 113, SHOP_TH = 58, SHOP_PAD = 3, SHOP_GAP = 3 };   /* the card's text, beside its icon; the description's window */
+static int g_hud_list;                                            /* ...a list open (spells, items, targets): modern, the chooser alone */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -130,6 +131,7 @@ extern int g_comp_gl;
 extern int g_winstyle;          /* Enhanced: windows like the DS (0), minimal (1) or modern (2), gpu2d.c */
 extern int g_win_outline;       /* ...minimal: the commands screen's windows with their white line */
 extern int g_dlg_outline;       /* ...and the 3D screen's (the text box in battles) */
+void gpu_cards_hide(int eng, int y0, int y1);   /* gpu2d.c: the battle cards' boxes on those rows left out */
 extern int g_comp_win_px[2];    /* gpu2d.c: last frame, pixels of a window's panel per engine */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
 static int g_battle_speed = 1;  /* Modern > Battle speed: 1 to 4 times as fast (not in a session) */
@@ -401,10 +403,11 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[2] = w * kw; q[3] = h * kw; q[0] = (v->cw - q[2]) / 2; q[1] = 6;
                 }
                 int nrow = 0;
-                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50;
+                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50 && !g_hud_list;
                 float slot = (v->cw - 4) / (float)(nrow > 4 ? nrow : 4), k = fminf((slot - 2) / 244.0f, 0.5f);
                 float x = (v->cw - slot * (float)nrow) / 2;               /* the row centred */
                 for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
+                    if (g_hud_list && g_hud_band[i][1] - g_hud_band[i][0] < 50) continue;   /* (the others' cards in the row: not while one chooses) */
                     float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]), *q = v->piece[v->npiece++];
                     q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
                     if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
@@ -1368,7 +1371,7 @@ static void wide_update(int a_on_top) {
  * holds the commands. Anything else there (no such lines) keeps the usual
  * small screen. In the field, keep the map for the map window. */
 static void hud_update(int a_on_top) {
-    g_hud_n = 0; g_hud_win[2] = 0;
+    g_hud_n = 0; g_hud_win[2] = 0; g_hud_list = 0;
     if (!WIDE_GL || !g_hud || !g_wide || g_side_by_side || (g_two && !g_single)) return;
     int side = 0, which = gl_wide_shown(&side);
     if (which == 1 && g_wide_pop && !g_minimap) {                 /* the field: the map the window keeps during battles */
@@ -1421,6 +1424,11 @@ static void hud_update(int a_on_top) {
         for (int y = g_hud_band[i][1]; y < g_hud_band[i + 1][0]; y++)
             if (cut[y]) { if (i < a) a = i; if (i + 1 > b) b = i + 1; break; }
     if (a >= 0 && b > a) {
+        /* (modern: only the chooser's boxes with the list, not the others' in the piece) */
+        int t = -1;
+        for (int i = a; i <= b; i++) if (g_hud_band[i][1] - g_hud_band[i][0] >= 50) t = i;
+        g_hud_list = t >= 0 && g_winstyle == 2;
+        if (t >= 0) { gpu_cards_hide(a_on_top ? 1 : 0, g_hud_band[a][0], g_hud_band[t][0]); gpu_cards_hide(a_on_top ? 1 : 0, g_hud_band[t][1], g_hud_band[b][1]); }
         g_hud_band[a][1] = g_hud_band[b][1];
         for (int i = b + 1; i < n; i++) { g_hud_band[i - (b - a)][0] = g_hud_band[i][0]; g_hud_band[i - (b - a)][1] = g_hud_band[i][1]; }
         n -= b - a;
