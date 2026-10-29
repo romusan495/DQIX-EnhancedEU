@@ -887,7 +887,7 @@ static void draw_mark(const Mark* m, int hover) {
     if (b->kind == K_QUEST) a = m->opened == 3 ? 0.6f : 1.0f;     /* opened: the quests' state there */
     /* a light halo: seen on the map's sand as on its grass */
     if (hover) rbox(cx, cy, 4.6f * R, 4.0f * R, 2.0f * R, 0xFFFFFF, 0.95f);
-    else rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);
+    else if (b->kind != K_POT) rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);   /* (a pot: as the legend shows it, without, Romuald's choice) */
     switch (b->kind) {
     case K_POT:
         glyph_pot(cx, cy, R, m->opened, a);
