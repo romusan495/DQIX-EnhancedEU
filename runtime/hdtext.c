@@ -363,11 +363,12 @@ int hdtext_texture(const uint8_t* p, int w, int h, const uint8_t* rgba, uint8_t*
 }
 
 /* The one letter a texture holds (the dialogue windows' letters: a texture
- * each; in battles drawn twice, its shadow beside it), its glyph and where
- * its box starts in it (the leftmost copy's); 0 if none or other letters. */
-int hdtext_texture_letter(const uint8_t* p, int w, int h, int* glyph, int* ox) {
+ * each; in battles drawn twice, its shadow beside it), its glyph, where its
+ * box starts in it (the leftmost copy's) and how far right the other copies
+ * go (copies: 0 for one); 0 if none or other letters. */
+int hdtext_texture_letter(const uint8_t* p, int w, int h, int* glyph, int* ox, int* copies) {
     if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;
-    uint32_t off; int gl = -1, lx = 99;
+    uint32_t off; int gl = -1, lx = 99, rx = -99;
     if (!page_for(p, 0, &off)) return 0;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
@@ -379,9 +380,10 @@ int hdtext_texture_letter(const uint8_t* p, int w, int h, int* glyph, int* ox) {
             gl = g_inst[inst].glyph;
             int bx = x - (int)HDT_LX(t);
             if (bx < lx) lx = bx;
+            if (bx > rx) rx = bx;
         }
     if (gl < 0) return 0;
-    *glyph = gl; *ox = lx;
+    *glyph = gl; *ox = lx; *copies = rx - lx;
     return 1;
 }
 
@@ -621,7 +623,7 @@ static int advance(int glyph, float* l, float* r, float* space) {
     return g_adv[glyph].ok;
 }
 
-float hdtext_follow(int ga, float xa, int gb, float xb, float shift, float k) {
+float hdtext_follow(int ga, float xa, int gb, float xb, float shift, float k, float extra) {
     if (ga < 0 || ga >= g_nglyphs || gb < 0 || gb >= g_nglyphs || xb <= xa) return 0;
     float gap = (xb - xa) / k - (float)g_glyphs[ga].w;           /* the game puts 1 pixel between letters */
     if (gap > 8.0f) return 0;                                    /* another column, another window: as the game has it */
@@ -634,5 +636,5 @@ float hdtext_follow(int ga, float xa, int gb, float xb, float shift, float k) {
     static float track = -1;
     if (track < 0) { const char* e = getenv("DQIX_HD_TEXT_TRACK"); track = e ? (float)atof(e) : 0.6f; if (track < 0) track = 0; }
     float sp = gap > 2.0f ? as + track : 0;                      /* a space between them: the PC font's */
-    return (xa + shift + (ar + track + sp) * k) - (xb + bl * k);
+    return (xa + shift + (ar + track + sp + extra) * k) - (xb + bl * k);
 }

@@ -1320,7 +1320,7 @@ static void gl_vblank(void) {
  * follows the one before it at the PC font's own spacing (a narrow r or i
  * otherwise leaves a gap; hdtext_follow). dx: per polygon, DS pixels to
  * move it across. */
-typedef struct { int i; float x, y, k; int glyph; } LetterQuad;
+typedef struct { int i; float x, y, k, extra; int glyph; } LetterQuad;
 static int by_line(const void* a, const void* b) {
     const LetterQuad* p = a; const LetterQuad* q = b;
     if (p->y != q->y) return p->y < q->y ? -1 : 1;
@@ -1339,12 +1339,12 @@ static int letter_spacing(const Frame3D* f, int textures_on, float* dx) {
             if (p->v[k].zn > 1e-4f) front = 0;
             x0 = fminf(x0, p->v[k].x); x1 = fmaxf(x1, p->v[k].x); y0 = fminf(y0, p->v[k].y);
         }
-        int w, h, glyph, ox;
+        int w, h, glyph, ox, copies;
         if (!front) continue;
         gpu3d_tex_size(p->teximg, &w, &h);
-        if (!hdtext_texture_letter(gpu3d_texels(p->teximg), w, h, &glyph, &ox)) continue;
+        if (!hdtext_texture_letter(gpu3d_texels(p->teximg), w, h, &glyph, &ox, &copies)) continue;
         float k = (x1 - x0) / (float)w;                          /* DS pixels per texel (1: the usual) */
-        q[n].i = i; q[n].k = k; q[n].x = x0 + (float)ox * k; q[n].y = roundf(y0); q[n].glyph = glyph;
+        q[n].i = i; q[n].k = k; q[n].x = x0 + (float)ox * k; q[n].y = roundf(y0); q[n].glyph = glyph; q[n].extra = (float)copies * 0.5f;   /* (a shadow: some room for it before the next letter) */
         n++;
     }
     if (n < 2) return 0;
@@ -1352,7 +1352,7 @@ static int letter_spacing(const Frame3D* f, int textures_on, float* dx) {
     float shift = 0;
     for (int j = 0; j < n; j++) {
         const LetterQuad* a = j ? &q[j - 1] : NULL; const LetterQuad* b = &q[j];
-        shift = a && a->y == b->y ? hdtext_follow(a->glyph, a->x, b->glyph, b->x, shift, b->k) : 0;   /* a line starts where the game starts it */
+        shift = a && a->y == b->y ? hdtext_follow(a->glyph, a->x, b->glyph, b->x, shift, b->k, a->extra) : 0;   /* a line starts where the game starts it */
         dx[b->i] = shift;
     }
     return 1;
@@ -1782,7 +1782,7 @@ static void draw_text(int eng, int top, float W, float wside) {
         if (hdtext_font_ok() && !party_in_battle())             /* (not in battles: the party's cards as the game has them) */
             for (int j = 1; j < m; j++) {
                 const HdGlyph* a = &gl[line[j - 1]]; const HdGlyph* b = &gl[line[j]];
-                if (a->y == b->y) dx[line[j]] = hdtext_follow(a->glyph, (float)a->x, b->glyph, (float)b->x, dx[line[j - 1]], 1.0f);
+                if (a->y == b->y) dx[line[j]] = hdtext_follow(a->glyph, (float)a->x, b->glyph, (float)b->x, dx[line[j - 1]], 1.0f, 0.0f);
             }
     }
     for (int i = 0; i < n && i < 4096; i++) {
