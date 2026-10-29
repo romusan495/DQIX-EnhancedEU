@@ -303,7 +303,17 @@ int hdtext_glyphs(int eng, const HdGlyph** out) {
 /* ---------------------------------------------------------------- letters in textures */
 typedef struct { uint32_t inst; int ox, oy; uint8_t rgba[4]; } CellLetter;
 
-static int by_inst(const void* a, const void* b) { return inst_cmp(((const CellLetter*)a)->inst, ((const CellLetter*)b)->inst); }
+/* drawing order; copies of one letter (a battle message's letter over its
+ * shadow) the darker first: a copy drawn again keeps its first instance
+ * (new_inst), so the order they were drawn in may not show in theirs */
+static int by_inst(const void* a, const void* b) {
+    const CellLetter* p = a; const CellLetter* q = b;
+    if (g_inst[p->inst].glyph == g_inst[q->inst].glyph) {
+        int lp = p->rgba[0] * 2 + p->rgba[1] * 5 + p->rgba[2], lq = q->rgba[0] * 2 + q->rgba[1] * 5 + q->rgba[2];
+        if (lp != lq) return lp < lq ? -1 : 1;
+    }
+    return inst_cmp(p->inst, q->inst);
+}
 
 uint32_t hdtext_texture_key(const uint8_t* p, int w, int h) {
     if (!g_hdtext_any || !g_inst || !p || w > 64 || h > 64) return 0;
