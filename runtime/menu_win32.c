@@ -122,6 +122,7 @@ static void build(int all, const char* const* shell_names, int n_shells) {
         Menu wst = sub(gfx, L"&Window style (Enhanced)");
         item(wst, MI_WINSTYLE0, L"Like the &DS");
         item(wst, MI_WINSTYLE0 + 1, L"&Minimal: no frame, more see-through");
+        item(wst, MI_WINSTYLE0 + 2, L"M&odern: square, dark see-through, a thin grey line");
     }
     sep(gfx);
     item(gfx, MI_TEXPACK, L"&HD textures from the textures folder (Enhanced)");

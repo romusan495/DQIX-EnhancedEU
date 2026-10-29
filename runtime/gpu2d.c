@@ -75,15 +75,16 @@ static inline uint16_t ext16(const uint8_t* p, uint32_t idx) { uint16_t v = 0; i
 #define PX_OPAQUE 0x10000u
 typedef struct { uint32_t col[256]; uint32_t src[256]; uint32_t tag[256]; int tags; uint8_t win[256]; int wins; uint8_t tint[256]; } BgLine;   /* raw 16-bit colour | PX_OPAQUE; src: where it came from (VRAM byte * 2 + high nibble); tag: HD text (hdtext.h); win: WIN_* (window styles); tint: g_hud_tint slot + 1 (a battle card's colour) */
 /* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite */
-typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; } ObjLine;
+typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; uint8_t mw[256]; } ObjLine;   /* mw: WIN_PANEL / WIN_LINE (modern windows made of sprites) */
 
 /* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
  * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
-int g_winstyle = 1;                                                 /* 0 like the DS, 1 minimal: no frame, a fainter panel */
+int g_winstyle = 2;                                                 /* 0 like the DS, 1 minimal: no frame, a fainter panel, 2 modern: minimal's, but */
+                                                                    /* out of battles square windows, a dark see-through panel and a thin grey line round it */
 int g_win_outline;                                                  /* minimal: the commands screen's windows keep their white line (frontend_sdl.c: the experience and level-up windows) */
 int g_dlg_outline;                                                  /* ...and the 3D screen's (frontend_sdl.c: in battles, the text box) */
-enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX };
+enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX, WIN_LINE };
 static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
     return palc(e, palbase, 2) == 0x2108 && palc(e, palbase, 4) == 0x4210 && palc(e, palbase, 8) == 0x6B5A && palc(e, palbase, 10) == 0x7FFF;
@@ -106,6 +107,73 @@ static int tint_slot(uint16_t c) {
     g_hud_tint[g_hud_ntint++] = v;
     return g_hud_ntint;
 }
+/* Modern windows: the panel (colour 1) is a layer of its own, rounded at the
+ * corners by tiles part see-through: a tile of the windows' palette with panel
+ * in it is filled, so the panel is square. The frame, on another layer, keeps
+ * only the straight parts of its white line (colour 10), in grey, carried on
+ * to where they meet: the rounded corner's steps left out, the corner square. */
+#define WIN_LINE_COL 0x4210                                         /* the line's grey (128) */
+static int modern_windows(void) { return g_winstyle == 2 && !g_dlg_outline; }
+static uint16_t map_ent(uint32_t mapbase, uint32_t w, uint32_t h, int tx, int ty) {
+    tx &= (int)(w >> 3) - 1; ty &= (int)(h >> 3) - 1;
+    uint32_t sb = (tx >> 5) + (ty >> 5) * (w >> 8);
+    return vr16(mapbase + sb * 0x800 + (((ty & 31) * 32 + (tx & 31)) * 2));
+}
+/* the colour index at (bx, by) of the layer when on the windows' palette, else -1 */
+static int win_idx(Engine* e, uint32_t charbase, uint32_t mapbase, uint32_t w, uint32_t h, int bx, int by) {
+    uint16_t ent = map_ent(mapbase, w, h, bx >> 3, by >> 3);
+    if (!win_palette(e, (ent >> 12) * 16u)) return -1;
+    int px = bx & 7, py = by & 7;
+    if (ent & 0x400) px = 7 - px;
+    if (ent & 0x800) py = 7 - py;
+    const uint8_t* row = vram_ptr(charbase + (ent & 0x3FF) * 32 + py * 4);
+    return row ? (row[px >> 1] >> ((px & 1) * 4)) & 15 : -1;
+}
+typedef struct { Engine* e; uint32_t charbase, mapbase, w, h; } WinLayer;
+static int win_e(const WinLayer* L, int bx, int by) { return win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx, by) == 10; }
+static int win_run(const WinLayer* L, int bx, int by, int dx, int dy) {   /* the line's pixels from (bx, by) on (up to 4) */
+    int n = 0;
+    while (n < 4 && win_e(L, bx + dx * n, by + dy * n)) n++;
+    return n;
+}
+static int win_line(const WinLayer* L, int bx, int by) {
+    if (win_e(L, bx, by) && (win_run(L, bx, by, -1, 0) + win_run(L, bx, by, 1, 0) > 4 || win_run(L, bx, by, 0, -1) + win_run(L, bx, by, 0, 1) > 4)) return 1;
+    for (int axis = 0; axis < 2; axis++) {                          /* 0: on a row, toward a straight part along it */
+        int ax = axis == 0, ay = axis == 1;
+        for (int s = -1; s <= 1; s += 2)
+            for (int d = 1; d <= 3; d++) {
+                if (win_run(L, bx + ax * s * d, by + ay * s * d, ax * s, ay * s) < 4) continue;
+                /* the corner: on the way back, where a straight part across meets this one */
+                for (int j = 0; j <= 3 - d; j++) {
+                    int cx = bx - ax * s * j, cy = by - ay * s * j;
+                    for (int t = -1; t <= 1; t += 2)
+                        for (int k = 1; k <= 3; k++)
+                            if (win_run(L, cx + ay * t * k, cy + ax * t * k, ay * t, ax * t) >= 4) return 1;
+                }
+                break;
+            }
+    }
+    return 0;
+}
+static int panel_tile(Engine* e, uint32_t charbase, uint16_t ent) {
+    if (!win_palette(e, (ent >> 12) * 16u)) return 0;
+    const uint8_t* t = vram_ptr(charbase + (ent & 0x3FF) * 32);
+    if (!t) return 0;
+    for (int i = 0; i < 32; i++) if ((t[i] & 15) == 1 || (t[i] >> 4) == 1) return 1;
+    return 0;
+}
+/* an empty pixel of a panel tile inside the panel's square: with panel on its
+ * row and on its column (the rounded corner's bite filled, not the tile's
+ * rows or columns beyond the window's edge) */
+static int panel_fill(Engine* e, uint32_t charbase, uint16_t ent, uint32_t px, uint32_t py) {
+    const uint8_t* t = vram_ptr(charbase + (ent & 0x3FF) * 32);
+    int row = 0, col = 0;
+    for (int i = 0; i < 8; i++) {
+        row |= ((t[py * 4 + i / 2] >> ((i & 1) * 4)) & 15) == 1;
+        col |= ((t[i * 4 + px / 2] >> ((px & 1) * 4)) & 15) == 1;
+    }
+    return row && col;
+}
 static int card_palette(Engine* e, uint32_t palbase) {
     return palc(e, palbase, 3) == 0x18C6 && palc(e, palbase, 4) == 0x294A && palc(e, palbase, 11) == 0x2529
         && palc(e, palbase, 12) == 0x314A && palc(e, palbase, 13) == 0x396B && palc(e, palbase, 14) == 0x7FFF && palc(e, palbase, 15) == 0x7FFF;
@@ -116,6 +184,17 @@ static int ramp_palette(Engine* e, uint32_t palbase) {
         if ((b & 31) < (a & 31) || ((b >> 5) & 31) < ((a >> 5) & 31) || (b >> 10) < (a >> 10)) return 0;
     }
     return palc(e, palbase, 15) != palc(e, palbase, 1);
+}
+
+/* a text layer's tiles as a WinLayer, and where line y's pixel 0 is in it */
+static void text_layer(Engine* e, int eng, int bg, int y, WinLayer* L, int* bx, int* by) {
+    uint32_t disp = R32(e, 0);
+    uint16_t cnt = R16(e, 0x08 + bg * 2);
+    L->e = e;
+    L->charbase = e->bgvram + ((cnt >> 2) & 15) * 0x4000 + (eng == 0 ? ((disp >> 24) & 7) * 0x10000 : 0);
+    L->mapbase  = e->bgvram + ((cnt >> 8) & 31) * 0x800  + (eng == 0 ? ((disp >> 27) & 7) * 0x10000 : 0);
+    L->w = (cnt >> 14) & 1 ? 512 : 256; L->h = (cnt >> 14) & 2 ? 512 : 256;
+    *bx = R16(e, 0x10 + bg * 4) & 0x1FF; *by = (int)((y + (R16(e, 0x12 + bg * 4) & 0x1FF)) & (L->h - 1));
 }
 
 static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
@@ -141,6 +220,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     uint32_t winpal = 0, cardpal = 0, ramppal = 0, inkpal = 0, winchecked = 0;
     uint8_t tints[16] = { 0 };                                      /* a card palette's colour (its g_hud_tint slot + 1) */   /* palettes (bits): the windows', the cards', a gradient, letters on a panel */
     out->wins = 0;
+    int modern = ws && modern_windows();
     for (int x = 0; x < 256;) {
         uint32_t xx = (x + hofs) & (w - 1);
         uint32_t tx = xx >> 3;
@@ -153,6 +233,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
         /* one tile row: 8 (or 4) bytes, contiguous within a 16 KB VRAM page */
         const uint8_t* row = c256 ? vram_ptr(charbase + tile * 64 + py * 8) : vram_ptr(charbase + tile * 32 + py * 4);
         uint32_t palbase = c256 ? 0 : (ent >> 12) * 16;
+        int ptile = modern && panel_tile(e, charbase, ent);         /* modern: a tile of a window's panel */
         for (uint32_t px0 = xx & 7; px0 < 8 && x < 256; px0++, x++) {
             uint32_t px = flip ? 7 - px0 : px0;
             uint32_t idx;
@@ -176,6 +257,21 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
+                if (modern && (winpal & b) && k) {
+                    WinLayer wl = { e, charbase, mapbase, w, h };
+                    int line = (k == WIN_EDGE || k == WIN_SHADE) && win_line(&wl, (int)((x + hofs) & (w - 1)), (int)yy);
+                    if (line || (ptile && k != WIN_PANEL) || (ptile && idx == 1)) {
+                        k = line ? WIN_LINE : WIN_PANEL;
+                        out->win[x] = (uint8_t)k; out->wins |= k; out->tint[x] = 0;
+                        out->col[x] = (line ? WIN_LINE_COL : palc(e, palbase, 1)) | PX_OPAQUE;
+                        continue;
+                    }
+                }
+                if (ptile && !idx && panel_fill(e, charbase, ent, px, py)) {   /* (the panel's rounded corner) */
+                    out->win[x] = WIN_PANEL; out->wins |= WIN_PANEL; out->tint[x] = 0;
+                    out->col[x] = palc(e, palbase, 1) | PX_OPAQUE;
+                    continue;
+                }
                 out->win[x] = (uint8_t)k; out->wins |= k;
                 out->tint[x] = (cardpal & b) ? tints[ent >> 12] : 0;
             }
@@ -298,9 +394,71 @@ static int hd_sprite(Engine* e, int eng, int i, uint32_t disp, const uint8_t* ex
     return hdspr_hd[eng][i] = 1;
 }
 
+/* Modern windows made of sprites (the yes/no boxes): a frame of sprites in
+ * the windows' palette round a see-through panel sprite. At the frame's first
+ * line, each such window's rectangle is found from its white line (colour 10,
+ * its pixels joined); inside it, its sprites' pixels become the panel, their
+ * outer ones the line, and the frame's shading outside it is left out. */
+#define OBJ_WINS 16
+static int16_t g_objwin[2][OBJ_WINS][4];                            /* x0, y0, x1, y1 (inclusive) */
+static int g_objwin_n[2];
+static int obj_win_sprite(Engine* e, uint16_t a0, uint16_t a2) {   /* a plain 16-colour sprite in the windows' palette */
+    int mode = (a0 >> 10) & 3;
+    return !((a0 >> 8) & 1) && !((a0 >> 13) & 1) && mode < 2 && win_palette(e, 0x100 + (a2 >> 12) * 16u);
+}
+static void obj_windows(Engine* e, int eng) {
+    static uint8_t m[192][256];
+    static int16_t st[256 * 192][2];
+    uint32_t disp = R32(e, 0);
+    const uint8_t* oam = &g_oam[eng * 0x400];
+    g_objwin_n[eng] = 0;
+    memset(m, 0, sizeof m);
+    int any = 0;
+    for (int i = 0; i < 128; i++) {
+        uint16_t a0, a1, a2;
+        memcpy(&a0, oam + i * 8, 2); memcpy(&a1, oam + i * 8 + 2, 2); memcpy(&a2, oam + i * 8 + 4, 2);
+        if ((a0 & 0x200) || ((a0 >> 14) & 3) == 3 || !obj_win_sprite(e, a0, a2)) continue;
+        int shape = (a0 >> 14) & 3, sz = (a1 >> 14) & 3, w = obj_w[shape][sz], h = obj_h[shape][sz];
+        int ox = a1 & 0x1FF, oy = a0 & 0xFF;
+        if (ox >= 256) ox -= 512;
+        if (oy >= 192) oy -= 256;
+        for (int ly = 0; ly < h; ly++) for (int lx = 0; lx < w; lx++) {
+            int sx = ox + lx, sy = oy + ly;
+            if (sx < 0 || sx >= 256 || sy < 0 || sy >= 192) continue;
+            uint32_t src;
+            int tx = (a1 & 0x1000) ? w - 1 - lx : lx, ty = (a1 & 0x2000) ? h - 1 - ly : ly;
+            if (obj_index(e, disp, a2 & 0x3FF, 0, w, tx, ty, &src) == 10) { m[sy][sx] = 1; any = 1; }
+        }
+    }
+    if (!any) return;
+    for (int y0 = 0; y0 < 192; y0++) for (int x0 = 0; x0 < 256; x0++) {
+        if (m[y0][x0] != 1) continue;
+        int n = 0, bx0 = x0, by0 = y0, bx1 = x0, by1 = y0;
+        st[n][0] = (int16_t)x0; st[n][1] = (int16_t)y0; n++; m[y0][x0] = 2;
+        while (n) {
+            n--; int x = st[n][0], y = st[n][1];
+            if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+                int u = x + dx, v = y + dy;
+                if (u < 0 || u >= 256 || v < 0 || v >= 192 || m[v][u] != 1) continue;
+                m[v][u] = 2; st[n][0] = (int16_t)u; st[n][1] = (int16_t)v; n++;
+            }
+        }
+        if (bx1 - bx0 >= 8 && by1 - by0 >= 8 && g_objwin_n[eng] < OBJ_WINS) {
+            int16_t* r = g_objwin[eng][g_objwin_n[eng]++];
+            r[0] = (int16_t)bx0; r[1] = (int16_t)by0; r[2] = (int16_t)bx1; r[3] = (int16_t)by1;
+        }
+    }
+}
+
 static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
     uint32_t disp = R32(e, 0);
     const uint8_t* oam = &g_oam[eng * 0x400];
+    int modern = g_comp_gl && modern_windows();
+    static uint64_t found[2];                                       /* g_frame + 1: the windows found this frame */
+    if (found[eng] != g_frame + 1) { found[eng] = g_frame + 1; g_objwin_n[eng] = 0; if (modern) obj_windows(e, eng); }
+    if (!modern) g_objwin_n[eng] = 0;
+    memset(out->mw, 0, sizeof out->mw);
     const uint8_t* ext = (disp & 0x80000000u) ? ext_obj_pal(eng) : NULL;
     memset(out->col, 0, sizeof out->col);
     memset(out->prio, 4, sizeof out->prio);
@@ -370,6 +528,19 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 else col = pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + idx) * 2);
             }
             if (mode == 2) { if (opaque) out->win[sx] = 1; continue; }
+            int mw = 0;                                             /* modern: this pixel in a window of sprites */
+            if (g_objwin_n[eng] && mode < 2 && !c256 && obj_win_sprite(e, a0, a2)) {
+                uint32_t s2; uint8_t idx = obj_index(e, disp, tile, 0, w, tx, ty, &s2);
+                int in = -1;
+                for (int k = 0; k < g_objwin_n[eng] && in < 0; k++) { const int16_t* r = g_objwin[eng][k]; if (sx >= r[0] && sx <= r[2] && y >= r[1] && y <= r[3]) in = k; }
+                if (in < 0) { if (idx != 1 && (idx & 1) == 0) continue; }   /* (the frame's shading outside the line) */
+                else if (idx <= 1 || ((idx & 1) == 0 && idx <= 10)) {
+                    const int16_t* r = g_objwin[eng][in];
+                    mw = sx == r[0] || sx == r[2] || y == r[1] || y == r[3] ? WIN_LINE : WIN_PANEL;
+                    col = mw == WIN_LINE ? WIN_LINE_COL : palc(e, 0x100 + (a2 >> 12) * 16u, 1);
+                    opaque = 1;
+                }
+            }
             if (!opaque) {                                          /* clear pixel: still carries priority / mosaic */
                 if (!(out->col[sx] & PX_OPAQUE)) { out->prio[sx] = (uint8_t)prio; out->mos[sx] = (uint8_t)mosaic; }
                 continue;
@@ -380,6 +551,8 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 out->flag[sx] = mode == 3 ? (uint8_t)(0xC0 | ((a2 >> 12) + 1)) : mode == 1 ? 0x80 : 0x10;
                 out->mos[sx] = (uint8_t)mosaic;
                 out->src[sx] = objsrc;
+                out->mw[sx] = (uint8_t)mw;
+                if (mw) out->flag[sx] = mw == WIN_PANEL ? 0x80 : 0x10;   /* (the panel see-through, the line solid) */
             }
         }
     }
@@ -626,7 +799,48 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         }
         for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) {
             BgLine* l = &bgl[bg];
-            for (int x = 0; x < 256; x++) if (edge[x] && l->win[x] == WIN_PANEL && (l->col[x] & PX_OPAQUE)) l->col[x] = 0x5294 | PX_OPAQUE;
+            if (!modern_windows()) for (int x = 0; x < 256; x++) if (edge[x] && l->win[x] == WIN_PANEL && (l->col[x] & PX_OPAQUE)) l->col[x] = 0x5294 | PX_OPAQUE;
+        }
+        /* modern: no gap between the line and the panel, where the frame's
+         * shading was beside the line and the panel didn't reach */
+        if (modern_windows()) {
+            int kind[256];                                          /* 0 nothing, WIN_PANEL or WIN_LINE (front-most window pixel); its layer */
+            int8_t lay[256];
+            for (int x = 0; x < 256; x++) {
+                kind[x] = 0; lay[x] = -1;
+                for (int bg = 0; bg < 4; bg++) if ((winl & (1 << bg)) && (bgl[bg].col[x] & PX_OPAQUE) && (bgl[bg].win[x] == WIN_PANEL || bgl[bg].win[x] == WIN_LINE)) {
+                    if (kind[x] != WIN_LINE) kind[x] = bgl[bg].win[x];
+                    if (bgl[bg].win[x] == WIN_PANEL) lay[x] = (int8_t)bg;
+                }
+            }
+            /* the panel stops at the line: where the frame's outer shading
+             * hid a row or column of it beyond the line, left out */
+            WinLayer wl[4]; int bx[4], by[4], have = 0;
+            for (int x = 0; x < 256; x++) {
+                if (kind[x] != WIN_PANEL || lay[x] < 0) continue;
+                int f = -1, p = lay[x];
+                for (int bg = 0; bg < 4; bg++) if (bg != p && (winl & (1 << bg)) && (bgl[bg].win[x] == WIN_EDGE || bgl[bg].win[x] == WIN_SHADE)) f = bg;
+                if (f < 0) continue;
+                for (int bg = 0; bg < 4; bg++) if ((bg == f || bg == p) && !(have & (1 << bg))) { have |= 1 << bg; text_layer(e, eng, bg, y, &wl[bg], &bx[bg], &by[bg]); }
+                int fx = (x + bx[f]) & (int)(wl[f].w - 1), px = (x + bx[p]) & (int)(wl[p].w - 1), out = 0;
+                static const int dir[4][2] = { { 0, 1 }, { 0, -1 }, { 1, 0 }, { -1, 0 } };
+                for (int d = 0; d < 4 && !out; d++)
+                    for (int k = 1; k <= 3; k++)
+                        if (win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k)) {
+                            out = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
+                            break;
+                        }
+                if (out) { bgl[p].col[x] = 0; bgl[p].win[x] = 0; kind[x] = 0; lay[x] = -1; }
+            }
+            for (int x = 1; x < 255; x++) {
+                if (kind[x]) continue;
+                int a = x - 1, b = x + 1;
+                if (!kind[b] && b < 255) b++;
+                if (!kind[a] || !kind[b] || kind[a] == kind[b]) continue;
+                int p = kind[a] == WIN_PANEL ? a : b;
+                if (lay[p] < 0) continue;
+                for (int q = a + 1; q < b; q++) { bgl[lay[p]].col[q] = bgl[lay[p]].col[p]; bgl[lay[p]].win[q] = WIN_PANEL; }
+            }
         }
     }
     int obj_on = (disp >> 12) & 1;
@@ -751,11 +965,15 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 }
             }
             v3 = v2; v2 = v1; v1 = v; front = L == 0 && bg_3d ? LAYER_3D : L >= 4 ? LAYER_OBJ : L;
-            win1 = L < 4 && (winl & (1 << L)) ? (L == paperL ? paperw : bgl[L].win[x]) : 0;
+            win1 = L >= 4 ? objl.mw[x] : (winl & (1 << L)) ? (L == paperL ? paperw : bgl[L].win[x]) : 0;
             pan1 = win1 == WIN_PANEL;
         }
         uint32_t ea = eva, eb = evb;
-        if (pan1) { ea = eva * 3 / 4; eb = evb + (eva - ea); if (eb > 16) eb = 16; }
+        if (pan1) {                                                 /* minimal: a quarter fainter; modern: 55% black (the game's 10/16 a little fainter), like the item's description in shops */
+            ea = modern_windows() ? (eva * 9 + 5) / 10 : eva * 3 / 4;     /* (in proportion: a window the game fades in stays faded) */
+            eb = evb + (eva - ea); if (eb > 16) eb = 16;
+        }
+        else if (win1 == WIN_LINE) { ea = 16; eb = 0; }              /* (the line solid) */
         if (g_pixsrc_on && (x == g_pixsrc[2] || g_pixsrc[2] < 0) && y == g_pixsrc[3] && eng == g_pixsrc[1] && g_frame == (uint64_t)g_pixsrc[0]) {
             int L = -1;
             for (int k = norder - 1; k >= 0 && L < 0; k--) {
@@ -803,7 +1021,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         /* minimal, the commands screen: in the top byte, how the battle HUD
          * shows the pixel (gl_render.c): 1 left out, 2 a see-through panel,
          * 2 + n in the colour of the card it is on (g_hud_tint[n - 1]) */
-        if (win1 >= WIN_CLEAR || (win1 == WIN_PANEL && eng == 1)) {
+        if (win1 == WIN_CLEAR || win1 == WIN_BOX || (win1 == WIN_PANEL && eng == 1)) {
             uint32_t c = 1;
             if (win1 != WIN_CLEAR) {
                 c = 2;

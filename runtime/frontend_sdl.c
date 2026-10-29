@@ -125,7 +125,7 @@ static int g_classic = 0;       /* Classic: the DS's own 3D renderer, exact; Enh
  * the battle small in the corner). In Classic the layout waits, stacked. */
 #define WIDE_GL (g_gl && !g_classic)
 extern int g_comp_gl;
-extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
+extern int g_winstyle;          /* Enhanced: windows like the DS (0), minimal (1) or modern (2), gpu2d.c */
 extern int g_win_outline;       /* ...minimal: the commands screen's windows with their white line */
 extern int g_dlg_outline;       /* ...and the 3D screen's (the text box in battles) */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
@@ -519,8 +519,9 @@ static int ui_language_wanted(void) { return g_ui_language ? g_ui_language : rom
 /* settings_version 2: a new install looks like the project's own setup (Enhanced,
  * widescreen with the map in the top right corner, the battle HUD, the map
  * markers...). An older settings.ini keeps the player's own things (volume,
- * language, wireless, controls, gold farm) but takes these looks once. */
-#define SETTINGS_VERSION 2
+ * language, wireless, controls, gold farm) but takes these looks once.
+ * settings_version 3: the modern windows, once (window_style 2). */
+#define SETTINGS_VERSION 3
 static const char* const LOOK_KEYS[] = {
     "mode", "render_scale", "resolution_3d", "window_scale", "layout", "single_screen", "swap_screens",
     "small_screen_corner", "small_screen_size", "small_screen_hidden", "small_screen_opacity", "small_screen_opacity_chosen",
@@ -543,7 +544,7 @@ static void settings_load(void) {
     while (fgets(line, sizeof line, f)) {
         char key[64]; char val[64];
         if (line[0] == '#' || sscanf(line, " %63[^= ] = %63s", key, val) != 2) continue;
-        if (version < SETTINGS_VERSION && look_key(key)) continue;
+        if (version < 2 && look_key(key)) continue;
         if (!strcmp(key, "player_name")) {                       /* the whole rest of the line (may have spaces) */
             const char* v = strchr(line, '=') + 1; while (*v == ' ') v++;
             snprintf(g_player_name, sizeof g_player_name, "%s", v);
@@ -571,7 +572,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
         else if (!strcmp(key, "smooth_2d")) g_smooth2d = atoi(val) != 0;
         else if (!strcmp(key, "outlines")) { int v = atoi(val); if (v >= 0 && v <= 2) g_outline = v; }
-        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 1) g_winstyle = v; }
+        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 2 && version >= 3) g_winstyle = v; }
         else if (!strcmp(key, "upscale_textures")) g_texup = atoi(val) != 0;
         else if (!strcmp(key, "hd_textures")) g_texpack = atoi(val) != 0;
         else if (!strcmp(key, "dump_textures")) g_texdump = atoi(val) != 0;
@@ -646,7 +647,7 @@ static void settings_save(void) {
     fprintf(f, "smooth_2d = %d\n", g_smooth2d);
     fprintf(f, "# enhanced: characters' outlines: 0 like the DS, 1 thin, 2 none\n");
     fprintf(f, "outlines = %d\n", g_outline);
-    fprintf(f, "# enhanced: menu and dialogue windows: 0 like the DS, 1 minimal (no frame, more see-through)\n");
+    fprintf(f, "# enhanced: menu and dialogue windows: 0 like the DS, 1 minimal (no frame, more see-through), 2 modern (square, dark see-through, a thin grey line)\n");
     fprintf(f, "window_style = %d\n", g_winstyle);
     fprintf(f, "# enhanced: HD textures from the textures folder (textures/<name>.png) instead of the game's: 0 or 1\n");
     fprintf(f, "hd_textures = %d\n", g_texpack);
@@ -839,7 +840,7 @@ static int try_gl(void) {
     if (getenv("DQIX_SMOOTH2D")) g_smooth2d = atoi(getenv("DQIX_SMOOTH2D")) != 0;   /* tests */
     if (getenv("DQIX_TEXUP")) g_texup = atoi(getenv("DQIX_TEXUP")) != 0;
     if (getenv("DQIX_OUTLINES")) g_outline = atoi(getenv("DQIX_OUTLINES"));   /* tests */
-    if (getenv("DQIX_WINDOW_STYLE")) g_winstyle = atoi(getenv("DQIX_WINDOW_STYLE")) == 1;
+    if (getenv("DQIX_WINDOW_STYLE")) { int v = atoi(getenv("DQIX_WINDOW_STYLE")); g_winstyle = v >= 0 && v <= 2 ? v : 0; }
     gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup); gl_set_outline(g_outline);
     if (getenv("DQIX_HD_TEXTURES")) g_texpack = atoi(getenv("DQIX_HD_TEXTURES")) != 0;   /* tests */
     if (getenv("DQIX_DUMP_TEXTURES")) g_texdump = atoi(getenv("DQIX_DUMP_TEXTURES")) != 0;
@@ -1360,6 +1361,7 @@ static void hud_update(int a_on_top) {
         sep[y] = n > 100; cut[y] = sep[y] && nr < 50; nsep += sep[y] && !cut[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
+        if (g_comp_3d_on2d * 4 > 256 * 192) return;              /* (not a menu with a 3D model on top: Attributes, Equip, whose list is that grey too) */
         int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
         for (int y = 0; y < 192; y++)
             for (int x = 0; x < 256; x++)
@@ -1791,7 +1793,7 @@ static void menu_sync(void) {
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
-    for (int i = 0; i < 2; i++) { menu_check(MI_WINSTYLE0 + i, g_winstyle == i); menu_enable(MI_WINSTYLE0 + i, g_gl && !g_classic); }
+    for (int i = 0; i < 3; i++) { menu_check(MI_WINSTYLE0 + i, g_winstyle == i); menu_enable(MI_WINSTYLE0 + i, g_gl && !g_classic); }
     menu_check(MI_TEXUP, g_texup); menu_enable(MI_TEXUP, g_gl && !g_classic);
     menu_check(MI_TEXPACK, g_texpack); menu_enable(MI_TEXPACK, g_gl && !g_classic);
     menu_enable(MI_TEXRELOAD, g_gl && !g_classic && g_texpack);
@@ -2391,7 +2393,7 @@ static void do_action(int id) {
     case MI_SMOOTH: if (g_gl) { g_smooth = !g_smooth; gl_set_smooth(g_smooth); } break;
     case MI_SMOOTH2D: if (g_gl) { g_smooth2d = !g_smooth2d; gl_set_smooth2d(g_smooth2d); } break;
     case MI_OUTLINE0: case MI_OUTLINE0 + 1: case MI_OUTLINE0 + 2: if (g_gl) { g_outline = id - MI_OUTLINE0; gl_set_outline(g_outline); } break;
-    case MI_WINSTYLE0: case MI_WINSTYLE0 + 1: if (g_gl) g_winstyle = id - MI_WINSTYLE0; break;
+    case MI_WINSTYLE0: case MI_WINSTYLE0 + 1: case MI_WINSTYLE0 + 2: if (g_gl) g_winstyle = id - MI_WINSTYLE0; break;
     case MI_TEXUP: if (g_gl) { g_texup = !g_texup; gl_set_tex_upscale(g_texup); } break;
     case MI_TEXPACK: if (g_gl) { g_texpack = !g_texpack; gl_set_texture_pack(g_texpack); } break;
     case MI_TEXRELOAD: if (g_gl && g_texpack) gl_reload_texture_pack(); break;
