@@ -42,7 +42,8 @@ typedef struct {
     float skin_k;                                     /* photo pixels per canvas unit */
     int npiece;                                       /* parts of a screen drawn over the canvas (widescreen battle HUD) */
     float piece[8][10];                               /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom; 2, 3: its 2D alone, gl_set_split()); x, y, w, h on it;
-                                                       * restyled (1 its dark letters alone, made light; 2 no picture: a window of the minimal style) */
+                                                       * restyled (1 its dark letters alone, made light; 2 no picture: a window of the minimal style;
+                                                       * 3 its light letters alone; 4 no picture: a thin grey line; 5 its red ink alone, cleaned) */
     int held;                                         /* show the picture kept by gl_hold() instead of this frame's */
     float overlay[4];                                 /* where to draw gl_set_overlay()'s picture on the canvas (w 0: not) */
     float icons[4];                                   /* ...and gl_set_icons()' */

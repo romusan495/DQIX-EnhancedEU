@@ -101,6 +101,7 @@ static int g_hud = 1;                                             /* widescreen 
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
 static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
+static int g_quest_page;                                          /* ...it is a quest's sheet (quest_page()): redrawn as one modern window */
 static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
 static int g_shop_cut = 118;                                      /* ...the row between the list and the panels under it */
 enum { SHOP_TX = 60, SHOP_TY = 33, SHOP_TW = 113, SHOP_TH = 58, SHOP_PAD = 3, SHOP_GAP = 3 };   /* the card's text, beside its icon; the description's window */
@@ -281,6 +282,35 @@ static int top_page_mode(void) {
     return mapmarks_top_page() ? 1 : 0;
 }
 
+/* A quest's sheet (the top screen while a quest is offered, accepted or
+ * handed in, or read in the quest list): the game's parchment page with its
+ * title bar and its start date bar. In the modern style it is drawn again as
+ * one window of the minimal style, where the page pops up (g_pop_at): the
+ * title and the date in light letters (they are light on the bars), a thin
+ * grey line under the title and over the date, the description's dark
+ * letters made light, and the red stamp (Complete!) in clean ink. The
+ * page's parts, in its pixels: */
+enum { QS_X = 12, QS_Y = 10, QS_W = 235, QS_H = 174,              /* the sheet */
+       QS_IN_X = 16, QS_IN_W = 224,                               /* inside its torn edges */
+       QS_BAR_X = 18, QS_BAR_W = 221,                             /* the bars, inside their gold line */
+       QS_TITLE_Y = 16, QS_TITLE_H = 19,
+       QS_DESC_Y = 38, QS_DESC_H = 128,                           /* the description (and the stamp) */
+       QS_DATE_Y = 167, QS_DATE_H = 12 };
+static void quest_pieces(GlPresent* v) {
+    float k = g_pop_at[2], X = g_pop_at[0] - QS_X * k, Y = g_pop_at[1] - QS_Y * k;   /* (page pixels -> canvas) */
+    static const float part[7][5] = {                             /* x, y, w, h on the page; restyled (FS_COPY's u_mode) */
+        { QS_X, QS_Y, QS_W, QS_H, 2 },                            /* the window */
+        { QS_BAR_X, QS_TITLE_Y + QS_TITLE_H + 1, QS_BAR_W, 1, 4 }, { QS_BAR_X, QS_DATE_Y - 1.5f, QS_BAR_W, 1, 4 },   /* the lines */
+        { QS_BAR_X, QS_TITLE_Y, QS_BAR_W, QS_TITLE_H, 3 }, { QS_BAR_X, QS_DATE_Y, QS_BAR_W, QS_DATE_H, 3 },
+        { QS_IN_X, QS_DESC_Y, QS_IN_W, QS_DESC_H, 1 }, { QS_IN_X, QS_DESC_Y, QS_IN_W, QS_DESC_H, 5 } };   /* its letters, its stamp */
+    for (int i = 0; i < 7; i++) {
+        const float* p = part[i];
+        float* q = v->piece[v->npiece++];
+        q[4] = 0; q[5] = p[0]; q[6] = p[1]; q[7] = p[2]; q[8] = p[3]; q[9] = p[4];
+        q[0] = X + p[0] * k; q[1] = Y + p[1] * k; q[2] = p[2] * k; q[3] = fmaxf(p[3] * k, 0.75f);
+    }
+}
+
 /* second: the layout of the second window (two windows) */
 static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
     memset(v, 0, sizeof *v);
@@ -377,7 +407,8 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
              * shop, a title): its windows alone, without the page's backdrop,
              * popped up in the middle over the big screen (pop_update()) */
             small[0] = small[1] = small[2] = small[3] = 0;
-            if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
+            if (g_pop_win[2] && g_quest_page && v->npiece + 7 <= GL_MAX_PIECES) quest_pieces(v);
+            else if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
                 float* q = v->piece[v->npiece++], w = (float)g_pop_win[2], h = (float)g_pop_win[3];
                 q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
                 q[2] = w * g_pop_at[2]; q[3] = h * g_pop_at[2]; q[0] = g_pop_at[0]; q[1] = g_pop_at[1];
@@ -1522,6 +1553,23 @@ static void pop_place(void) {
     g_pop_held = 1;
 }
 
+/* Is the top screen a quest's sheet (quest_pieces())? Its two dark brown
+ * bars and the light parchment between them, at their places (most of the
+ * points: letters or the stamp may lie over some). */
+static int quest_page(const uint32_t* px) {
+    int ok = 0, n = 0;
+    for (int x = QS_IN_X + 8; x < QS_IN_X + QS_IN_W - 8; x += 8) {
+        uint32_t t = px[(QS_TITLE_Y + 1) * 256 + x], d = px[(QS_DATE_Y + 1) * 256 + x], m = px[108 * 256 + x];
+        int tr = (t >> 16) & 255, tg = (t >> 8) & 255, tb = t & 255, dr = (d >> 16) & 255, dg = (d >> 8) & 255, db = d & 255;
+        int mr = (m >> 16) & 255, mg = (m >> 8) & 255, mb = m & 255;
+        ok += tr > 75 && tr < 125 && tg > 45 && tg < 95 && tb > 20 && tb < 70 && tr > tb + 30;     /* the title bar (97, 65, 40) */
+        ok += dr > 95 && dr < 150 && dg > 50 && dg < 105 && db > 20 && db < 70 && dr > db + 50;    /* the date bar (121, 73, 40) */
+        ok += mr > 210 && mg > 180 && mb > 110 && mr > mb + 50;                                    /* the parchment (251, 227, 162) */
+        n += 3;
+    }
+    return ok * 5 > n * 4;
+}
+
 /* The top screen's page (top_page_mode() 1): which of its pixels are its
  * backdrop, left out of the pop-up (tagged 1 in the top byte, gl_set_top_cut()),
  * and the rest's bounds (g_pop_win). A backdrop of its own (the curtain behind
@@ -1530,9 +1578,15 @@ static void pop_place(void) {
  * around them, and what touches the edge (the sky, the torn border), go. */
 static void pop_update(int a_on_top) {
     if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
-    g_pop_win[2] = 0;
+    g_pop_win[2] = 0; g_quest_page = 0;
     if (top_page_mode() != 1) return;
     enum { N = 256 * 192 };
+    if (g_winstyle == 2 && !g_shop && quest_page(g_engine_out[a_on_top ? 0 : 1])) {   /* a quest's sheet: redrawn whole (quest_pieces()) */
+        g_quest_page = 1;
+        g_pop_win[0] = QS_X; g_pop_win[1] = QS_Y; g_pop_win[2] = QS_W; g_pop_win[3] = QS_H;
+        pop_place();
+        return;
+    }
     static uint8_t bg[N];
     static int lab[N], q[N], size[N], ring[N];
     static uint8_t flags[N];                                      /* 1 touches the edge, 2 reaches inside */
@@ -1677,7 +1731,7 @@ static void present_gl(void) {
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
     shop_update((pow >> 15) & 1);
     pop_update((pow >> 15) & 1);
-    gl_set_top_cut(g_pop_win[2] != 0);
+    gl_set_top_cut(g_pop_win[2] && !g_quest_page);
     gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */

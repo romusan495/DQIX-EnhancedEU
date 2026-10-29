@@ -411,17 +411,29 @@ static const char* FS_COPY =
     "#version 330 core\n"
     "in vec2 v_uv; out vec4 o_color; uniform sampler2D u_src;\n"
     /* u_mode (draw_pieces): 1 dark letters on a light page become light letters on
-     * nothing (premultiplied); 2 no picture: a window of the minimal style,
-     * u_px its size and u_line one DS pixel, in window pixels */
-    "uniform int u_mode; uniform vec2 u_px; uniform float u_line;\n"
+     * nothing (premultiplied; red ink left out: 5's); 2 no picture: a window of
+     * the minimal style, u_px its size and u_line one DS pixel, in window pixels;
+     * 3 light letters on a dark bar, alone; 4 no picture: a thin grey line;
+     * 5 red ink (a quest's Complete! stamp) alone, its specks and holes smoothed
+     * over (u_ds: one DS pixel in u_src) */
+    "uniform int u_mode; uniform vec2 u_px; uniform float u_line; uniform vec2 u_ds;\n"
+    "float red(vec2 uv) { vec4 c = texture(u_src, uv); vec3 r = c.rgb / max(c.a, 0.001); return smoothstep(0.3, 0.45, r.r - max(r.g, r.b)) * c.a; }\n"
     "void main() {\n"
     "  if (u_mode == 2) {\n"
     "    vec2 p = v_uv * u_px; float d = min(min(p.x, p.y), min(u_px.x - p.x, u_px.y - p.y)) / u_line;\n"
     "    o_color = d < 0.6 ? vec4(vec3(0.08), 0.8) : d < 1.6 ? vec4(vec3(0.5), 1.0) : vec4(0.0, 0.0, 0.0, 0.55); return;\n"
     "  }\n"
+    "  if (u_mode == 4) { o_color = vec4(vec3(0.5), 1.0); return; }\n"
+    "  if (u_mode == 5) {\n"
+    "    float m = 0.0;\n"
+    "    for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) m += red(v_uv + vec2(i, j) * 0.6 * u_ds);\n"
+    "    float a = smoothstep(0.3, 0.5, m / 25.0) * 0.92; o_color = vec4(vec3(0.82, 0.1, 0.1) * a, a); return;\n"
+    "  }\n"
     "  vec4 c = texture(u_src, v_uv);\n"
-    "  if (u_mode == 1) { float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114)), t = smoothstep(0.52, 0.32, L) * c.a;\n"
+    "  float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
+    "  if (u_mode == 1) { float t = smoothstep(0.52, 0.32, L) * c.a * (1.0 - red(v_uv));\n"
     "    o_color = vec4(vec3(0.93) * t, t); return; }\n"
+    "  if (u_mode == 3) { float t = smoothstep(0.45, 0.65, L) * c.a; o_color = vec4(vec3(0.93) * t, t); return; }\n"
     "  o_color = c;\n"
     "}\n";
 
@@ -2048,6 +2060,7 @@ static void draw_pieces(const GlPresent* v, GLuint src) {
     GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
     GLint loc_mode = p_glGetUniformLocation(prog_copy, "u_mode");
     p_glUniform1f(p_glGetUniformLocation(prog_copy, "u_line"), v->sc);
+    p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_ds"), 1.0f / W, 1.0f / 384.0f);
     p_glBindVertexArray(vao_quad);
     int restyled = 0;
     for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) restyled |= v->piece[i][9] > 0.5f;
