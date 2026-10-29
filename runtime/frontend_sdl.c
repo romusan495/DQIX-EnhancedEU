@@ -2579,7 +2579,7 @@ static void do_action(int id) {
             "Battle speed: battles (and their victory messages) go 2, 3 or 4 times as fast; the music keeps its pitch and skips ahead. "
             "The rest of the game stays at its own speed. Off while playing with friends far away. Only while the turn plays out: "
             "the attacks, spells and messages go faster, the commands are chosen at the usual pace. Victory messages go by themselves: "
-            "after a win, the messages turn their page every second without pressing A, except after a level up (yours to read). "
+            "after a win, the messages turn their page by themselves (one every 0.8 s) without pressing A, except after a level up (yours to read). "
             "Nothing else changes: the same battles, the same rewards.\n\n"
             "Map: show the monsters walking nearby: red dots on the map, to go for them or around them.\n\n"
             "Save by itself every 10 minutes: the game saves as the priest would, wherever the party is, once the hero is free to walk "
