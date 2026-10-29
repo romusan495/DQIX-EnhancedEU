@@ -1351,6 +1351,7 @@ static void hud_update(int a_on_top) {
         sep[y] = n > 100; cut[y] = sep[y] && nr < 50; nsep += sep[y] && !cut[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
+        if (g_comp_3d_on2d * 4 > 256 * 192) return;              /* (not a menu with a 3D model on top: Attributes, Equip, whose list is that grey too) */
         int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
         for (int y = 0; y < 192; y++)
             for (int x = 0; x < 256; x++)
