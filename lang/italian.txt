@@ -83,6 +83,9 @@ it = &2D smussato: menu, mappe, sprite (Migliorata)
 en = Soft sha&dows in corners and under furniture (Enhanced)
 it = Ombre morbi&de negli angoli e sotto i mobili (Migliorato)
 
+en = Thin dar&k lines round things (Enhanced)
+it = Sottili linee scu&re attorno agli oggetti (Migliorato)
+
 en = Character &outlines (Enhanced)
 it = &Contorni dei personaggi (Migliorata)
 

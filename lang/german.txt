@@ -83,6 +83,9 @@ de = Geglättetes &2D: Menüs, Karten, Sprites (Verbessert)
 en = Soft sha&dows in corners and under furniture (Enhanced)
 de = Weiche Scha&tten in Ecken und unter Möbeln (Verbessert)
 
+en = Thin dar&k lines round things (Enhanced)
+de = Feine dunkle Lin&ien um Objekte (Verbessert)
+
 en = Character &outlines (Enhanced)
 de = Figuren-&Umrisse (Verbessert)
 

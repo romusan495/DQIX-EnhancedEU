@@ -83,6 +83,9 @@ fr = &2D lissée : menus, cartes, sprites (Amélioré)
 en = Soft sha&dows in corners and under furniture (Enhanced)
 fr = Ombres &douces dans les recoins et sous les meubles (Amélioré)
 
+en = Thin dar&k lines round things (Enhanced)
+fr = Fins traits &sombres autour des objets (Amélioré)
+
 en = Character &outlines (Enhanced)
 fr = &Contours des personnages (Amélioré)
 

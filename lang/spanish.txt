@@ -83,6 +83,9 @@ es = &2D suavizado: menús, mapas, sprites (Mejorado)
 en = Soft sha&dows in corners and under furniture (Enhanced)
 es = Sombras suaves en rincones y bajo los mue&bles (Mejorado)
 
+en = Thin dar&k lines round things (Enhanced)
+es = Finas líneas oscu&ras alrededor de los objetos (Mejorado)
+
 en = Character &outlines (Enhanced)
 es = &Contornos de los personajes (Mejorado)
 
