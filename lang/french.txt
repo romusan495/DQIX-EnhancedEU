@@ -80,6 +80,9 @@ fr = Textures &agrandies, xBR (Amélioré)
 en = Smooth &2D: menus, maps, sprites (Enhanced)
 fr = &2D lissée : menus, cartes, sprites (Amélioré)
 
+en = Soft sha&dows in corners and under furniture (Enhanced)
+fr = Ombres &douces dans les recoins et sous les meubles (Amélioré)
+
 en = Character &outlines (Enhanced)
 fr = &Contours des personnages (Amélioré)
 

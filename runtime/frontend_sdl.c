@@ -82,6 +82,7 @@ static int in_adventure(void) { uint32_t v; memcpy(&v, &g_main_ram[0x0F33E0], 4)
 #define MINIMAP_GAP 0                                             /* ...right in the corner (the field's "X Menu" sign moves to the bottom: g_sign_dy) */
 static int g_smooth = 1;                                          /* Enhanced: smooth (filtered) textures */
 static int g_smooth2d = 1, g_texup = 1, g_outline = 1;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
+static int g_softshadow;                                                         /* Enhanced: soft shadows in corners and under things */
 static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
 static int g_hdtext = 1;                                          /* Enhanced: the game's text drawn at full resolution (hdtext.h) */
 static int g_hdmovie = 1;                                         /* Enhanced: the movies from movies/ in HD (hdmovie.h) */
@@ -576,6 +577,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "outlines")) { int v = atoi(val); if (v >= 0 && v <= 2) g_outline = v; }
         else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 2 && version >= 3) g_winstyle = v; }
         else if (!strcmp(key, "upscale_textures")) g_texup = atoi(val) != 0;
+        else if (!strcmp(key, "soft_shadows")) g_softshadow = atoi(val) != 0;
         else if (!strcmp(key, "hd_textures")) g_texpack = atoi(val) != 0;
         else if (!strcmp(key, "dump_textures")) g_texdump = atoi(val) != 0;
         else if (!strcmp(key, "hd_text")) g_hdtext = atoi(val) != 0;
@@ -649,6 +651,8 @@ static void settings_save(void) {
     fprintf(f, "upscale_textures = %d\n", g_texup);
     fprintf(f, "# enhanced: the 2D screens (menus, maps, sprites) smoothed with xBR: 0 or 1\n");
     fprintf(f, "smooth_2d = %d\n", g_smooth2d);
+    fprintf(f, "# enhanced: soft shadows in corners and under things (furniture, shelves, walls meeting the floor): 0 or 1\n");
+    fprintf(f, "soft_shadows = %d\n", g_softshadow);
     fprintf(f, "# enhanced: characters' outlines: 0 like the DS, 1 thin, 2 none\n");
     fprintf(f, "outlines = %d\n", g_outline);
     fprintf(f, "# enhanced: menu and dialogue windows: 0 like the DS, 1 minimal (no frame, more see-through), 2 modern (square, dark see-through, a thin grey line)\n");
@@ -849,7 +853,8 @@ static int try_gl(void) {
     if (getenv("DQIX_TEXUP")) g_texup = atoi(getenv("DQIX_TEXUP")) != 0;
     if (getenv("DQIX_OUTLINES")) g_outline = atoi(getenv("DQIX_OUTLINES"));   /* tests */
     if (getenv("DQIX_WINDOW_STYLE")) { int v = atoi(getenv("DQIX_WINDOW_STYLE")); g_winstyle = v >= 0 && v <= 2 ? v : 0; }
-    gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup); gl_set_outline(g_outline);
+    if (getenv("DQIX_SOFT_SHADOWS")) g_softshadow = atoi(getenv("DQIX_SOFT_SHADOWS")) != 0;   /* tests */
+    gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup); gl_set_outline(g_outline); gl_set_soft_shadows(g_softshadow);
     if (getenv("DQIX_HD_TEXTURES")) g_texpack = atoi(getenv("DQIX_HD_TEXTURES")) != 0;   /* tests */
     if (getenv("DQIX_DUMP_TEXTURES")) g_texdump = atoi(getenv("DQIX_DUMP_TEXTURES")) != 0;
     gl_set_texture_pack(g_texpack); gl_set_texture_dump(g_texdump);
@@ -1827,6 +1832,7 @@ static void menu_sync(void) {
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
     for (int i = 0; i < 3; i++) { menu_check(MI_WINSTYLE0 + i, g_winstyle == i); menu_enable(MI_WINSTYLE0 + i, g_gl && !g_classic); }
     menu_check(MI_TEXUP, g_texup); menu_enable(MI_TEXUP, g_gl && !g_classic);
+    menu_check(MI_SOFTSHADOW, g_softshadow); menu_enable(MI_SOFTSHADOW, g_gl && !g_classic);
     menu_check(MI_TEXPACK, g_texpack); menu_enable(MI_TEXPACK, g_gl && !g_classic);
     menu_enable(MI_TEXRELOAD, g_gl && !g_classic && g_texpack);
     menu_check(MI_TEXDUMP, g_texdump); menu_enable(MI_TEXDUMP, g_gl && !g_classic);
@@ -2427,6 +2433,7 @@ static void do_action(int id) {
     case MI_OUTLINE0: case MI_OUTLINE0 + 1: case MI_OUTLINE0 + 2: if (g_gl) { g_outline = id - MI_OUTLINE0; gl_set_outline(g_outline); } break;
     case MI_WINSTYLE0: case MI_WINSTYLE0 + 1: case MI_WINSTYLE0 + 2: if (g_gl) g_winstyle = id - MI_WINSTYLE0; break;
     case MI_TEXUP: if (g_gl) { g_texup = !g_texup; gl_set_tex_upscale(g_texup); } break;
+    case MI_SOFTSHADOW: if (g_gl) { g_softshadow = !g_softshadow; gl_set_soft_shadows(g_softshadow); } break;
     case MI_TEXPACK: if (g_gl) { g_texpack = !g_texpack; gl_set_texture_pack(g_texpack); } break;
     case MI_TEXRELOAD: if (g_gl && g_texpack) gl_reload_texture_pack(); break;
     case MI_TEXDUMP: if (g_gl) { g_texdump = !g_texdump; gl_set_texture_dump(g_texdump); } break;

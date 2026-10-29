@@ -114,6 +114,7 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     item(gfx, MI_SMOOTH, L"&Smooth textures (Enhanced)");
     item(gfx, MI_TEXUP, L"&Upscaled textures, xBR (Enhanced)");
     item(gfx, MI_SMOOTH2D, L"Smooth &2D: menus, maps, sprites (Enhanced)");
+    item(gfx, MI_SOFTSHADOW, L"Soft sha&dows in corners and under furniture (Enhanced)");
     if (all) {
         Menu oln = sub(gfx, L"Character &outlines (Enhanced)");
         item(oln, MI_OUTLINE0, L"Like the &DS");
