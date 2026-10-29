@@ -98,6 +98,9 @@ es = &Estilo de las ventanas (Mejorado)
 en = &Minimal: no frame, more see-through
 es = &Mínimo: sin marco, más transparente
 
+en = M&odern: square, dark see-through, a thin grey line
+es = M&oderno: cuadrado, oscuro translúcido, fina línea gris
+
 en = &HD textures from the textures folder (Enhanced)
 es = Texturas &HD de la carpeta textures (Mejorado)
 

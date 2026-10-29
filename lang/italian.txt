@@ -98,6 +98,9 @@ it = Stile delle &finestre (Migliorata)
 en = &Minimal: no frame, more see-through
 it = &Minimale: senza cornice, più trasparente
 
+en = M&odern: square, dark see-through, a thin grey line
+it = M&oderno: squadrato, scuro trasparente, sottile linea grigia
+
 en = &HD textures from the textures folder (Enhanced)
 it = Texture &HD dalla cartella textures (Migliorata)
 
