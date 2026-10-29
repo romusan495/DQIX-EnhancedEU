@@ -411,13 +411,21 @@ static const char* FS_COPY =
     "#version 330 core\n"
     "in vec2 v_uv; out vec4 o_color; uniform sampler2D u_src;\n"
     /* u_mode (draw_pieces): 1 dark letters on a light page become light letters on
-     * nothing (premultiplied; red ink left out: 5's); 2 no picture: a window of
+     * nothing (premultiplied); 2 no picture: a window of
      * the minimal style, u_px its size and u_line one DS pixel, in window pixels;
      * 3 light letters on a dark bar, alone; 4 no picture: a thin grey line;
+     * 6 as 1, each pixel from 4 points at full size (small, its strokes kept),
+     * red ink left out (5's);
      * 5 red ink (a quest's Complete! stamp) alone, its specks and holes smoothed
      * over (u_ds: one DS pixel in u_src) */
     "uniform int u_mode; uniform vec2 u_px; uniform float u_line; uniform vec2 u_ds;\n"
     "float red(vec2 uv) { vec4 c = texture(u_src, uv); vec3 r = c.rgb / max(c.a, 0.001); return smoothstep(0.3, 0.45, r.r - max(r.g, r.b)) * c.a; }\n"
+    "float ink(vec2 uv, int light) { vec4 c = textureLod(u_src, uv, 0.0); float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
+    "  return (light != 0 ? smoothstep(0.45, 0.65, L) : smoothstep(0.52, 0.32, L)) * c.a; }\n"
+    "float letters(int light) {\n"   /* (each of 4 points in the pixel at full size, then averaged: thin strokes kept when drawn small) */
+    "  vec2 dx = dFdx(v_uv) * 0.25, dy = dFdy(v_uv) * 0.25; float t = 0.0;\n"
+    "  for (int i = 0; i < 4; i++) { vec2 uv = v_uv + dx * (i == 0 || i == 2 ? -1.0 : 1.0) + dy * (i < 2 ? -1.0 : 1.0); t += ink(uv, light) * (light != 0 ? 1.0 : 1.0 - red(uv)); }\n"
+    "  return t * 0.25; }\n"
     "void main() {\n"
     "  if (u_mode == 2) {\n"
     "    vec2 p = v_uv * u_px; float d = min(min(p.x, p.y), min(u_px.x - p.x, u_px.y - p.y)) / u_line;\n"
@@ -431,9 +439,9 @@ static const char* FS_COPY =
     "  }\n"
     "  vec4 c = texture(u_src, v_uv);\n"
     "  float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
-    "  if (u_mode == 1) { float t = smoothstep(0.52, 0.32, L) * c.a * (1.0 - red(v_uv));\n"
+    "  if (u_mode == 1) { float t = smoothstep(0.52, 0.32, L) * c.a;\n"
     "    o_color = vec4(vec3(0.93) * t, t); return; }\n"
-    "  if (u_mode == 3) { float t = smoothstep(0.45, 0.65, L) * c.a; o_color = vec4(vec3(0.93) * t, t); return; }\n"
+    "  if (u_mode == 3 || u_mode == 6) { float t = letters(u_mode == 3 ? 1 : 0); o_color = vec4(vec3(0.93) * t, t); return; }\n"
     "  o_color = c;\n"
     "}\n";
 
@@ -1370,6 +1378,8 @@ static int letter_spacing(const Frame3D* f, int textures_on, float* dx) {
     return 1;
 }
 
+static float g_centre_w;
+float gl_3d_centre_w(void) { return g_centre_w; }
 static void gl_render_(const Frame3D* f);
 static void gl_render(const Frame3D* f) {
     double t0 = perf_ms();
@@ -1379,6 +1389,16 @@ static void gl_render(const Frame3D* f) {
 }
 static void gl_render_(const Frame3D* f) {
     g_frameno++;
+    {   /* how far the 3D in the middle of the picture is (gl_3d_centre_w()) */
+        double A = 0, Aw = 0;
+        for (int i = 0; i < f->n_opaque; i++) {
+            const Poly* p = f->order[i]; double a = 0, w = 0, cx = 0, cy = 0;
+            for (int k = 0; k < p->n; k++) { const SVtx* u = &p->v[k], *t = &p->v[(k + 1) % p->n]; a += u->x * t->y - t->x * u->y; w += u->iw > 0 ? 1.0 / u->iw : 0; cx += u->x; cy += u->y; }
+            a = fabs(a) / 2; cx /= p->n; cy /= p->n;
+            if (cx > f->width * 0.35 && cx < f->width * 0.65 && cy > 50 && cy < 150) { A += a; Aw += a * w / p->n; }
+        }
+        g_centre_w = A > 0 ? (float)(Aw / A) : 0;
+    }
     {   static uint32_t font_gen; static int text_on;                   /* letters in textures (hdtext_texture): drawn again */
         if (font_gen != hdtext_font_gen() || text_on != g_hdtext_on) { font_gen = hdtext_font_gen(); text_on = g_hdtext_on; texcache_redo(); } }
     {   /* tests: DQIX_GL_PROBE="f,x,y": on the first 3D frame from frame f, list the polygons over DS pixel x,y */
