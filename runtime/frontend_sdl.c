@@ -39,6 +39,7 @@
 #include "autosave.h"
 #include "cheats.h"
 #include "mapmarks.h"
+#include "journal.h"
 #include "version.h"
 #include "session.h"
 #include "air.h"
@@ -1147,6 +1148,7 @@ static void memfind_hook(void) {
     }
 }
 
+static void journal_ui_toggle(void);
 static void do_action(int id);
 /* tests: DQIX_TEST_ACTIONS="frame:menu id;frame:resize:w:h;...": menu actions and window resizes at given frames */
 static void test_actions_hook(void) {
@@ -1655,9 +1657,10 @@ static void present_gl(void) {
         if (mapmarks_update(&rgba)) gl_set_overlay(rgba, MAPMARKS_W, MAPMARKS_H);
     }
     int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
-    {   /* the in-game menu (Esc), over everything */
-        static int shown;
-        if (gamemenu_is_open()) { int ch; const uint8_t* p = gamemenu_picture(w, h, &ch); if (ch || !shown) { gl_set_menu(p, w, h); gl_set_menu_box(gamemenu_box()); } shown = 1; }
+    {   /* the in-game menu (Esc) or the journal (J), over everything */
+        static int shown;                                        /* 1 the menu, 2 the journal */
+        if (gamemenu_is_open()) { int ch; const uint8_t* p = gamemenu_picture(w, h, &ch); if (ch || shown != 1) { gl_set_menu(p, w, h); gl_set_menu_box(gamemenu_box()); } shown = 1; }
+        else if (journal_open()) { int ch; const uint8_t* p = journal_picture(w, h, &ch); if (ch || shown != 2) { gl_set_menu(p, w, h); gl_set_menu_box(NULL); } shown = 2; }
         else if (shown) { gl_set_menu(NULL, 0, 0); gl_set_menu_box(NULL); shown = 0; }
     }
     GlPresent v; canvas_layout(&v, w, h);
@@ -2401,6 +2404,7 @@ static void do_action(int id) {
     case MI_HDTEXT: if (g_gl) { g_hdtext = !g_hdtext; apply_mode(); } break;
     case MI_HDMOVIE: if (g_gl) { g_hdmovie = !g_hdmovie; if (g_hdmovie) hdmovie_init(); apply_mode(); } break;   /* on: look in movies/ again */
     case MI_MINIMAP: g_map_shown = !g_map_shown; break;
+    case MI_JOURNAL: journal_ui_toggle(); return;
     case MI_HUD: g_hud = !g_hud; break;
     case MI_MAPMARKS: g_mapmarks = !g_mapmarks; break;
     case MI_MAPMARKS_OPENED: g_mapmarks_opened = !g_mapmarks_opened; break;
@@ -2716,6 +2720,100 @@ static void game_menu_test(void) {
     gamemenu_close();
 }
 
+/* ---------------------------------------------------------------- the journal (journal.h) */
+static void journal_ui_toggle(void) {
+    if (!journal_open() && !g_gl) { notice("The journal needs the graphics card (OpenGL)"); return; }
+    if (gamemenu_is_open()) gamemenu_close();
+    journal_toggle();
+}
+
+/* An event while the journal is open: 1 if it took it. */
+static int journal_event(const SDL_Event* e) {
+    switch (e->type) {
+    case SDL_KEYDOWN: {
+        if (g_cap_action >= 0) return 0;
+        SDL_Scancode k = e->key.keysym.scancode;
+        int a = controls_key_action(k, e->key.keysym.mod);
+        if (journal_searching()) {   /* a page with a search: letters, digits, space go to it (SDL_TEXTINPUT), not to the shortcuts */
+            if (k == SDL_SCANCODE_BACKSPACE) { journal_typed("\b"); break; }
+            if (k == SDL_SCANCODE_SPACE || (k >= SDL_SCANCODE_A && k <= SDL_SCANCODE_0) || (k >= SDL_SCANCODE_MINUS && k <= SDL_SCANCODE_SLASH) || k == SDL_SCANCODE_NONUSBACKSLASH)
+                break;
+        }
+        if (k == SDL_SCANCODE_UP || a == CA_UP) journal_input(JK_UP);
+        else if (k == SDL_SCANCODE_DOWN || a == CA_DOWN) journal_input(JK_DOWN);
+        else if (k == SDL_SCANCODE_LEFT || a == CA_LEFT) journal_input(JK_LEFT);
+        else if (k == SDL_SCANCODE_RIGHT || a == CA_RIGHT) journal_input(JK_RIGHT);
+        else if (k == SDL_SCANCODE_PAGEUP) journal_input(JK_PAGE_UP);
+        else if (k == SDL_SCANCODE_PAGEDOWN) journal_input(JK_PAGE_DOWN);
+        else if (e->key.repeat) break;
+        else if (k == SDL_SCANCODE_ESCAPE || k == SDL_SCANCODE_BACKSPACE || a == CA_B || a == CA_JOURNAL) journal_input(JK_CLOSE);
+        else if (k == SDL_SCANCODE_TAB || a == CA_R) journal_input((e->key.keysym.mod & KMOD_SHIFT) && k == SDL_SCANCODE_TAB ? JK_TAB_PREV : JK_TAB_NEXT);
+        else if (a == CA_L) journal_input(JK_TAB_PREV);
+        else if (k == SDL_SCANCODE_H || a == CA_Y) journal_input(JK_MORE);
+        else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER || k == SDL_SCANCODE_SPACE || a == CA_A) {
+            if (k == SDL_SCANCODE_RETURN && (e->key.keysym.mod & KMOD_ALT)) do_action(MI_FULL);
+            else journal_input(JK_OK);
+        }
+        else if (a == CA_FULL || a == CA_SHOT || a == CA_VOLDOWN || a == CA_VOLUP) hotkey(a);
+        break;
+    }
+    case SDL_TEXTINPUT: journal_typed(e->text.text); break;
+    case SDL_CONTROLLERBUTTONDOWN: {
+        if (g_cap_action >= 0) return 0;
+        int b = e->cbutton.button;
+        if (b == g_ctl_pad[CA_B] || b == g_ctl_pad[CA_JOURNAL] || b == SDL_CONTROLLER_BUTTON_START) journal_input(JK_CLOSE);
+        else if (b == g_ctl_pad[CA_A]) journal_input(JK_OK);
+        else if (b == g_ctl_pad[CA_Y]) journal_input(JK_MORE);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_UP || b == g_ctl_pad[CA_UP]) journal_input(JK_UP);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN || b == g_ctl_pad[CA_DOWN]) journal_input(JK_DOWN);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT || b == g_ctl_pad[CA_LEFT]) journal_input(JK_LEFT);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT || b == g_ctl_pad[CA_RIGHT]) journal_input(JK_RIGHT);
+        else if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || b == g_ctl_pad[CA_L]) journal_input(JK_TAB_PREV);
+        else if (b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER || b == g_ctl_pad[CA_R]) journal_input(JK_TAB_NEXT);
+        else if (b == g_ctl_pad[CA_MENU] || b == SDL_CONTROLLER_BUTTON_GUIDE) { journal_input(JK_CLOSE); game_menu_toggle(); }
+        g_pad_resync = 1;
+        break;
+    }
+    case SDL_MOUSEWHEEL: journal_input(e->wheel.y > 0 ? JK_UP : JK_DOWN); break;
+    case SDL_MOUSEBUTTONDOWN: if (e->button.button == SDL_BUTTON_RIGHT) journal_input(JK_CLOSE); break;
+    default: return 0;
+    }
+    return 1;
+}
+
+/* the left stick moves through the journal (repeating while held) */
+static void journal_stick(void) {
+    static int dir; static Uint32 next;
+    int vy = g_pad ? SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTY) : 0, vx = g_pad ? SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTX) : 0;
+    int d = vy < -20000 ? JK_UP + 1 : vy > 20000 ? JK_DOWN + 1 : vx < -20000 ? JK_LEFT + 1 : vx > 20000 ? JK_RIGHT + 1 : 0;
+    Uint32 now = SDL_GetTicks();
+    if (!d) { dir = 0; return; }
+    if (d != dir) { dir = d; next = now + 350; }
+    else if ((Sint32)(now - next) < 0) return;
+    else next = now + 110;
+    journal_input(d - 1);
+}
+
+/* tests: DQIX_JOURNAL_TEST=frame,keys (U D L R, > next tab, < previous tab, H more; ',' = save the window as journalN.ppm, also done at the end) */
+static void journal_test(void) {
+    static long long at = -2; static const char* keys;
+    if (at == -2) { const char* e = getenv("DQIX_JOURNAL_TEST"); at = e ? atoll(e) : -1; keys = e ? strchr(e, ',') : NULL; }
+    if (at < 0 || g_frame != (uint64_t)at || !g_gl) return;
+    journal_ui_toggle();
+    int shot = 0;
+    for (const char* c = keys ? keys + 1 : ""; ; c++) {
+        if (*c == ',' || !*c) {
+            snprintf(g_shot_next, sizeof g_shot_next, "journal%d.ppm", shot++);
+            present();
+            if (!*c) break;
+            continue;
+        }
+        journal_input(*c == 'U' ? JK_UP : *c == 'D' ? JK_DOWN : *c == 'L' ? JK_LEFT : *c == 'R' ? JK_RIGHT : *c == '>' ? JK_TAB_NEXT :
+                      *c == '<' ? JK_TAB_PREV : *c == 'H' ? JK_MORE : *c == 'O' ? JK_OK : JK_PAGE_DOWN);
+    }
+    journal_input(JK_CLOSE);
+}
+
 /* ---------------------------------------------------------------- hotkeys (Game > Controls) */
 static int wide_now(void) { return g_wide && WIDE_GL && !g_side_by_side; }
 static void hotkey(int a) {
@@ -2726,6 +2824,7 @@ static void hotkey(int a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;
     case CA_MINIMAP: do_action(MI_MINIMAP); notice(g_map_shown ? "Map shown" : "Map hidden"); break;
+    case CA_JOURNAL: journal_ui_toggle(); break;
     case CA_WINSIZE: do_action(MI_SIZE1 + g_scale % 4); break;
     case CA_RES3D:
         if (g_gl && !g_classic) {                                /* 1x 2x 3x 4x 6x 8x Auto */
@@ -2795,6 +2894,7 @@ static void handle_events(void) {
         int mi = menu_command(&e);
         if (mi) { do_action(mi); gamemenu_changed(); continue; }
         if (gamemenu_is_open() && game_menu_event(&e)) continue;
+        if (journal_open() && journal_event(&e)) continue;
         switch (e.type) {
         case SDL_QUIT: exit(0);                                   /* Ctrl+C, the system shutting down */
         case SDL_KEYDOWN: {
@@ -2909,11 +3009,12 @@ void frontend_frame(void) {
         int tx, ty;
         static int dragging;                                  /* the press began on the touch screen */
         int held = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-        g_fe_touch = held && !gamemenu_is_open() && to_touch_in(SDL_GetMouseFocus(), mx, my, &tx, &ty, dragging);
+        g_fe_touch = held && !gamemenu_is_open() && !journal_open() && to_touch_in(SDL_GetMouseFocus(), mx, my, &tx, &ty, dragging);
         dragging = g_fe_touch;
         if (g_fe_touch) { g_fe_tx = tx; g_fe_ty = ty; }
         game_menu_test();
-        if (gamemenu_is_open()) g_fe_keys = 0;               /* the menu has the buttons (in a session the game goes on) */
+        journal_test();
+        if (gamemenu_is_open() || journal_open()) g_fe_keys = 0;              /* the menu has the buttons (in a session the game goes on) */
         uint64_t tp = SDL_GetPerformanceCounter();
         static int shown;                                     /* Modern > Start: the logos run unseen (the window stays as first drawn: black) */
         if (!shown || !bootskip_active()) { present(); shown = 1; }
@@ -2929,6 +3030,12 @@ void frontend_frame(void) {
         if (gamemenu_is_open() && !session_requested()) {      /* the in-game menu: the game waits */
             update_title(0);
             while (gamemenu_is_open()) { handle_events(); game_menu_stick(); present(); SDL_Delay(15); }
+            g_next_frame = SDL_GetPerformanceCounter();
+            g_fps_t0 = 0;
+            g_pad_resync = 1;
+        }
+        if (journal_open() && !session_requested()) {          /* the journal: the game waits */
+            while (journal_open()) { handle_events(); journal_stick(); present(); SDL_Delay(15); }
             g_next_frame = SDL_GetPerformanceCounter();
             g_fps_t0 = 0;
             g_pad_resync = 1;
