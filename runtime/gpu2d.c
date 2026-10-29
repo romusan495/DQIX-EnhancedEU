@@ -80,7 +80,7 @@ typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_
 /* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
  * (colours 2, 4, 6, 8, 10) of one palette, the same in every window. */
-int g_winstyle = 1;                                                 /* 0 like the DS, 1 minimal: no frame, a fainter panel, 2 modern: minimal's, but */
+int g_winstyle = 2;                                                 /* 0 like the DS, 1 minimal: no frame, a fainter panel, 2 modern: minimal's, but */
                                                                     /* out of battles square windows, a dark see-through panel and a thin grey line round it */
 int g_win_outline;                                                  /* minimal: the commands screen's windows keep their white line (frontend_sdl.c: the experience and level-up windows) */
 int g_dlg_outline;                                                  /* ...and the 3D screen's (frontend_sdl.c: in battles, the text box) */

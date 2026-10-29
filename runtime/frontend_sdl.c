@@ -516,8 +516,9 @@ static int ui_language_wanted(void) { return g_ui_language ? g_ui_language : rom
 /* settings_version 2: a new install looks like the project's own setup (Enhanced,
  * widescreen with the map in the top right corner, the battle HUD, the map
  * markers...). An older settings.ini keeps the player's own things (volume,
- * language, wireless, controls, gold farm) but takes these looks once. */
-#define SETTINGS_VERSION 2
+ * language, wireless, controls, gold farm) but takes these looks once.
+ * settings_version 3: the modern windows, once (window_style 2). */
+#define SETTINGS_VERSION 3
 static const char* const LOOK_KEYS[] = {
     "mode", "render_scale", "resolution_3d", "window_scale", "layout", "single_screen", "swap_screens",
     "small_screen_corner", "small_screen_size", "small_screen_hidden", "small_screen_opacity", "small_screen_opacity_chosen",
@@ -540,7 +541,7 @@ static void settings_load(void) {
     while (fgets(line, sizeof line, f)) {
         char key[64]; char val[64];
         if (line[0] == '#' || sscanf(line, " %63[^= ] = %63s", key, val) != 2) continue;
-        if (version < SETTINGS_VERSION && look_key(key)) continue;
+        if (version < 2 && look_key(key)) continue;
         if (!strcmp(key, "player_name")) {                       /* the whole rest of the line (may have spaces) */
             const char* v = strchr(line, '=') + 1; while (*v == ' ') v++;
             snprintf(g_player_name, sizeof g_player_name, "%s", v);
@@ -568,7 +569,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
         else if (!strcmp(key, "smooth_2d")) g_smooth2d = atoi(val) != 0;
         else if (!strcmp(key, "outlines")) { int v = atoi(val); if (v >= 0 && v <= 2) g_outline = v; }
-        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 2) g_winstyle = v; }
+        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 2 && version >= 3) g_winstyle = v; }
         else if (!strcmp(key, "upscale_textures")) g_texup = atoi(val) != 0;
         else if (!strcmp(key, "hd_textures")) g_texpack = atoi(val) != 0;
         else if (!strcmp(key, "dump_textures")) g_texdump = atoi(val) != 0;
