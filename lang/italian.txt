@@ -314,6 +314,15 @@ it = Mappa: mostra i m&ostri nei dintorni (punti rossi)
 en = Map: a plan of the &rooms inside buildings (drawn from their walls)
 it = Mappa: una pianta delle &stanze negli edifici (disegnata dai loro muri)
 
+en = Show the game's &buttons as on your controller or keyboard
+it = Mostra i &tasti del gioco come sul controller o la tastiera
+
+en = Controller: confirm with the &bottom button (Cross / A), cancel with the right one
+it = Controller: conferma con il tasto in &basso (Croce / A), annulla con quello a destra
+
+en = Map: a &legend of the marks (under the place's name)
+it = Mappa: una &legenda dei segni (sotto il nome del luogo)
+
 en = &Start (takes effect next launch)
 it = &Avvio (dal prossimo avvio)
 

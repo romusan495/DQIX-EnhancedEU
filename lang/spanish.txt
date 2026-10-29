@@ -314,6 +314,15 @@ es = Mapa: mostrar los m&onstruos cercanos (puntos rojos)
 en = Map: a plan of the &rooms inside buildings (drawn from their walls)
 es = Mapa: un plano de las &salas de los edificios (trazado según sus paredes)
 
+en = Show the game's &buttons as on your controller or keyboard
+es = Mostrar los &botones del juego como en tu mando o teclado
+
+en = Controller: confirm with the &bottom button (Cross / A), cancel with the right one
+es = Mando: confirmar con el botón de a&bajo (Cruz / A), cancelar con el de la derecha
+
+en = Map: a &legend of the marks (under the place's name)
+es = Mapa: una &leyenda de las marcas (bajo el nombre del lugar)
+
 en = &Start (takes effect next launch)
 es = &Inicio (en el próximo arranque)
 
