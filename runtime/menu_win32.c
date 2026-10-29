@@ -243,6 +243,10 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     item(bsp, MI_BSPEED1, L"&Normal");
     item(bsp, MI_BSPEED1 + 1, L"&2x");
     item(bsp, MI_BSPEED1 + 2, L"&3x");
+    item(bsp, MI_BSPEED4, L"&4x");
+    sep(bsp);
+    item(bsp, MI_BSPEED_TURN, L"Only while the &turn plays out (commands at the usual pace)");
+    item(bsp, MI_BVICTORY, L"&Victory messages go by themselves (not after a level up)");
     item(modern, MI_AUTOSAVE, L"Sa&ve by itself every 10 minutes (on the field, as at a church)");
     sep(modern);
     Menu farm = sub(modern, L"Farm &gold by itself");
