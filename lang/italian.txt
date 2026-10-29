@@ -137,6 +137,9 @@ it = &Times New Roman
 en = Segoe &UI
 it = Segoe &UI
 
+en = &Source Sans 3
+it = &Source Sans 3
+
 en = &Lora
 it = &Lora
 

@@ -122,10 +122,22 @@ static int read_glyph(uint32_t gl, int font, int* w, uint16_t rows[12]) {
     return glyph_find((uint32_t)font << 24 | xo << 8 | (uint32_t)*w, font, *w, rows, str);
 }
 
-/* One more letter drawn (an instance of glyph gi, in that colour index). */
-static uint32_t new_inst(int gi, uint8_t color) {
+/* One more letter drawn (an instance of glyph gi, in that colour index) at
+ * where (its buffer and place in it). The same letter drawn again at the
+ * same place (a name plate or a list redrawn every frame) keeps its
+ * instance: new ones each time would go round the ring in minutes, and the
+ * letters still shown from before (a dialogue being read) would then name
+ * the reused instances' letters. */
+#define REDRAW_N 4096
+static struct { uint32_t where, inst; } g_redraw[REDRAW_N];
+static uint32_t new_inst(int gi, uint8_t color, uint32_t where) {
     if (!g_inst) g_inst = calloc(INST_N, sizeof *g_inst);
+    uint32_t h = ((where * 2654435761u) ^ ((uint32_t)gi * 40503u + color)) % REDRAW_N;
+    uint32_t old = g_redraw[h].inst;
+    if (old && g_redraw[h].where == where && g_inst[old].used && g_inst[old].glyph == (uint16_t)gi && g_inst[old].color == color)
+        return old;
     uint32_t inst = g_inst_next;
+    g_redraw[h].where = where; g_redraw[h].inst = inst;
     g_inst_next = (g_inst_next + 1) & (INST_N - 1); if (!g_inst_next) g_inst_next = 1;
     g_inst[inst].glyph = (uint16_t)gi; g_inst[inst].color = color; g_inst[inst].used = 1;
     return inst;
@@ -148,7 +160,7 @@ void hook_GlyphBlit(Cpu* c, void (*orig)(Cpu*)) {
     int w; uint16_t rows[12];
     int gi = read_glyph(gl, font, &w, rows);
     if (gi < 0) return;
-    uint32_t inst = new_inst(gi, color);
+    uint32_t inst = new_inst(gi, color, win + 4096u * (uint32_t)(y0 & 0xFFF) + (uint32_t)(x0 & 0xFFF));
 
     uint32_t tiles = mem_read32(win), rects = mem_read32(win + 4);
     int nrect = mem_read8(win + 8);
@@ -207,7 +219,7 @@ void hook_GlyphCell(Cpu* c, void (*orig)(Cpu*)) {
     if (!on) return;
     int w; uint16_t rows[12];
     int gi = read_glyph(gl, font, &w, rows);
-    uint32_t inst = gi < 0 ? 0 : new_inst(gi, color);
+    uint32_t inst = gi < 0 ? 0 : new_inst(gi, color, bmp + 4096u * (uint32_t)(y0 & 0xFFF) + (uint32_t)(x0 & 0xFFF));
     for (int y = 0; y < 12; y++)
         for (int x = -1; x < 17; x++) {
             int ink = inst && x >= 0 && x < w && ((rows[y] >> x) & 1);

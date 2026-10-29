@@ -132,25 +132,24 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     sep(gfx);
     item(gfx, MI_HDTEXT, L"HD te&xt (Enhanced)");
     Menu fnt = sub(gfx, L"Text &font");
-    item(fnt, MI_FONT0, L"The game's own letters, &smoothed");
     if (all) {
+        item(fnt, MI_FONT0, L"The game's own letters, &smoothed");
         item(fnt, MI_FONT0 + 1, L"&Georgia");
         item(fnt, MI_FONT0 + 2, L"&Palatino Linotype");
         item(fnt, MI_FONT0 + 3, L"&Constantia");
         item(fnt, MI_FONT0 + 4, L"&Times New Roman");
         item(fnt, MI_FONT0 + 5, L"Segoe &UI");
     }
-    sep(fnt);                                                   /* these come with the game (fonts/) */
+    item(fnt, MI_FONT0 + 15, L"&Source Sans 3");               /* these come with the game (fonts/) */
     if (all) {
+        sep(fnt);
         item(fnt, MI_FONT0 + 6, L"&Lora");
         item(fnt, MI_FONT0 + 7, L"C&rimson Pro");
         item(fnt, MI_FONT0 + 8, L"&Alegreya");
         item(fnt, MI_FONT0 + 9, L"Spectral");
         item(fnt, MI_FONT0 + 10, L"&EB Garamond");
         item(fnt, MI_FONT0 + 11, L"P&hilosopher");
-    }
-    item(fnt, MI_FONT0 + 12, L"&Marcellus");
-    if (all) {
+        item(fnt, MI_FONT0 + 12, L"&Marcellus");
         item(fnt, MI_FONT0 + 13, L"&Nunito (rounded)");
         item(fnt, MI_FONT0 + 14, L"&Fredoka (rounded, bold)");
     }
