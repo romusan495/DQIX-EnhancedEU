@@ -22,6 +22,7 @@
 #include "gpu3d.h"
 #include "gl_render.h"
 #include "hdtext.h"
+#include "farm.h"
 #include "hdmovie.h"
 #include "hdsprite.h"
 
@@ -85,6 +86,7 @@
     X(void, glUniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat)) \
     X(void, glUniform1fv, (GLint, GLsizei, const GLfloat*)) \
     X(void, glUniform3fv, (GLint, GLsizei, const GLfloat*)) \
+    X(void, glUniform4fv, (GLint, GLsizei, const GLfloat*)) \
     X(void, glUniform2fv, (GLint, GLsizei, const GLfloat*)) \
     X(void, glGenVertexArrays, (GLsizei, GLuint*)) \
     X(void, glBindVertexArray, (GLuint)) \
@@ -272,11 +274,14 @@ static const char* FS_COMP =
     "uniform float u_s2d;\n"                                    /* smooth 2D: the width of an output pixel in DS pixels (0: off) */
     "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
     "uniform int u_only;\n"                                    /* the 3D screen apart: 1 its 2D alone (see-through where the 3D shows), 2 its 3D alone */
-    "uniform vec4 u_dlg;\n"                                    /* modern windows: the dialogue window (x0, y0, x1, y1, DS pixels), its line round it */
+    "uniform vec4 u_dlg[4]; uniform int u_ndlg;\n"            /* modern windows: the 3D screen's windows (x0, y0, x1, y1, DS pixels), a line round each */
     "vec3 dlgline(vec3 c, vec2 q) {\n"
-    "  if (u_dlg.z <= u_dlg.x || q.x < u_dlg.x || q.y < u_dlg.y || q.x >= u_dlg.z || q.y >= u_dlg.w) return c;\n"
-    "  float d = min(min(q.x - u_dlg.x, q.y - u_dlg.y), min(u_dlg.z - q.x, u_dlg.w - q.y));\n"
-    "  return d < 1.0 ? vec3(0.5) : c;\n"
+    "  for (int i = 0; i < u_ndlg; i++) {\n"
+    "    vec4 r = u_dlg[i];\n"
+    "    if (q.x < r.x || q.y < r.y || q.x >= r.z || q.y >= r.w) continue;\n"
+    "    if (min(min(q.x - r.x, q.y - r.y), min(r.z - q.x, r.w - q.y)) < 1.0) return vec3(0.5);\n"
+    "  }\n"
+    "  return c;\n"
     "}\n"
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     /* Smooth 2D: xBR's corner rule (the same as xbr_upscale below): at each
@@ -378,9 +383,9 @@ static const char* FS_COMP =
  * coverage from the atlas, kept to where the game shows a letter's box. */
 static const char* VS_TEXT =
     "#version 330 core\n"
-    "in vec2 a_pos; in vec2 a_uv; in vec3 a_col; out vec2 v_uv; out vec2 v_ds; flat out vec3 v_col;\n"
-    "uniform float u_wtot, u_wside; uniform int u_top;\n"
-    "void main() { v_uv = a_uv; v_ds = a_pos; v_col = a_col;\n"
+    "in vec2 a_pos; in vec2 a_uv; in vec3 a_col; in float a_dx; out vec2 v_uv; out vec2 v_ds; flat out vec3 v_col;\n"
+    "uniform float u_wtot, u_wside; uniform int u_top;\n"   /* a_dx: how far the letter was moved across (hdtext_follow); its mask where it was */
+    "void main() { v_uv = a_uv; v_ds = a_pos - vec2(a_dx, 0.0); v_col = a_col;\n"
     "  gl_Position = vec4(-1.0 + 2.0 * (a_pos.x + u_wside) / u_wtot, (u_top != 0 ? 1.0 : 0.0) - a_pos.y / 192.0, 0.0, 1.0); }\n";
 static const char* FS_TEXT =
     "#version 330 core\n"
@@ -667,7 +672,7 @@ static GLuint program(const char* vs, const char* fs, int poly) {
     if (!a || !b) return 0;
     p_glAttachShader(p, a); p_glAttachShader(p, b);
     if (poly == 2) {                                             /* HD text */
-        p_glBindAttribLocation(p, 0, "a_pos"); p_glBindAttribLocation(p, 1, "a_uv"); p_glBindAttribLocation(p, 2, "a_col");
+        p_glBindAttribLocation(p, 0, "a_pos"); p_glBindAttribLocation(p, 1, "a_uv"); p_glBindAttribLocation(p, 2, "a_col"); p_glBindAttribLocation(p, 3, "a_dx");
     } else if (poly) {
         p_glBindAttribLocation(p, 0, "a_pos"); p_glBindAttribLocation(p, 1, "a_color");
         p_glBindAttribLocation(p, 2, "a_tex"); p_glBindAttribLocation(p, 3, "a_attr"); p_glBindAttribLocation(p, 4, "a_edge");
@@ -702,6 +707,8 @@ static int g_cut;                                               /* gl_set_hud_cu
 static int g_cut_top;                                           /* gl_set_top_cut() */
 static int g_split;                                             /* gl_set_split() */
 static GLuint only2d_fbo, only2d_tex;                           /* the 3D screen's 2D alone (gl_set_split()), as final_tex */
+#define DLG_BOXES 4
+static float g_dlg_boxes[DLG_BOXES][4]; static int g_ndlg;      /* the modern windows' lines: each panel of the 3D screen */
 static float g_dlg_box[4];                                      /* gl_dialog_box() */
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
@@ -1308,6 +1315,49 @@ static void gl_vblank(void) {
     g_fb_shown = g_fb_latest;                                  /* what was rendered last is visible now */
 }
 
+/* HD text, the dialogue windows' letters (a quad each, at the game's
+ * spacing for its own letters): along each line, moved so each PC letter
+ * follows the one before it at the PC font's own spacing (a narrow r or i
+ * otherwise leaves a gap; hdtext_follow). dx: per polygon, DS pixels to
+ * move it across. */
+typedef struct { int i; float x, y, k; int glyph; } LetterQuad;
+static int by_line(const void* a, const void* b) {
+    const LetterQuad* p = a; const LetterQuad* q = b;
+    if (p->y != q->y) return p->y < q->y ? -1 : 1;
+    return p->x < q->x ? -1 : p->x > q->x;
+}
+static int letter_spacing(const Frame3D* f, int textures_on, float* dx) {
+    static LetterQuad q[MAX_POLY];
+    int n = 0;
+    if (!g_hdtext_on || !hdtext_font_ok() || !textures_on) return 0;
+    for (int i = 0; i < f->n && i < MAX_POLY; i++) {
+        const Poly* p = f->order[i];
+        dx[i] = 0;
+        if (((p->teximg >> 26) & 7) != 3 || p->n != 4 || ((p->attr >> 16) & 31) == 0) continue;
+        float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f; int front = 1;
+        for (int k = 0; k < p->n; k++) {
+            if (p->v[k].zn > 1e-4f) front = 0;
+            x0 = fminf(x0, p->v[k].x); x1 = fmaxf(x1, p->v[k].x); y0 = fminf(y0, p->v[k].y);
+        }
+        int w, h, glyph, ox;
+        if (!front) continue;
+        gpu3d_tex_size(p->teximg, &w, &h);
+        if (!hdtext_texture_letter(gpu3d_texels(p->teximg), w, h, &glyph, &ox)) continue;
+        float k = (x1 - x0) / (float)w;                          /* DS pixels per texel (1: the usual) */
+        q[n].i = i; q[n].k = k; q[n].x = x0 + (float)ox * k; q[n].y = roundf(y0); q[n].glyph = glyph;
+        n++;
+    }
+    if (n < 2) return 0;
+    qsort(q, (size_t)n, sizeof *q, by_line);
+    float shift = 0;
+    for (int j = 0; j < n; j++) {
+        const LetterQuad* a = j ? &q[j - 1] : NULL; const LetterQuad* b = &q[j];
+        shift = a && a->y == b->y ? hdtext_follow(a->glyph, a->x, b->glyph, b->x, shift, b->k) : 0;   /* a line starts where the game starts it */
+        dx[b->i] = shift;
+    }
+    return 1;
+}
+
 static void gl_render_(const Frame3D* f);
 static void gl_render(const Frame3D* f) {
     double t0 = perf_ms();
@@ -1344,6 +1394,9 @@ static void gl_render_(const Frame3D* f) {
     /* vertices + batches */
     int nv = 0, nb = 0;
     float dlg[4] = { 256, 192, 0, 0 };                           /* the dialogue window's panel, this frame (gl_dialog_box) */
+    float boxes[DLG_BOXES][4]; int boxid[DLG_BOXES], ndlg = 0;      /* ...and each window apart (the modern line) */
+    static float letter_dx[MAX_POLY];
+    int spaced = letter_spacing(f, textures_on, letter_dx);
     for (int i = 0; i < f->n; i++) {
         const Poly* p = f->order[i];
         int fmt = (p->teximg >> 26) & 7;
@@ -1375,6 +1428,12 @@ static void gl_render_(const Frame3D* f) {
         if (wire) {
             for (int k = 0; k < p->n; k++) { push_vertex(&nv, &p->v[k], a, p, (float)textured, -1, 7); push_vertex(&nv, &p->v[(k + 1) % p->n], a, p, (float)textured, -1, 7); }
         } else {
+            static Poly moved;                                     /* a letter moved along its line (letter_spacing) */
+            if (spaced && i < MAX_POLY && letter_dx[i] != 0.0f) {
+                moved = *p;
+                for (int k = 0; k < p->n; k++) moved.v[k].x += letter_dx[i];
+                p = &moved;
+            }
             for (int k = 1; k + 1 < p->n; k++) {                  /* fan: (v0, vk, vk+1) */
                 int ext = 1 | (k + 2 == p->n ? 2 : 0) | (k == 1 ? 4 : 0);
                 push_vertex(&nv, &p->v[0], a, p, (float)textured, 0, ext);
@@ -1393,7 +1452,21 @@ static void gl_render_(const Frame3D* f) {
                 y0 = fminf(y0, p->v[k].y); y1 = fmaxf(y1, p->v[k].y);
             }
             if (y1 - y0 > 144.0f) black = 0;                        /* (not a fade over the whole screen) */
-            if (front && !textured && black && b.translucent) { dlg[0] = fminf(dlg[0], x0); dlg[1] = fminf(dlg[1], y0); dlg[2] = fmaxf(dlg[2], x1); dlg[3] = fmaxf(dlg[3], y1); }
+            if (front && !textured && black && b.translucent) {
+                dlg[0] = fminf(dlg[0], x0); dlg[1] = fminf(dlg[1], y0); dlg[2] = fmaxf(dlg[2], x1); dlg[3] = fmaxf(dlg[3], y1);
+                /* each window its own line: a name plate over the dialogue window
+                 * is a panel of its own (another polygon id); the pieces of one
+                 * panel (the same id, side by side) make one */
+                int k = 0;
+                for (; k < ndlg; k++) {
+                    float* r = boxes[k];
+                    if (boxid[k] == b.pid && x0 <= r[2] + 1 && x1 >= r[0] - 1 && y0 <= r[3] + 1 && y1 >= r[1] - 1) {
+                        r[0] = fminf(r[0], x0); r[1] = fminf(r[1], y0); r[2] = fmaxf(r[2], x1); r[3] = fmaxf(r[3], y1);
+                        break;
+                    }
+                }
+                if (k == ndlg && ndlg < DLG_BOXES) { boxes[ndlg][0] = x0; boxes[ndlg][1] = y0; boxes[ndlg][2] = x1; boxes[ndlg][3] = y1; boxid[ndlg++] = b.pid; }
+            }
             float* o = g_verts + (size_t)b.first * VTX_FLOATS;
             int modern = g_winstyle == 2 && !g_dlg_outline;
             if (modern && front && textured && fmt == 3 && g_tex_frame) { nv = b.first; continue; }   /* modern: no frame (a line in FS_COMP instead) */
@@ -1414,6 +1487,7 @@ static void gl_render_(const Frame3D* f) {
         g_batches[nb++] = b;
     }
     memcpy(g_dlg_box, dlg, sizeof dlg);
+    memcpy(g_dlg_boxes, boxes, sizeof boxes); g_ndlg = ndlg;
 
     int target = g_fb_latest < 0 ? 0 : (g_fb_latest ^ 1);
     if (target == g_fb_shown) target ^= 1;
@@ -1677,22 +1751,40 @@ static void text_init(void) {
     for (int i = 0; i < 2; i++) mask_tex[i] = new_tex(GL_R8, 256, 192, GL_RED, GL_UNSIGNED_BYTE, GL_NEAREST);
     p_glGenVertexArrays(1, &vao_text); p_glBindVertexArray(vao_text);
     p_glGenBuffers(1, &vbo_text); p_glBindBuffer(GL_ARRAY_BUFFER, vbo_text);
-    GLsizei st = 7 * sizeof(float);
+    GLsizei st = 8 * sizeof(float);
     p_glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, st, (void*)0);
     p_glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, st, (void*)(2 * sizeof(float)));
     p_glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, st, (void*)(4 * sizeof(float)));
-    for (int i = 0; i < 3; i++) p_glEnableVertexAttribArray((GLuint)i);
+    p_glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, st, (void*)(7 * sizeof(float)));
+    for (int i = 0; i < 4; i++) p_glEnableVertexAttribArray((GLuint)i);
 }
 
+static const HdGlyph* g_line_glyphs;                           /* (by_line_glyph's) */
+static int by_line_glyph(const void* a, const void* b) {        /* along the lines, top to bottom */
+    const HdGlyph* p = &g_line_glyphs[*(const int*)a]; const HdGlyph* q = &g_line_glyphs[*(const int*)b];
+    if (p->y != q->y) return p->y < q->y ? -1 : 1;
+    return p->x < q->x ? -1 : p->x > q->x;
+}
 /* Draw this frame's letters of one engine over its composed picture (bound: final_fbo). */
 static void draw_text(int eng, int top, float W, float wside) {
     const HdGlyph* gl; int n = hdtext_glyphs(eng, &gl);
     if (!n || !prog_text) return;
     text_init();
     if (g_atlas_gen != hdtext_font_gen()) { g_atlas_gen = hdtext_font_gen(); memset(g_slot, 0, sizeof g_slot); g_nslots = 0; }
-    if (!g_text_verts) g_text_verts = malloc(sizeof(float) * 7 * 6 * 4096);
+    if (!g_text_verts) g_text_verts = malloc(sizeof(float) * 8 * 6 * 4096);
     int nv = 0;
     int per_row = ATLAS / SLOT_W;
+    static float dx[4096];                                        /* each letter moved along its line (hdtext_follow) */
+    {   static int line[4096]; int m = n < 4096 ? n : 4096;
+        for (int i = 0; i < m; i++) { line[i] = i; dx[i] = 0; }
+        g_line_glyphs = gl;
+        qsort(line, (size_t)m, sizeof *line, by_line_glyph);
+        if (hdtext_font_ok() && !party_in_battle())             /* (not in battles: the party's cards as the game has them) */
+            for (int j = 1; j < m; j++) {
+                const HdGlyph* a = &gl[line[j - 1]]; const HdGlyph* b = &gl[line[j]];
+                if (a->y == b->y) dx[line[j]] = hdtext_follow(a->glyph, (float)a->x, b->glyph, (float)b->x, dx[line[j - 1]], 1.0f);
+            }
+    }
     for (int i = 0; i < n && i < 4096; i++) {
         const HdGlyph* g = &gl[i];
         if (!g->has_color) continue;                              /* none of its ink shows */
@@ -1700,12 +1792,12 @@ static void draw_text(int eng, int top, float W, float wside) {
         if (sl < 0) continue;
         float u0 = (float)((sl % per_row) * SLOT_W + 4) / ATLAS, v0 = (float)((sl / per_row) * SLOT_H + 4) / ATLAS;
         float u1 = u0 + (float)(g->w * HDT_R) / ATLAS, v1 = v0 + (float)(12 * HDT_R) / ATLAS;
-        float x0 = (float)g->x, y0 = (float)g->y, x1 = x0 + (float)g->w, y1 = y0 + 12.0f;
+        float x0 = (float)g->x + dx[i], y0 = (float)g->y, x1 = x0 + (float)g->w, y1 = y0 + 12.0f;
         float r = (float)((g->color >> 16) & 255) / 255.0f, gr = (float)((g->color >> 8) & 255) / 255.0f, b = (float)(g->color & 255) / 255.0f;
         const float q[6][4] = { { x0, y0, u0, v0 }, { x1, y0, u1, v0 }, { x1, y1, u1, v1 }, { x0, y0, u0, v0 }, { x1, y1, u1, v1 }, { x0, y1, u0, v1 } };
         for (int k = 0; k < 6; k++) {
-            float* o = &g_text_verts[(size_t)nv * 7];
-            o[0] = q[k][0]; o[1] = q[k][1]; o[2] = q[k][2]; o[3] = q[k][3]; o[4] = r; o[5] = gr; o[6] = b;
+            float* o = &g_text_verts[(size_t)nv * 8];
+            o[0] = q[k][0]; o[1] = q[k][1]; o[2] = q[k][2]; o[3] = q[k][3]; o[4] = r; o[5] = gr; o[6] = b; o[7] = dx[i];
             nv++;
         }
     }
@@ -1727,7 +1819,7 @@ static void draw_text(int eng, int top, float W, float wside) {
     p_glActiveTexture(GL_TEXTURE1); p_glBindTexture(GL_TEXTURE_2D, mask_tex[eng]); p_glBindSampler(1, 0);
     p_glBindVertexArray(vao_text);
     p_glBindBuffer(GL_ARRAY_BUFFER, vbo_text);
-    p_glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(sizeof(float) * 7 * (size_t)nv), g_text_verts, GL_STREAM_DRAW);
+    p_glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(sizeof(float) * 8 * (size_t)nv), g_text_verts, GL_STREAM_DRAW);
     p_glEnable(GL_BLEND);
     p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   /* (solid where the letters are: the HUD's see-through panels) */
@@ -1825,7 +1917,7 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_3d"), 3);
     GLint loc_rect = p_glGetUniformLocation(prog_comp, "u_rect"), loc_has3d = p_glGetUniformLocation(prog_comp, "u_has3d");
     GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
-    GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only"), loc_dlg = p_glGetUniformLocation(prog_comp, "u_dlg");
+    GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only"), loc_dlg = p_glGetUniformLocation(prog_comp, "u_dlg"), loc_ndlg = p_glGetUniformLocation(prog_comp, "u_ndlg");
     p_glUniform1i(loc_only, 0);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
@@ -1852,9 +1944,15 @@ void gl_compose(int a_on_top, int lcd_on) {
         else p_glUniform4f(loc_rect, -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f);
         int split = wide && g_split;                                 /* the 3D alone here; its 2D apart, in only2d_tex */
         p_glUniform1i(loc_only, split ? 2 : 0);
-        if (eng == 0 && has3d && g_winstyle == 2 && !g_dlg_outline && g_dlg_box[2] > g_dlg_box[0] && g_dlg_box[3] > g_dlg_box[1])
-            p_glUniform4f(loc_dlg, g_dlg_box[0] - (float)g_wside, g_dlg_box[1], g_dlg_box[2] - (float)g_wside, g_dlg_box[3]);   /* (the box: in the widened 3D's columns) */
-        else p_glUniform4f(loc_dlg, 0, 0, 0, 0);
+        if (eng == 0 && has3d && g_winstyle == 2 && !g_dlg_outline) {
+            float r[DLG_BOXES][4];
+            for (int k = 0; k < g_ndlg; k++) {                       /* (the boxes: in the widened 3D's columns) */
+                r[k][0] = g_dlg_boxes[k][0] - (float)g_wside; r[k][1] = g_dlg_boxes[k][1];
+                r[k][2] = g_dlg_boxes[k][2] - (float)g_wside; r[k][3] = g_dlg_boxes[k][3];
+            }
+            if (g_ndlg) p_glUniform4fv(loc_dlg, g_ndlg, &r[0][0]);
+            p_glUniform1i(loc_ndlg, g_ndlg);
+        } else p_glUniform1i(loc_ndlg, 0);
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
         if (split) {
             p_glUseProgram(prog_comp);
