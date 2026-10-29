@@ -180,6 +180,7 @@ static const char* FS_POST =
     "uniform int u_fog; uniform int u_fog_alpha_only; uniform vec4 u_fogcol; uniform float u_fogtab[32];\n"
     "uniform int u_fogoff; uniform int u_fogshift; uniform int u_wbuf;\n"
     "uniform float u_ao; uniform float u_aorad;\n"                    /* soft shadows: strength (0 off), reach in pixels */
+    "uniform float u_ink; uniform int u_inkstep; uniform float u_inkmin;\n"   /* thin dark lines round things: strength (0 off), width, how far behind */
     /* Soft shadows in corners and under things: a pixel whose neighbours are
      * nearer than itself on both sides, along a line through it, sits in a
      * hollow (where a wall meets the floor, under a counter, behind a pot)
@@ -200,10 +201,27 @@ static const char* FS_POST =
     "  }\n"
     "  return n > 0.0 ? clamp(s / (n * 0.02), 0.0, 1.0) : 0.0;\n"
     "}\n"
+    /* Thin dark lines round things: a pixel just behind the edge of something
+     * nearer (a pot before the wall, a tree's leaves before the sky...) is
+     * darkened, so shapes stand apart from what is behind them instead of
+     * melting into it. Not round the windows (drawn in 3D right at the front:
+     * far nearer than anything in the scene) */
+    "float ink(ivec2 p) {\n"
+    "  ivec2 sz = textureSize(u_depth, 0); float c0 = max(invw(p), 1e-6), e = 0.0;\n"
+    "  ivec2 o[4] = ivec2[4](ivec2(-u_inkstep, 0), ivec2(u_inkstep, 0), ivec2(0, -u_inkstep), ivec2(0, u_inkstep));\n"
+    "  for (int k = 0; k < 4; k++) {\n"
+    "    ivec2 q = clamp(p + o[k], ivec2(0), sz - 1);\n"
+    "    if (texelFetch(u_attr, q, 0).a < 0.5) continue;\n"
+    "    float d = (invw(q) - c0) / c0;\n"
+    "    if (d < 1.0) e = max(e, smoothstep(u_inkmin, 2.0 * u_inkmin, d));\n"
+    "  }\n"
+    "  return e;\n"
+    "}\n"
     "void main() {\n"
     "  ivec2 p = ivec2(gl_FragCoord.xy);\n"
     "  vec4 c = texelFetch(u_color, p, 0); vec4 at = texelFetch(u_attr, p, 0);\n"
     "  if (u_ao > 0.0 && at.a > 0.5 && c.a > 0.0) c.rgb *= 1.0 - u_ao * hollow(p);\n"
+    "  if (u_ink > 0.0 && at.a > 0.5 && c.a > 0.0) c.rgb *= 1.0 - u_ink * ink(p);\n"
     "  if (u_edge != 0 && at.b > 0.5 && at.a > 0.5) {\n"
     "    float id = at.r; float d = texelFetch(u_depth, p, 0).r;\n"
     "    ivec2 sz = textureSize(u_color, 0);\n"
@@ -698,6 +716,7 @@ static int g_smooth2d;                                         /* smooth 2D (FS_
 static int g_outline;                                          /* 0 the DS's outlines, 1 thin and soft, 2 none */
 static int g_texup;                                            /* upscale textures (xbr_upscale) */
 static int g_softshadow;                                       /* soft shadows in corners and under things (FS_POST) */
+static int g_ink;                                              /* thin dark lines round things (FS_POST) */
 extern int g_winstyle;                                         /* window style (gpu2d.c) */
 extern int g_dlg_outline;                                      /* ...battles: the text box keeps its frame (frontend_sdl.c) */
 static uint64_t g_frameno;
@@ -989,6 +1008,7 @@ static void texcache_redo(void) { for (int i = 0; i < TEXCACHE; i++) g_texcache[
 void gl_set_texture_pack(int on) { g_pack_on = on != 0; if (!g_pack_on) pack_unload(); texcache_redo(); hdsprite_update(); }
 void gl_set_smooth2d(int on) { g_smooth2d = on != 0; }
 void gl_set_soft_shadows(int on) { g_softshadow = on != 0; }
+void gl_set_ink_lines(int on) { g_ink = on != 0; }
 void gl_set_outline(int mode) { g_outline = mode >= 0 && mode <= 2 ? mode : 0; }
 void gl_set_tex_upscale(int on) { on = on != 0; if (on != g_texup) { g_texup = on; texcache_redo(); } }
 void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); hdsprite_update(); }
@@ -1555,6 +1575,10 @@ static void gl_render_(const Frame3D* f) {
     { static float aos = -1, aor; if (aos < 0) { const char* e = getenv("DQIX_SOFTSHADOW"); aos = e ? (float)atof(e) : 0.6f; e = getenv("DQIX_SOFTSHADOW_REACH"); aor = e ? (float)atof(e) : 6.0f; }   /* tests: strength, reach in DS pixels */
       p_glUniform1f(p_glGetUniformLocation(prog_post, "u_ao"), g_softshadow ? aos : 0.0f);
       p_glUniform1f(p_glGetUniformLocation(prog_post, "u_aorad"), aor * (float)g_scale); }
+    { static float ks = -1, km; if (ks < 0) { const char* e = getenv("DQIX_INK"); ks = e ? (float)atof(e) : 0.7f; e = getenv("DQIX_INK_MIN"); km = e ? (float)atof(e) : 0.01f; }   /* tests: strength, how far behind */
+      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_ink"), g_ink ? ks : 0.0f);
+      p_glUniform1i(p_glGetUniformLocation(prog_post, "u_inkstep"), g_scale >= 3 ? g_scale / 3 : 1);
+      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_inkmin"), km); }
     p_glUniform4f(p_glGetUniformLocation(prog_post, "u_rect"), -1, -1, 2, 2);
     p_glUniform4f(p_glGetUniformLocation(prog_post, "u_uv"), 0, 0, 1, 1);
     p_glBindVertexArray(vao_quad);
