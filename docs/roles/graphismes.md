@@ -28,4 +28,10 @@ l'un après l'autre, pas en parallèle.
   (12 670, mêmes noms EU et USA), puis lance `textures-hd.exe`. Les visages et
   cheveux du héros, les lettres et les morceaux des PNJ lointains n'y sont pas
   tels quels : ils restent au dump en jouant.
+- À chaque build (donc à chaque mise à jour), si `game\textures-hd-outil` existe,
+  `tools/build-game.sh` recompile ces deux outils puis lance `textures-rom.exe --auto` :
+  extraction une seule fois par ROM (`textures\dump\rom-textures.txt`), puis
+  `textures-hd.exe` en arrière-plan. `textures-hd` saute les textures déjà présentes
+  dans n'importe quel dossier du pack (`hd\`, `rom\`...) et ne tourne qu'une fois
+  à la fois (`textures\hd-auto.lock`).
 - Vérifier le rendu en jeu (Graphics > Enhanced) et joindre une capture au compte rendu.

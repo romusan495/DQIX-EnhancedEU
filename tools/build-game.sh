@@ -103,6 +103,18 @@ cp lang/*.txt game/lang/ 2>/dev/null || true                          # the menu
 # modern job icons, in the HD texture pack (runtime/hdsprite.h): made from the ROM
 # like the program's icon. Optional: without them the game shows its own.
 $PY tools/job_icons.py "$ROM" game/textures/jobs || echo "   job icons: not made (optional)"
+# HD textures for the whole game, without playing through it: where Real-ESRGAN
+# is installed (game/textures-hd-outil), textures-rom takes every 3D texture out
+# of the ROM into textures/dump (once per ROM), then textures-hd makes their HD
+# versions in the background (only the ones the pack doesn't have yet).
+case "$(uname -s)" in MINGW*|MSYS*)
+    for t in textures-rom textures-hd; do
+        if [ "tools/$t.c" -nt "game/$t.exe" ]; then gcc -O2 -I runtime -o "game/$t.exe" "tools/$t.c" -lm || echo "   $t.exe: not rebuilt (optional)"; fi
+    done
+    if [ -d game/textures-hd-outil ] && [ -f game/textures-rom.exe ]; then
+        ./game/textures-rom.exe --auto || echo "   HD textures from the ROM: not made (optional)"
+    fi ;;
+esac
 # optional files: the built-in Wi-Fi server's downloads and DQVC schedule
 for src in extras/wfc wfc; do
     for g in "$src"/*/; do

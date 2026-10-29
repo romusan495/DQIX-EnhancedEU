@@ -4,7 +4,11 @@
  * playing through it. Double-click it next to the game; it then starts
  * textures-hd.exe if it is there.
  *
- *   textures-rom [--game <game dir>] [rom.nds]
+ *   textures-rom [--game <game dir>] [--auto] [rom.nds]
+ *
+ * --auto (the build runs it so, after each update): nothing to do when this
+ * ROM's textures were already taken out (textures/dump/rom-textures.txt); no
+ * pause at the end, and textures-hd.exe is started without waiting for it.
  *
  * The ROM: the one given, else the first .nds in ..\rom, else the path in
  * ..\rom\last-rom.txt (what BUILD.bat uses).
@@ -305,7 +309,7 @@ static int find_rom(const char* game, char* out, size_t n) {
 }
 
 int main(int argc, char** argv) {
-    char game[600] = ".", rompath[1000] = "";
+    char game[600] = ".", rompath[1000] = ""; int autorun = 0;
 #ifdef _WIN32
     GetModuleFileNameA(NULL, game, sizeof game);
     char* sl = strrchr(game, '\\'); if (sl) *sl = 0;
@@ -313,6 +317,7 @@ int main(int argc, char** argv) {
 #endif
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--game") && i + 1 < argc) snprintf(game, sizeof game, "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--auto")) autorun = 1;
         else snprintf(rompath, sizeof rompath, "%s", argv[i]);
     }
     if (!rompath[0] && !find_rom(game, rompath, sizeof rompath)) { printf("No ROM found: give its path (textures-rom <rom.nds>) or put it in the rom folder.\n"); return 1; }
@@ -326,19 +331,35 @@ int main(int argc, char** argv) {
     if (rd32(d + 0x48) + rd32(d + 0x4C) > rom.n) { printf("%s is not a DS ROM\n", rompath); return 1; }
     char tex[700]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); mkdir_(tex);
     snprintf(g_dump, sizeof g_dump, "%s" SEP "dump", tex); mkdir_(g_dump);
-    printf("Reading %s...\n", rompath);
-    walk_rom(rom, 0);
-    qsort(g_pairs, (size_t)g_npairs, sizeof *g_pairs, cmp_pair);
-    walk_rom(rom, 1);
-    printf("%d textures in the ROM: %d new in textures" SEP "dump, %d already there.\n", g_textures, g_written, g_already);
+    char mark[800], sig[128] = "", old[128] = "";                 /* which ROM was done: its game code and size (bump the 1 if what is taken out changes) */
+    snprintf(mark, sizeof mark, "%s" SEP "rom-textures.txt", g_dump);
+    snprintf(sig, sizeof sig, "textures-rom 1 %.4s %ld", (const char*)d + 12, n);
+    f = fopen(mark, "rb");
+    if (f) { size_t l = fread(old, 1, sizeof old - 1, f); old[l] = 0; fclose(f); }
+    if (autorun && !strncmp(old, sig, strlen(sig))) printf("Textures of this ROM: already taken out.\n");
+    else {
+        printf("Reading %s...\n", rompath);
+        walk_rom(rom, 0);
+        qsort(g_pairs, (size_t)g_npairs, sizeof *g_pairs, cmp_pair);
+        walk_rom(rom, 1);
+        printf("%d textures in the ROM: %d new in textures" SEP "dump, %d already there.\n", g_textures, g_written, g_already);
+        f = fopen(mark, "wb"); if (f) { fprintf(f, "%s\n", sig); fclose(f); }
+    }
 #ifdef _WIN32
     char hd[700]; snprintf(hd, sizeof hd, "%s\\textures-hd.exe", game);
-    if (g_written && GetFileAttributesA(hd) != INVALID_FILE_ATTRIBUTES) {
+    if (autorun && GetFileAttributesA(hd) != INVALID_FILE_ATTRIBUTES) {   /* (it does nothing when every one has its HD version) */
+        STARTUPINFOA si; PROCESS_INFORMATION pi; memset(&si, 0, sizeof si); si.cb = sizeof si;
+        si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_SHOWMINNOACTIVE;
+        if (CreateProcessA(hd, NULL, NULL, NULL, FALSE, CREATE_NEW_CONSOLE | BELOW_NORMAL_PRIORITY_CLASS, NULL, game, &si, &pi)) {
+            printf("Making the HD versions of the new ones in the background (textures-hd.exe, see textures\\hd-auto.log).\n");
+            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        }
+    } else if (g_written && GetFileAttributesA(hd) != INVALID_FILE_ATTRIBUTES) {
         printf("Making the HD versions (textures-hd.exe): this can take a while...\n");
         STARTUPINFOA si; PROCESS_INFORMATION pi; memset(&si, 0, sizeof si); si.cb = sizeof si;
         if (CreateProcessA(hd, NULL, NULL, NULL, FALSE, 0, NULL, game, &si, &pi)) { WaitForSingleObject(pi.hProcess, INFINITE); CloseHandle(pi.hProcess); CloseHandle(pi.hThread); printf("Done: see textures\\hd-auto.log.\n"); }
     }
-    printf("Press Enter to close.\n"); getchar();
+    if (!autorun) { printf("Press Enter to close.\n"); getchar(); }
 #endif
     free(d);
     return 0;

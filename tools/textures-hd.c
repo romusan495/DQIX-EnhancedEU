@@ -27,6 +27,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
+#include <sys/stat.h>
 #define mkdir_(p) _mkdir(p)
 #define SEP "\\"
 #else
@@ -47,7 +48,6 @@ static void logf_(const char* fmt, ...) {
     va_end(a);
 }
 
-static int exists(const char* p) { FILE* f = fopen(p, "rb"); if (f) fclose(f); return f != NULL; }
 
 /* the dumped textures' names: 16 hex digits + ".png" */
 static int list_dump(const char* dir, char (*names)[32], int max) {
@@ -66,6 +66,45 @@ static int list_dump(const char* dir, char (*names)[32], int max) {
 #endif
     return n;
 }
+
+/* the HD textures already in the pack, in any folder of textures/ (hd/, or a
+ * pack put next to it: rom/...) except the originals: those aren't redone */
+static char (*g_have)[32]; static int g_nhave, g_caphave;
+static void pack_names(const char* dir, int depth) {
+    if (depth > 8) return;
+#ifdef _WIN32
+    char pat[700]; snprintf(pat, sizeof pat, "%s\\*", dir);
+    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        const char* nm = fd.cFileName;
+        if (nm[0] == '.') continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+#else
+    DIR* d = opendir(dir); struct dirent* e;
+    if (!d) return;
+    while ((e = readdir(d))) {
+        const char* nm = e->d_name; struct stat st; char full[700];
+        if (nm[0] == '.') continue;
+        snprintf(full, sizeof full, "%s/%s", dir, nm);
+        if (stat(full, &st) == 0 && S_ISDIR(st.st_mode)) {
+#endif
+            if (depth == 0 && (!strcmp(nm, "dump") || !strcmp(nm, "dump-2d") || !strcmp(nm, "hd-auto-tmp"))) continue;
+            char sub[700]; snprintf(sub, sizeof sub, "%s" SEP "%s", dir, nm); pack_names(sub, depth + 1);
+        } else if (strlen(nm) == 20 && !strcmp(nm + 16, ".png")) {
+            if (g_nhave == g_caphave) { g_caphave = g_caphave ? g_caphave * 2 : 4096; g_have = realloc(g_have, sizeof *g_have * (size_t)g_caphave); }
+            snprintf(g_have[g_nhave++], 32, "%s", nm);
+        }
+#ifdef _WIN32
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    }
+    closedir(d);
+#endif
+}
+static int cmp_name(const void* a, const void* b) { return strcmp((const char*)a, (const char*)b); }
+static int in_pack(const char* name) { return g_nhave && bsearch(name, g_have, (size_t)g_nhave, sizeof *g_have, cmp_name) != NULL; }
 
 /* see-through texels take the average colour of their solid (or already filled) neighbours */
 static void bleed(unsigned char* px, int w, int h) {
@@ -177,7 +216,8 @@ static int upscale_new(const char* game) {
     static char names[20000][32];
     int n = list_dump(dump, names, 20000), todo = 0;
     static char work[20000][32]; static int pads[20000];
-    for (int i = 0; i < n; i++) { char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", hd, names[i]); if (!exists(p)) snprintf(work[todo++], 32, "%s", names[i]); }
+    { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); pack_names(tex, 0); qsort(g_have, (size_t)g_nhave, sizeof *g_have, cmp_name); }
+    for (int i = 0; i < n; i++) if (!in_pack(names[i])) snprintf(work[todo++], 32, "%s", names[i]);
     if (!todo) return 0;
     g_log = fopen(logp, "a");
     time_t t = time(NULL); logf_("\n%s%d new texture(s) in textures/dump\n", ctime(&t), todo);
@@ -258,6 +298,17 @@ int main(int argc, char** argv) {
 #else
     if (argc > 2 && !strcmp(argv[1], "--game")) snprintf(game, sizeof game, "%s", argv[2]);
 #endif
+    /* one at a time: the game starts this when it closes, the build after an update too */
+    char lock[700]; snprintf(lock, sizeof lock, "%s" SEP "textures" SEP "hd-auto.lock", game);
+    FILE* lf = fopen(lock, "rb");
+    if (lf) {
+        fclose(lf);
+        struct stat st;
+        if (stat(lock, &st) == 0 && time(NULL) - st.st_mtime < 6 * 3600) return 0;   /* another one is at work (an older lock: left by a crash) */
+    }
+    { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); mkdir_(tex); }
+    lf = fopen(lock, "wb"); if (lf) fclose(lf);
     upscale_new(game);
+    remove(lock);
     return 0;
 }
