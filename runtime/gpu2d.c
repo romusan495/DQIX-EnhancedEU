@@ -927,8 +927,10 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             pan1 = win1 == WIN_PANEL;
         }
         uint32_t ea = eva, eb = evb;
-        if (pan1 && modern_windows()) { ea = 9; eb = 7; }                /* modern: 55% black, like the item's description in shops */
-        else if (pan1) { ea = eva * 3 / 4; eb = evb + (eva - ea); if (eb > 16) eb = 16; }
+        if (pan1) {                                                 /* minimal: a quarter fainter; modern: 55% black (the game's 10/16 a little fainter), like the item's description in shops */
+            ea = modern_windows() ? (eva * 9 + 5) / 10 : eva * 3 / 4;     /* (in proportion: a window the game fades in stays faded) */
+            eb = evb + (eva - ea); if (eb > 16) eb = 16;
+        }
         else if (win1 == WIN_LINE) { ea = 16; eb = 0; }              /* (the line solid) */
         if (g_pixsrc_on && (x == g_pixsrc[2] || g_pixsrc[2] < 0) && y == g_pixsrc[3] && eng == g_pixsrc[1] && g_frame == (uint64_t)g_pixsrc[0]) {
             int L = -1;

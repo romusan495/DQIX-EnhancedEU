@@ -1335,8 +1335,8 @@ static void gl_render_(const Frame3D* f) {
             float* o = g_verts + (size_t)b.first * VTX_FLOATS;
             int modern = g_winstyle == 2 && !g_dlg_outline;
             if (modern && front && textured && fmt == 3 && g_tex_frame) { nv = b.first; continue; }   /* modern: no frame (a line in FS_COMP instead) */
-            if (modern && front && !textured && black && b.translucent)   /* ...and the panel 55% black, like the other windows */
-                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = 17.0f;
+            if (modern && front && !textured && black && b.translucent)   /* ...and the panel a little fainter, like the other windows (in proportion: one the game keeps faint stays faint) */
+                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 9 / 10);
             else if (g_winstyle && front && !textured && black && b.translucent)   /* minimal windows (gpu2d.c): its panel fainter */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);
             else if (g_winstyle && front && textured && fmt == 3 && g_tex_frame)   /* its frame: a thin grey edge */
