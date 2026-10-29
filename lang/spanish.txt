@@ -80,6 +80,9 @@ es = Texturas &ampliadas, xBR (Mejorado)
 en = Smooth &2D: menus, maps, sprites (Enhanced)
 es = &2D suavizado: menús, mapas, sprites (Mejorado)
 
+en = Soft sha&dows in corners and under furniture (Enhanced)
+es = Sombras suaves en rincones y bajo los mue&bles (Mejorado)
+
 en = Character &outlines (Enhanced)
 es = &Contornos de los personajes (Mejorado)
 

@@ -80,6 +80,9 @@ it = Texture &ingrandite, xBR (Migliorata)
 en = Smooth &2D: menus, maps, sprites (Enhanced)
 it = &2D smussato: menu, mappe, sprite (Migliorata)
 
+en = Soft sha&dows in corners and under furniture (Enhanced)
+it = Ombre morbi&de negli angoli e sotto i mobili (Migliorato)
+
 en = Character &outlines (Enhanced)
 it = &Contorni dei personaggi (Migliorata)
 

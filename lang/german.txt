@@ -80,6 +80,9 @@ de = &Hochskalierte Texturen, xBR (Verbessert)
 en = Smooth &2D: menus, maps, sprites (Enhanced)
 de = Geglättetes &2D: Menüs, Karten, Sprites (Verbessert)
 
+en = Soft sha&dows in corners and under furniture (Enhanced)
+de = Weiche Scha&tten in Ecken und unter Möbeln (Verbessert)
+
 en = Character &outlines (Enhanced)
 de = Figuren-&Umrisse (Verbessert)
 
