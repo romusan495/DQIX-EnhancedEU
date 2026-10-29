@@ -94,11 +94,12 @@ MINGW*|MSYS*)
 esac
 
 echo "== Putting the game folder together"
-mkdir -p game/data game/skins game/fonts
+mkdir -p game/data game/skins game/fonts game/lang
 rm -rf game/data/code && cp -r build/extract game/data/code     # the overlays (the game checks which is loaded)
 if ! cmp -s "$ROM" game/data/dqix.nds; then cp "$ROM" game/data/dqix.nds; fi
 cp skins/*.png skins/*.txt game/skins/ 2>/dev/null || true
 cp fonts/*.ttf fonts/*.txt game/fonts/ 2>/dev/null || true             # the HD text's fonts (Graphics > Text font)
+cp lang/*.txt game/lang/ 2>/dev/null || true                          # the menus' and messages' translations (Language menu)
 # modern job icons, in the HD texture pack (runtime/hdsprite.h): made from the ROM
 # like the program's icon. Optional: without them the game shows its own.
 $PY tools/job_icons.py "$ROM" game/textures/jobs || echo "   job icons: not made (optional)"

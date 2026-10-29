@@ -21,6 +21,8 @@ enum {
     MI_SSIZE0 = 254,                                                    /* + 0..2: small, medium, large */
     MI_SEND_REPORT = 210,
     MI_LANG1 = 270,                                                     /* English, French, German, Italian, Spanish (+0..4) */
+    MI_UILANG0 = 420,                                                   /* the menus' language: the game's, then English... Spanish (+0..5, uitext.h) */
+    MI_UICONTRAST = 426, MI_UISIZE0,                                    /* View > Readability of the options menu: stronger contrast; text normal, large, larger (+0..2) */
     MI_TEXPACK = 280, MI_TEXDUMP, MI_TEXRELOAD, MI_HDTEXT, MI_SMOOTH2D, MI_TEXUP,
     MI_FARM = 300, MI_FARM_TARGET, MI_FARM_FAST, MI_FARM_HELP,             /* Modern > Farm gold by itself (farm.c) */
     MI_OUTLINE0 = 296,                                                  /* outlines: the DS's, thin, none (+0..2) */
