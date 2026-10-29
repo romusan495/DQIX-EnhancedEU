@@ -87,11 +87,14 @@ int g_dlg_outline;                                                  /* ...and th
 enum { WIN_PANEL = 1, WIN_EDGE, WIN_SHADE, WIN_CLEAR, WIN_BOX, WIN_LINE, WIN_INK };   /* WIN_INK: a letter drawn on a battle card */
 static inline uint16_t palc(Engine* e, uint32_t palbase, int i) { return pal16(e->pal + (palbase + i) * 2) & 0x7FFF; }
 static int win_palette(Engine* e, uint32_t palbase) {
-    if (palc(e, palbase, 2) == 0x2108 && palc(e, palbase, 4) == 0x4210 && palc(e, palbase, 8) == 0x6B5A && palc(e, palbase, 10) == 0x7FFF) return 1;
-    /* modern: a window greyed while another is open over it (the battle
-     * commands under a list of spells): the same frame in darker greys */
-    return g_winstyle == 2 && palc(e, palbase, 1) == 0x18C6 && palc(e, palbase, 2) == 0x1084 && palc(e, palbase, 4) == 0x318C
-        && palc(e, palbase, 8) == 0x4210 && palc(e, palbase, 10) == 0x5294;
+    return palc(e, palbase, 2) == 0x2108 && palc(e, palbase, 4) == 0x4210 && palc(e, palbase, 8) == 0x6B5A && palc(e, palbase, 10) == 0x7FFF;
+}
+/* ...and, modern, for the backgrounds: a window greyed while another is open
+ * over it (the battle commands under a list of spells), the same frame in
+ * darker greys (not for sprites: the greyed cursor is in those colours) */
+static int win_palette_bg(Engine* e, uint32_t palbase) {
+    return win_palette(e, palbase) || (g_winstyle == 2 && palc(e, palbase, 1) == 0x18C6 && palc(e, palbase, 2) == 0x1084 && palc(e, palbase, 4) == 0x318C
+        && palc(e, palbase, 8) == 0x4210 && palc(e, palbase, 10) == 0x5294);
 }
 /* The party's cards in battles (commands screen): a backdrop in the member's
  * colour (9) framed in white (14, 15) with grey lines between cards (4),
@@ -127,7 +130,7 @@ static uint16_t map_ent(uint32_t mapbase, uint32_t w, uint32_t h, int tx, int ty
 /* the colour index at (bx, by) of the layer when on the windows' palette, else -1 */
 static int win_idx(Engine* e, uint32_t charbase, uint32_t mapbase, uint32_t w, uint32_t h, int bx, int by) {
     uint16_t ent = map_ent(mapbase, w, h, bx >> 3, by >> 3);
-    if (!win_palette(e, (ent >> 12) * 16u)) return -1;
+    if (!win_palette_bg(e, (ent >> 12) * 16u)) return -1;
     int px = bx & 7, py = by & 7;
     if (ent & 0x400) px = 7 - px;
     if (ent & 0x800) py = 7 - py;
@@ -161,7 +164,7 @@ static int win_line(const WinLayer* L, int bx, int by) {
     return 0;
 }
 static int panel_tile(Engine* e, uint32_t charbase, uint16_t ent) {
-    if (!win_palette(e, (ent >> 12) * 16u)) return 0;
+    if (!win_palette_bg(e, (ent >> 12) * 16u)) return 0;
     const uint8_t* t = vram_ptr(charbase + (ent & 0x3FF) * 32);
     if (!t) return 0;
     for (int i = 0; i < 32; i++) if ((t[i] & 15) == 1 || (t[i] >> 4) == 1) return 1;
@@ -251,7 +254,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 uint32_t b = 1u << (ent >> 12);
                 if (!(winchecked & b)) {
                     winchecked |= b;
-                    if (win_palette(e, palbase)) winpal |= b;
+                    if (win_palette_bg(e, palbase)) winpal |= b;
                     else if (eng == 1 && card_palette(e, palbase)) { cardpal |= b; tints[ent >> 12] = (uint8_t)tint_slot(palc(e, palbase, 9)); }
                     else if (eng == 1 && ramp_palette(e, palbase)) ramppal |= b;
                     else if (eng == 1 && palc(e, palbase, 1) == 0x18C6) inkpal |= b;
@@ -262,6 +265,14 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : idx ? WIN_INK : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
+                if (modern && (winpal & b) && k == WIN_SHADE && !win_palette(e, palbase)) {
+                    /* a greyed window: its cursor (the command chosen) is drawn in the
+                     * frame's greys; a grey pixel 3 or more away from the frame's line kept */
+                    WinLayer wl = { e, charbase, mapbase, w, h };
+                    int bx0 = (int)((x + hofs) & (w - 1)), near = 0;
+                    for (int d = -2; d <= 2 && !near; d++) near = win_e(&wl, bx0 + d, (int)yy) || win_e(&wl, bx0, (int)yy + d);
+                    if (!near) k = 0;
+                }
                 if (modern && (winpal & b) && k) {
                     WinLayer wl = { e, charbase, mapbase, w, h };
                     int line = (k == WIN_EDGE || k == WIN_SHADE) && win_line(&wl, (int)((x + hofs) & (w - 1)), (int)yy);

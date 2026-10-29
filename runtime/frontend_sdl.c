@@ -410,7 +410,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
                     else {                                                /* at most half the picture's height */
                         float kb = fminf(0.62f, 110.0f / h);
-                        q[7] = 250;                                   /* (to the screen's edge: a list's window goes on to it, its line with it) */
+                        q[7] = 249;                                   /* (to the line of a list's window at the screen's edge) */
                         q[2] = q[7] * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
                     }
                 }
