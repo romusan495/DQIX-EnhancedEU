@@ -12,3 +12,8 @@ main 02045864 GlyphCell                    # draws one letter into its own textu
 # Modern > Save by itself (runtime/autosave.c): the field's frame, where the
 # adventure is saved every 10 minutes.
 ov017 0218d0ec FieldFrame                  # once a frame on the field
+
+# Modern > Map markers (runtime/mapmarks.c): the rank the game gives each
+# chest of a grotto's floor, shown beside its mark.
+main 0201afd0 GrottoFloorObjects           # a grotto's floor: its chests (and the rest) placed
+main 02090018 GrottoChestRank              # ActiveGrottoClass::RandomizeChestRank: one chest's rank (1-10)

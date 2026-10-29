@@ -538,7 +538,7 @@ static void load_quest_texts(int lang) {
 
 /* ---------------------------------------------------------------- what each place holds */
 enum { K_CHEST, K_GOLD, K_BLUE, K_POT, K_BARREL, K_UNKNOWN, K_SHELF, K_QUEST };
-typedef struct { float x, z; int kind, flag, idx; uint16_t what; } Spot;   /* flag: a container's; idx: a shelf's number, a quest */
+typedef struct { float x, z; int kind, flag, idx; uint16_t what; int rank; } Spot;   /* flag: a container's; idx: a shelf's number, a quest; rank: a chest's (1-10, 0: none) */
 typedef struct { int loaded, n; Spot* s; } Held;
 static Held* g_held;                                             /* per place (g_places' order), read when first needed */
 
@@ -567,6 +567,7 @@ static void load_treasure(Held* h, const Place* pl) {
         case 0x10: x.kind = K_POT; break;
         case 0x20: x.kind = K_BARREL; break;
         }
+        if (x.kind == K_BLUE && x.what >= 1 && x.what <= 10) x.rank = x.what;   /* a blue chest holds something of its rank */
         x.flag += x.kind == K_CHEST || x.kind == K_GOLD || x.kind == K_UNKNOWN ? FLAG_CHEST : FLAG_OTHER;
         add_spot(h, &x);
     }
@@ -643,6 +644,88 @@ static int spot_done(const Spot* b) { return b->kind == K_QUEST ? quest_state(b-
 /* Shown at all: a quest once the game offers it. */
 static int spot_shown(const Spot* b) { return b->kind != K_QUEST || quest_state(b->idx) > 0; }
 static int same_spot(const Spot* a, const Spot* b) { return fabsf(a->x - b->x) < 0.5f && fabsf(a->z - b->z) < 0.5f; }
+
+/* ---------------------------------------------------------------- the grottoes
+ * A treasure map's grotto (maps 40001...) is made anew on each floor: its
+ * chests are only in the game's memory.
+ *  - the map manager (0x020FB3F0): the floor's chests, how many (u8) at
+ *    +0x477, the records at [+0x47C], 0x24 bytes each: x, height, z (20.12),
+ *    +0x16 the state (8 once opened), +0x1C its number; what chest number
+ *    holds at [+0x2724] + 0x14 * number: u16 +2 the item (or the gold), +4
+ *    bits 2-3 what it is (2 an item, 1 gold; cleared once opened).
+ *  - the grotto's map picture is drawn like a town's (see above).
+ *  - the ranks (1 the lowest, I, to 10, S): while a floor's things are
+ *    placed (func_0201afd0), ActiveGrottoClass::RandomizeChestRank gives
+ *    one per chest, in their order (hooks.txt); the chest's contents are
+ *    drawn from data/scenario/treasure.nsarc's randTD.bin by that rank.
+ *  - the treasure map being followed (0x020F97BC): +0 set, +6 its monsters'
+ *    rank, +0xC the field it opens on, +0x10 the way in (x, height, z,
+ *    20.12), +0x6C bits 0-2 how far it is known (2 and 3: found). A floor's
+ *    monster rank is +6 + (floor - 1) / 4; its chests' ranks are drawn
+ *    between two that follow from it (rank_range), floors 1 and 2 have none. */
+#define GROTTO_FIRST 40001
+#define GROTTO_LAST  41505
+#define GR_COUNT     (MAP_NUM + 0x477)
+#define GR_CHESTS    (MAP_NUM + 0x47C)
+#define GR_HOLDS     (MAP_NUM + 0x2724)
+#define TMAP         0x0F97BC
+#define GR_MAX       16
+#define TMAP_X       4             /* top-screen pixels: the ranks' box on the treasure map, under its name */
+#define TMAP_Y       26
+static int g_rank[GR_MAX], g_nrank, g_gen;                         /* this floor's chests' ranks, and which floor */
+static Spot g_gspot[GR_MAX]; static int g_gopened[GR_MAX], g_ngspot, g_in_grotto;
+static int g_gold[GR_MAX], g_gold_gen = -1;                       /* which held gold (forgotten by the game once opened) */
+
+/* func_0201afd0: the floor's things placed. */
+void hook_GrottoFloorObjects(Cpu* c, void (*orig)(Cpu*)) { g_nrank = 0; g_gen++; orig(c); }
+
+/* ActiveGrottoClass::RandomizeChestRank: one chest's rank. */
+void hook_GrottoChestRank(Cpu* c, void (*orig)(Cpu*)) {
+    orig(c);
+    if (g_nrank < GR_MAX) g_rank[g_nrank++] = (int)c->r[0];
+}
+
+static int is_grotto(uint16_t map) { return map >= GROTTO_FIRST && map <= GROTTO_LAST; }
+static char rank_letter(int r) { return r >= 1 && r <= 10 ? "SABCDEFGHI"[10 - r] : '?'; }
+
+/* The ranks a floor's chests are drawn between, by its monsters' rank. */
+static void rank_range(int mrank, int* lo, int* hi) {
+    static const uint8_t t[13][2] = { { 0, 0 }, { 1, 2 }, { 1, 2 }, { 1, 3 }, { 1, 4 }, { 2, 5 }, { 2, 6 },
+                                      { 3, 7 }, { 3, 8 }, { 4, 9 }, { 5, 9 }, { 1, 10 }, { 4, 10 } };
+    if (mrank < 0) mrank = 0;
+    if (mrank > 12) mrank = 12;
+    *lo = t[mrank][0]; *hi = t[mrank][1];
+}
+
+static void load_grotto(void) {
+    g_ngspot = 0;
+    uint32_t a = rd32(GR_CHESTS), holds = rd32(GR_HOLDS);
+    int n = g_main_ram[GR_COUNT];
+    if (a < 0x02000000 || a >= 0x02400000) return;
+    if (holds < 0x02000000 || holds >= 0x02400000) holds = 0;
+    if (g_gold_gen != g_gen) {
+        g_gold_gen = g_gen; memset(g_gold, 0, sizeof g_gold);
+        char rk[GR_MAX + 1] = { 0 };
+        for (int i = 0; i < g_nrank; i++) rk[i] = rank_letter(g_rank[i]);
+        LOG_INFO("mapmarks: a grotto's floor, %d chests, ranks %s\n", n, rk);
+    }
+    for (int i = 0; i < n && i < GR_MAX; i++) {
+        uint32_t r = a + 0x24 * (uint32_t)i;
+        int num = g_main_ram[(r + 0x1C) & (MAIN_RAM_SIZE - 1)];
+        if (num >= GR_MAX) num = i;
+        Spot* b = &g_gspot[g_ngspot];
+        memset(b, 0, sizeof *b);
+        b->x = (float)(int32_t)rd32(r) / 4096.0f; b->z = (float)(int32_t)rd32(r + 8) / 4096.0f;
+        b->flag = -1; b->idx = num;
+        if (holds) {
+            b->what = rd16(holds + 0x14 * (uint32_t)num + 2);
+            if (((rd16(holds + 0x14 * (uint32_t)num + 4) >> 2) & 3) == 1) g_gold[num] = 1;
+        }
+        b->kind = g_gold[num] ? K_GOLD : K_CHEST;
+        b->rank = num < g_nrank ? g_rank[num] : 0;
+        g_gopened[g_ngspot++] = g_main_ram[(r + 0x16) & (MAIN_RAM_SIZE - 1)] == 8;
+    }
+}
 
 /* ---------------------------------------------------------------- the map pictures */
 typedef struct { float x, z; int n; int* rooms; } Door;          /* rooms: places (indices) behind it */
@@ -726,6 +809,8 @@ static float g_hx = -1, g_hy = -1; static int g_hover = -1;
 static int g_here = -1, g_own, g_plan_on; static const Pic* g_pic;   /* this frame's place, drawn in its own units, on its plan, and picture */
 
 void mapmarks_hover(float x, float y) { g_hx = x; g_hy = y; }
+
+static const Spot* mark_spot(int spot) { return g_in_grotto ? &g_gspot[spot] : &held(g_here)->s[spot]; }
 
 static int is_box(int kind) { return kind == K_CHEST || kind == K_GOLD || kind == K_BLUE || kind == K_UNKNOWN; }
 
@@ -850,6 +935,24 @@ static void glyph_quest(float cx, float cy, float R, int state, float a) {
 
 static uint32_t book_color(int recipes, int dull) { return dull ? 0x9A9A9A : recipes ? 0x8E55D8 : 0x2F9A5E; }
 
+/* A chest's rank: its letter on a small dark badge (S and A in gold). */
+static void draw_rank(float cx, float cy, float R, int rank, float a) {
+    static uint32_t t[64 * 64];
+    char s[2] = { rank_letter(rank), 0 };
+    float px = 4.8f * R;
+    int h = (int)(px * 1.3f);
+    if (h > 64) h = 64;
+    memset(t, 0, sizeof t);
+    int w = text_draw(t, 64, h, 0, 0, px, 0xFFFFFF, s);
+    if (w > 64) w = 64;
+    rbox(cx, cy, 2.3f * R, 2.6f * R, 0.9f * R, 0xFFF8E0, 0.9f * a);
+    rbox(cx, cy, 2.3f * R - 2, 2.6f * R - 2, 0.9f * R - 2, 0x101418, 0.95f * a);
+    int x0 = (int)lroundf(cx - w / 2.0f), y0 = (int)lroundf(cy - px * 0.62f);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (t[y * 64 + x]) blend(x0 + x, y0 + y, rank >= 9 ? 0xF2C94C : 0xFFFFFF, a * (float)((t[y * 64 + x] >> 16) & 255) / 255.0f);
+}
+
 static void draw_mark(const Mark* m, int hover) {
     float R = MAPMARKS_R * 1.4f, cx = m->sx * MAPMARKS_R, cy = m->sy * MAPMARKS_R;
     if (m->door == -3) {                                         /* the hero: a blue dot */
@@ -879,7 +982,7 @@ static void draw_mark(const Mark* m, int hover) {
         if (m->shelves) glyph_book(x, cy, R * k, book_color(m->recipes > 0, 0), 1);
         return;
     }
-    const Spot* b = &held(g_here)->s[m->spot];
+    const Spot* b = mark_spot(m->spot);
     float a = m->opened ? 0.6f : 1.0f;
     const Book* bk = b->kind == K_SHELF ? find_book(g_places[g_here].num, b->idx) : NULL;
     if (b->kind == K_SHELF && (!bk || bk->dull)) a = 0.75f;
@@ -902,6 +1005,7 @@ static void draw_mark(const Mark* m, int hover) {
         break;
     default:
         glyph_chest(cx, cy, R, m->opened ? 0x8A8A8A : b->kind == K_BLUE ? 0x3C78E0 : 0xD0402E, m->opened ? 0xB0B0B0 : 0xF2C94C, a);
+        if (b->rank) draw_rank(cx + 4.4f * R, cy, R, b->rank, a);
         break;
     }
 }
@@ -947,6 +1051,14 @@ static void quest_title(int q, char* out, size_t cap) {
 
 static uint32_t quest_color(int state) { return state == 1 ? C_TODO : state == 2 ? C_QUEST : C_DONE; }
 
+/* "Rank G", or "Ranks G to E" (from the lowest). */
+static void rank_line(char* out, size_t cap, int lo, int hi) {
+    static const char* const one[5] = { "Rank %c", "Rang %c", "Rang %c", "Rango %c", "Rango %c" };
+    static const char* const two[5] = { "Ranks %c to %c", "Rangs %c \xC3\xA0 %c", "R\xC3\xA4nge %c bis %c", "Ranghi da %c a %c", "Rangos %c a %c" };
+    if (lo == hi) snprintf(out, cap, one[lang_index()], rank_letter(lo));
+    else snprintf(out, cap, two[lang_index()], rank_letter(lo), rank_letter(hi));
+}
+
 /* One spot's line(s); short: one line, for a building's list. */
 static void spot_lines(int pi, const Spot* b, int opened, int is_short) {
     char what[100], line[140];
@@ -988,7 +1100,24 @@ static void spot_lines(int pi, const Spot* b, int opened, int is_short) {
     snprintf(line, sizeof line, "%s: %s", kind_name(b->kind), what);
     if (is_short) { add_line(opened ? C_DONE : C_TODO, line); return; }
     add_line(C_TEXT, line);
+    if (b->rank) { rank_line(line, sizeof line, b->rank, b->rank); add_line(C_HEAD, line); }
     add_line(opened ? C_DONE : C_TODO, status(b, opened));
+}
+
+/* The treasure map followed: the ranks its grotto's chests can have, floor
+ * by floor (floors 1 and 2 have none; 1 to 3 chests on the others). */
+static void grotto_lines(void) {
+    static const char* const head[5] = { "Chests by floor", "Coffres par \xC3\xA9tage", "Truhen je Stockwerk", "Forzieri per piano", "Cofres por piso" };
+    static const int from[4] = { 3, 5, 9, 13 }, to[4] = { 4, 8, 12, 16 };
+    int L = lang_index(), mrank = g_main_ram[TMAP + 6];
+    char line[60];
+    add_line(C_HEAD, head[L]);
+    for (int i = 0; i < 4; i++) {
+        int lo, hi;
+        rank_range(mrank + (from[i] - 1) / 4, &lo, &hi);
+        snprintf(line, sizeof line, L == 1 ? "%d-%d : %c-%c" : "%d-%d: %c-%c", from[i], to[i], rank_letter(lo), rank_letter(hi));
+        add_line(C_TODO, line);
+    }
 }
 
 /* A building: what its rooms hold, the best first (quests, chests, books,
@@ -1049,33 +1178,45 @@ static void door_lines(const Mark* m) {
     if (extra) { char s[40]; snprintf(s, sizeof s, more[lang_index()], extra); add_line(C_DONE, s); }
 }
 
+/* The lines (g_line) written out (g_txt): their box's size, and the height of a line. */
+#define LINES_PAD (2 * MAPMARKS_R)
+static int lines_size(int* tw, int* th, float px) {        /* px: the text's height */
+    int lh = (int)(px * 1.2f);
+    if (g_nline * lh > TXT_H) g_nline = TXT_H / lh;
+    memset(g_txt, 0, sizeof(uint32_t) * MAPMARKS_W * (size_t)(g_nline * lh));
+    *tw = 0;
+    for (int i = 0; i < g_nline; i++) {
+        int w = text_draw(g_txt, MAPMARKS_W, g_nline * lh, 0, i * lh, px, 0xFFFFFF, g_line[i].s);
+        if (w > *tw) *tw = w;
+    }
+    *tw += 2 * LINES_PAD; *th = g_nline * lh + 2 * LINES_PAD;
+    if (*tw > MAPMARKS_W - 4) *tw = MAPMARKS_W - 4;
+    return lh;
+}
+
+/* ...and in their dark box, its top left at x0, y0. */
+static void lines_draw(int x0, int y0, int tw, int th, int lh) {
+    rbox(x0 + tw / 2.0f, y0 + th / 2.0f, tw / 2.0f, th / 2.0f, 2.0f * MAPMARKS_R, 0x101418, 0.88f);
+    for (int y = 0; y < g_nline * lh; y++)
+        for (int x = 0; x < tw - 2 * LINES_PAD; x++) {
+            uint32_t t = g_txt[y * MAPMARKS_W + x];
+            if (t) blend(x0 + LINES_PAD + x, y0 + LINES_PAD + y, g_line[y / lh].c, (float)((t >> 16) & 255) / 255.0f);
+        }
+}
+
 static void draw_tooltip(const Mark* m) {
     g_nline = 0;
     if (m->door >= 0) door_lines(m);
-    else spot_lines(g_here, &held(g_here)->s[m->spot], m->opened, 0);
+    else spot_lines(g_here, mark_spot(m->spot), m->opened, 0);
     if (!g_nline) return;
-    float px = 7.5f * MAPMARKS_R;                                /* text height */
-    int lh = (int)(px * 1.2f), pad = 2 * MAPMARKS_R, tw = 0, th;
-    if (g_nline * lh > TXT_H) g_nline = TXT_H / lh;
-    memset(g_txt, 0, sizeof(uint32_t) * MAPMARKS_W * (size_t)(g_nline * lh));
-    for (int i = 0; i < g_nline; i++) {
-        int w = text_draw(g_txt, MAPMARKS_W, g_nline * lh, 0, i * lh, px, 0xFFFFFF, g_line[i].s);
-        if (w > tw) tw = w;
-    }
-    tw += 2 * pad; th = g_nline * lh + 2 * pad;
-    if (tw > MAPMARKS_W - 4) tw = MAPMARKS_W - 4;
+    int tw, th, lh = lines_size(&tw, &th, 7.5f * MAPMARKS_R);
     int x0 = (int)(m->sx * MAPMARKS_R) - tw / 2, y0 = (int)((m->sy - 8) * MAPMARKS_R) - th;
     if (y0 < 2) y0 = (int)((m->sy + 8) * MAPMARKS_R);           /* no room above: below */
     if (y0 + th > MAPMARKS_H - 2) y0 = MAPMARKS_H - 2 - th;      /* ...nor there: over it */
     if (y0 < 2) y0 = 2;
     if (x0 < 2) x0 = 2;
     if (x0 + tw > MAPMARKS_W - 2) x0 = MAPMARKS_W - 2 - tw;
-    rbox(x0 + tw / 2.0f, y0 + th / 2.0f, tw / 2.0f, th / 2.0f, 2.0f * MAPMARKS_R, 0x101418, 0.88f);
-    for (int y = 0; y < g_nline * lh; y++)
-        for (int x = 0; x < tw - 2 * pad; x++) {
-            uint32_t t = g_txt[y * MAPMARKS_W + x];
-            if (t) blend(x0 + pad + x, y0 + pad + y, g_line[y / lh].c, (float)((t >> 16) & 255) / 255.0f);
-        }
+    lines_draw(x0, y0, tw, th, lh);
 }
 
 /* ---------------------------------------------------------------- the legend
@@ -1143,7 +1284,7 @@ static void draw_legend(void) {
             if (m->shelves) has[m->recipes ? L_RECIPES : L_SHELF] = 1;
             if (m->quests && m->opened >= 1 && m->opened <= 3) has[L_QUEST1 + m->opened - 1] = 1;
         } else {
-            const Spot* b = &held(g_here)->s[m->spot];
+            const Spot* b = mark_spot(m->spot);
             if (b->kind == K_QUEST) { if (m->opened >= 1 && m->opened <= 3) has[L_QUEST1 + m->opened - 1] = 1; }
             else if (b->kind == K_SHELF) { const Book* bk = find_book(g_places[g_here].num, b->idx); has[bk && bk->recipes ? L_RECIPES : L_SHELF] = 1; }
             else if (m->opened) has[L_EMPTIED] = 1;
@@ -1440,23 +1581,58 @@ static int on_screen(float sx, float sy) { return sx >= -4 && sx <= 260 && sy >=
  * 0F01, 1002) leaves BG2CNT at 0; the cards set it (0F00, 0E03, 0002).
  * A battle leaves BG2CNT set (0704) once back on the map: the map's BG0 is
  * the one at priority 1, a card's at 0. */
+static int tmap_shown(void);
 int mapmarks_top_page(void) {
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000;
-    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0 && (IO16(top + 0x08) & 3) != 1;
+    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0 && (IO16(top + 0x08) & 3) != 1 && !tmap_shown();
+}
+
+/* The treasure map followed, open: the top screen shows it instead of the
+ * field's map (BG0CNT 0E02, BG1CNT 0F03). Not a page (mapmarks_top_page()):
+ * the map to walk by, where the field's map would be. */
+static int tmap_shown(void) {
+    uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000;
+    return rd32(FIELD_PTR) != 0 && g_main_ram[TMAP] && IO16(top + 0x08) == 0x0E02 && IO16(top + 0x0A) == 0x0F03;
+}
+
+/* Over it: the ranks its grotto's chests can have. */
+static int tmap_update(const uint8_t** rgba) {
+    static int shown = -1;
+    int key = g_mapmarks && tmap_shown() ? g_main_ram[TMAP + 6] << 4 | g_fw_language : -1;
+    if (key == shown) { *rgba = key >= 0 ? g_img : NULL; return 0; }
+    shown = key;
+    if (key < 0) { *rgba = NULL; return 1; }
+    memset(g_img, 0, sizeof g_img);
+    g_nline = 0;
+    grotto_lines();
+    int tw, th, lh = lines_size(&tw, &th, 7.0f * MAPMARKS_R);
+    lines_draw(TMAP_X * MAPMARKS_R, TMAP_Y * MAPMARKS_R, tw, th, lh);
+    *rgba = g_img;
+    return 1;
 }
 
 int mapmarks_update(const uint8_t** rgba) {
     static int loaded, had;
     static uint32_t last_key;
     *rgba = NULL;
-    g_nmark = 0; g_here = -1; g_own = 0; g_plan_on = 0; g_pic = NULL;
+    {
+        static int was;
+        int on = g_mapmarks && tmap_shown();
+        if (on || was) {
+            int changed = tmap_update(rgba);
+            if (on) { was = 1; had = 0; return changed; }
+            was = 0; had = 1; last_key = 0;                      /* (the map's marks drawn afresh) */
+        }
+    }
+    g_nmark = 0; g_here = -1; g_own = 0; g_plan_on = 0; g_pic = NULL; g_in_grotto = 0;
     int ok = (g_mapmarks || g_interior_maps) && rd32(FIELD_PTR) != 0;
     uint32_t mp = rd32(MINIMAP_PTR);
     if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
     if (ok && mapmarks_top_page()) ok = 0;                       /* an item's card: nothing of the map over it */
     /* the map is the top screen's BG1: off when a page covers it (the quest log...) */
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000, bright = IO16(top + 0x6C);
-    int field = rd16(MAP_NUM) >= 20000;                          /* the fields (20001...) draw their map on BG0 */
+    int grotto = is_grotto(rd16(MAP_NUM));                       /* (drawn like a town's) */
+    int field = rd16(MAP_NUM) >= 20000 && !grotto;              /* the fields (20001...) draw their map on BG0 */
     if (ok && !(IO32(top) & (field ? 0x100 : 0x200))) ok = 0;
     if (ok && (bright >> 14) == 2 && (bright & 0x1F) >= 16) ok = 0;   /* faded to black */
     if (ok && !loaded) {
@@ -1544,6 +1720,20 @@ int mapmarks_update(const uint8_t** rgba) {
             }
         }
     }
+    /* a grotto's chests, with their ranks */
+    if (ok && grotto && g_mapmarks) {
+        float scale = (float)(int32_t)rd32(mp + 0x38) / 4096.0f;
+        float cx = (float)(int32_t)rd32(mp + 0x44), cy = (float)(int32_t)rd32(mp + 0x48);
+        if (scale > 0.1f && scale < 64) {
+            g_in_grotto = 1;
+            load_names(g_fw_language);
+            load_grotto();
+            for (int i = 0; i < g_ngspot; i++) {
+                Mark m = { g_gspot[i].x * scale - cx + 128, g_gspot[i].z * scale - cy + 96, -1, i, g_gopened[i], 0, 0, 0, 0, 0 };
+                if (on_screen(m.sx, m.sy) && (!m.opened || g_mapmarks_opened)) add_mark(&m);
+            }
+        }
+    }
     /* the monsters walking around: a town's picture scrolls (its centre at
      * +0x44/+0x48), a field's shows the whole field around its origin */
     if (ok && g_mapmarks && g_mapmarks_monsters && !g_plan_on) {
@@ -1575,6 +1765,7 @@ int mapmarks_update(const uint8_t** rgba) {
     key = (key ^ (uint32_t)(g_hover + 2)) * 16777619u;
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;
     key = (key ^ (uint32_t)g_here) * 16777619u;
+    key = (key ^ (uint32_t)(g_in_grotto ? g_gen : -1)) * 16777619u;
     key = (key ^ (uint32_t)g_plan_on) * 16777619u;
     key = (key ^ (uint32_t)g_map_legend) * 16777619u;
     if (!g_nmark && !g_plan_on) { int changed = had; had = 0; last_key = 0; return changed; }
