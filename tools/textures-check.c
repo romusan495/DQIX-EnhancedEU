@@ -25,7 +25,10 @@
  *   --fix-edges see-through pixels take their solid neighbours' colour (what
  *               you see doesn't change; the halos go). The file as it was is
  *               kept in textures-check/backup/ first.
- *   --images    a picture for every texture, not only those with a problem */
+ *   --images    a picture for every texture, not only those with a problem
+ *
+ * Built apart, like textures-hd (MSYS2 UCRT64, from the project folder):
+ *   gcc -O2 -I runtime -o game/textures-check.exe tools/textures-check.c */
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
