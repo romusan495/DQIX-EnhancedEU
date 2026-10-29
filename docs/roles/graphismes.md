@@ -19,10 +19,12 @@ Voir la liste des fichiers partagés dans `CLAUDE.md` (surtout `gl_render.c`,
 l'un après l'autre, pas en parallèle.
 
 ## À savoir
-- Méthode 5 pour toute texture : Real-ESRGAN mélangé à un agrandissement
-  Lanczos de l'original (PR #1).
-- `textures-hd.exe` n'est pas construit par BUILD.bat : il se compile à part
-  depuis `tools/textures-hd.c`.
+- Textures HD : « IA seule » (Real-ESRGAN anime sans mélange), choix de Romuald
+  du 2026-10-29 qui remplace la méthode 5 (mélange à 50 % avec un agrandissement
+  Lanczos, toujours possible avec `TEXHD_SHARP=50`). Pas de version HD pour les
+  textures vides ou unies.
+- `textures-hd.exe` se compile depuis `tools/textures-hd.c` ; BUILD.bat le
+  (re)construit seulement si `game\textures-hd-outil` existe (voir plus bas).
 - `textures-rom.exe` (pareil : `gcc -O2 -I runtime -o game/textures-rom.exe tools/textures-rom.c`)
   sort toutes les textures 3D de la ROM du joueur dans `textures\dump` sans jouer
   (12 670, mêmes noms EU et USA), puis lance `textures-hd.exe`. Les visages et

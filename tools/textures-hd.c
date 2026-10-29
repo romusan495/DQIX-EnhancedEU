@@ -10,9 +10,13 @@
  * - see-through texels get their solid neighbours' colour first, so no dark
  *   fringes come in from the edges;
  * - alpha is upscaled as its own grey picture; on/off alpha stays on/off;
- * - Real-ESRGAN alone smooths away the drawing's grain (hair strands, eye
- *   pixels): its colours are mixed half and half with a sharp (Lanczos)
- *   enlargement of the original, which keeps the detail.
+ * - textures with nothing to draw (all see-through, or one colour) get no HD
+ *   version: the game's own draws the same, and a blank one in the pack can
+ *   stand in for a texture the game fills in later (dialogue letters);
+ * - Real-ESRGAN's picture is used as it is (smooth and painted, Romuald's
+ *   choice); TEXHD_SHARP=<0..100> mixes in that % of a sharp (Lanczos)
+ *   enlargement of the original instead, which keeps the pixels' grain
+ *   (50 = the earlier "method 5").
  * What happened goes to textures/hd-auto.log. */
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -41,6 +45,7 @@
 #define PAD 8
 #define SCALE 4
 static FILE* g_log;
+static int g_sharp = 0;                                        /* % of the sharp enlargement mixed into Real-ESRGAN's (TEXHD_SHARP) */
 
 static void logf_(const char* fmt, ...) {
     va_list a; va_start(a, fmt);
@@ -231,6 +236,8 @@ static int upscale_new(const char* game) {
         int w, h, c; unsigned char* px = stbi_load(p, &w, &h, &c, 4);
         pads[i] = -1;
         if (!px) { logf_("  %s: can't read\n", work[i]); continue; }
+        int blank = 1; for (int k = 1; k < w * h && blank; k++) if (memcmp(px + k * 4, px, 4) && (px[k * 4 + 3] || px[3])) blank = 0;
+        if (blank) { logf_("  %s: nothing to draw (see-through or one colour), left as it is\n", work[i]); stbi_image_free(px); continue; }
         int pd = PAD < w ? (PAD < h ? PAD : h) : (w < h ? w : h);
         pads[i] = pd;
         int solid = 1; for (int k = 0; k < w * h; k++) if (px[k * 4 + 3] != 255) { solid = 0; break; }
@@ -269,7 +276,7 @@ static int upscale_new(const char* game) {
                 const unsigned char* s = big + ((y + pd * SCALE) * W + x + pd * SCALE) * 3;
                 unsigned char* d = o + (y * ow + x) * 4;
                 const unsigned char* g = sharp + ((size_t)y * ow + x) * 3;
-                for (int ch = 0; ch < 3; ch++) d[ch] = (unsigned char)((s[ch] + g[ch] + 1) / 2);
+                for (int ch = 0; ch < 3; ch++) d[ch] = (unsigned char)(g_sharp == 50 ? (s[ch] + g[ch] + 1) / 2 : (s[ch] * (100 - g_sharp) + g[ch] * g_sharp + 50) / 100);
                 if (solid) d[3] = 255;
                 else if (ab) { const unsigned char* q = ab + ((y + pd * SCALE) * W + x + pd * SCALE) * 3; int a = (q[0] + q[1] + q[2] + 1) / 3; d[3] = binary ? (a > 127 ? 255 : 0) : (unsigned char)a; }
                 else d[3] = px[((y / SCALE) * w + x / SCALE) * 4 + 3];      /* no upscaled alpha: the original's, blocky */
@@ -308,6 +315,7 @@ int main(int argc, char** argv) {
     }
     { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); mkdir_(tex); }
     lf = fopen(lock, "wb"); if (lf) fclose(lf);
+    if (getenv("TEXHD_SHARP")) { g_sharp = atoi(getenv("TEXHD_SHARP")); if (g_sharp < 0) g_sharp = 0; if (g_sharp > 100) g_sharp = 100; }
     upscale_new(game);
     remove(lock);
     return 0;
