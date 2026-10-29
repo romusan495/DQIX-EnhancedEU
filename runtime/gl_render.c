@@ -180,7 +180,7 @@ static const char* FS_POST =
     "uniform int u_fog; uniform int u_fog_alpha_only; uniform vec4 u_fogcol; uniform float u_fogtab[32];\n"
     "uniform int u_fogoff; uniform int u_fogshift; uniform int u_wbuf;\n"
     "uniform float u_ao; uniform float u_aorad;\n"                    /* soft shadows: strength (0 off), reach in pixels */
-    "uniform float u_ink; uniform int u_inkstep; uniform float u_inkmin;\n"   /* thin dark lines round things: strength (0 off), width, how far behind */
+    "uniform float u_ink; uniform int u_inkstep; uniform float u_inkmin; uniform sampler2D u_odepth; uniform sampler2D u_ocolor;\n"   /* thin dark lines round things: strength (0 off), width, how far behind */
     /* Soft shadows in corners and under things: a pixel whose neighbours are
      * nearer than itself on both sides, along a line through it, sits in a
      * hollow (where a wall meets the floor, under a counter, behind a pot)
@@ -204,15 +204,21 @@ static const char* FS_POST =
     /* Thin dark lines round things: a pixel just behind the edge of something
      * nearer (a pot before the wall, a tree's leaves before the sky...) is
      * darkened, so shapes stand apart from what is behind them instead of
-     * melting into it. Not round the windows (drawn in 3D right at the front:
-     * far nearer than anything in the scene) */
+     * melting into it. Only between solid polygons (their depth alone,
+     * odepth_tex): never in flames, glows or water, nor on what they cover
+     * (the colour changed since the solid ones: ocolor_tex);
+     * not round the windows (drawn in 3D right at the front: far nearer than
+     * anything in the scene) */
+    "float oinvw(ivec2 q) { float d = texelFetch(u_odepth, q, 0).r; return u_wbuf != 0 ? 1.0 / max(d, 1e-6) : 1.0 - d; }\n"
     "float ink(ivec2 p) {\n"
-    "  ivec2 sz = textureSize(u_depth, 0); float c0 = max(invw(p), 1e-6), e = 0.0;\n"
+    "  if (texelFetch(u_depth, p, 0).r < texelFetch(u_odepth, p, 0).r - 1e-6) return 0.0;\n"   /* under a flame, a glow... */
+    "  vec4 dc = abs(texelFetch(u_color, p, 0) - texelFetch(u_ocolor, p, 0)); if (max(max(dc.r, dc.g), max(dc.b, dc.a)) > 1.5 / 255.0) return 0.0;\n"   /* ...even one that leaves the depth */
+    "  ivec2 sz = textureSize(u_odepth, 0); float c0 = max(oinvw(p), 1e-6), e = 0.0;\n"
     "  ivec2 o[4] = ivec2[4](ivec2(-u_inkstep, 0), ivec2(u_inkstep, 0), ivec2(0, -u_inkstep), ivec2(0, u_inkstep));\n"
     "  for (int k = 0; k < 4; k++) {\n"
     "    ivec2 q = clamp(p + o[k], ivec2(0), sz - 1);\n"
     "    if (texelFetch(u_attr, q, 0).a < 0.5) continue;\n"
-    "    float d = (invw(q) - c0) / c0;\n"
+    "    float d = (oinvw(q) - c0) / c0;\n"
     "    if (d < 1.0) e = max(e, smoothstep(u_inkmin, 2.0 * u_inkmin, d));\n"
     "  }\n"
     "  return e;\n"
@@ -686,6 +692,7 @@ typedef struct {
     int valid;
 } Fb3D;
 static Fb3D g_fb[2];
+static GLuint odepth_fbo, odepth_tex, ocolor_tex;              /* the depth and colour of the solid polygons alone (thin dark lines: none in flames and glows) */
 static int g_fb_latest = -1, g_fb_shown = -1;                  /* rendered last / visible this frame */
 static int g_fb_w, g_fb_h;                                     /* one DS screen at scale */
 static int g_wside, g_fb3_w;                                   /* widescreen: DS pixels added each side; 3D / final width at scale */
@@ -789,8 +796,9 @@ static int xdist(const uint8_t* a, const uint8_t* b) {
     int y = (299 * dr + 587 * dg + 114 * db) / 1000, u = (-169 * dr - 331 * dg + 500 * db) / 1000, v = (500 * dr - 419 * dg - 81 * db) / 1000;
     return 48 * abs(y) + 7 * abs(u) + 6 * abs(v) + 48 * abs(da);
 }
-static void xbr_upscale(const uint8_t* src, int w, int h, int f, uint8_t* dst) {
-#define XP(ox, oy) (src + ((size_t)(((y + (oy) * sy) % h + h) % h) * w + (size_t)(((x + (ox) * sx) % w + w) % w)) * 4)
+static int xclamp(int v, int n) { return v < 0 ? 0 : v >= n ? n - 1 : v; }
+static void xbr_upscale(const uint8_t* src, int w, int h, int f, uint8_t* dst, int edge) {   /* edge: beyond a side, that side's own texels (not the other side's) */
+#define XP(ox, oy) (src + ((size_t)(edge ? xclamp(y + (oy) * sy, h) : ((y + (oy) * sy) % h + h) % h) * w + (size_t)(edge ? xclamp(x + (ox) * sx, w) : ((x + (ox) * sx) % w + w) % w)) * 4)
     int ow = w * f;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
@@ -1030,8 +1038,9 @@ static int win_frame_tile(const uint8_t* rgba, int w, int h) {
 
 /* A piece of a sprite cut into several textures (a far character's head and
  * body, a speech bubble's corners, an item on the ground): small, with
- * see-through pixels. Upscaled one by one (pack or xBR), the pieces no
- * longer meet ("cut and glued back" heads): they stay at the DS's size. */
+ * see-through pixels. Replaced one by one by the pack, the pieces no longer
+ * meet ("cut and glued back" heads): the pack leaves them alone. xBR smooths
+ * them, but not along their sides (where they meet the next piece). */
 static int sprite_piece(const uint8_t* rgba, int w, int h) {
     if (w > 32 || h > 32) return 0;
     for (int i = 0; i < w * h; i++) if (!rgba[i * 4 + 3]) return 1;
@@ -1065,10 +1074,11 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
                     if (g_dump_on) dump_texture(key, g_decode, *w, *h);
                     if (g_pack_on && g_pack_n && !piece) e->hd = pack_texture(key);
                 }
-                if (!e->hd && g_texup && *w * *h <= 256 * 256 && !piece) {   /* upscaled: 4x (2x for the big ones) */
+                static int pxbr = -1; if (pxbr < 0) pxbr = !getenv("DQIX_PIECE_XBR") || atoi(getenv("DQIX_PIECE_XBR")) != 0;   /* tests */
+                if (!e->hd && g_texup && *w * *h <= 256 * 256 && (!piece || pxbr)) {   /* upscaled: 4x (2x for the big ones) */
                     f = *w * *h <= 128 * 128 ? 4 : 2;
                     bleed(g_decode, *w, *h);
-                    xbr_upscale(g_decode, *w, *h, f, g_upbuf);
+                    xbr_upscale(g_decode, *w, *h, f, g_upbuf, piece);
                 }
             }
             if (f) {
@@ -1124,6 +1134,12 @@ static void make_fbs(void) {
         p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->post, 0);
         f->valid = 0;
     }
+    odepth_tex = new_tex(GL_DEPTH24_STENCIL8, g_fb3_w, g_fb_h, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_NEAREST);
+    p_glGenFramebuffers(1, &odepth_fbo);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, odepth_fbo);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, odepth_tex, 0);
+    ocolor_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ocolor_tex, 0);
     final_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h * 2, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
     p_glGenFramebuffers(1, &final_fbo);
     p_glBindFramebuffer(GL_FRAMEBUFFER, final_fbo);
@@ -1142,6 +1158,7 @@ static void free_fbs(void) {
         GLuint t[4] = { f->color, f->attr, f->depth, f->post }, b[2] = { f->fbo, f->post_fbo };
         p_glDeleteTextures(4, t); p_glDeleteFramebuffers(2, b);
     }
+    p_glDeleteTextures(1, &odepth_tex); p_glDeleteTextures(1, &ocolor_tex); p_glDeleteFramebuffers(1, &odepth_fbo);
     p_glDeleteTextures(1, &final_tex); p_glDeleteFramebuffers(1, &final_fbo);
     p_glDeleteTextures(1, &only2d_tex); p_glDeleteFramebuffers(1, &only2d_fbo);
     if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); held_tex = held_fbo = 0; held_w = held_h = 0; }
@@ -1452,8 +1469,15 @@ static void gl_render_(const Frame3D* f) {
      * Shadows: the mask (id 0) marks where it is hidden (depth test fails); the
      * shadow then darkens only those pixels, and not the object of its own id. */
     p_glEnable(GL_STENCIL_TEST);
-    int in_mask = 0;
-    for (int i = 0; i < nb; i++) {
+    int in_mask = 0, odepth = 0;
+    for (int i = 0; i <= nb; i++) {
+        if (g_ink && !odepth && (i == nb || g_batches[i].translucent)) {   /* the solid ones are drawn: keep their depth and colour */
+            odepth = 1;
+            p_glBindFramebuffer(GL_READ_FRAMEBUFFER, fb->fbo); p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, odepth_fbo);
+            p_glBlitFramebuffer(0, 0, g_fb3_w, g_fb_h, 0, 0, g_fb3_w, g_fb_h, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            p_glBindFramebuffer(GL_FRAMEBUFFER, fb->fbo);
+        }
+        if (i == nb) break;
         Batch* b = &g_batches[i];
         p_glBindTexture(GL_TEXTURE_2D, b->tex);
         p_glBindSampler(0, samplers[b->sampler]);
@@ -1547,6 +1571,10 @@ static void gl_render_(const Frame3D* f) {
     p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, fb->color); p_glBindSampler(0, 0);
     p_glActiveTexture(GL_TEXTURE1); p_glBindTexture(GL_TEXTURE_2D, fb->attr);
     p_glActiveTexture(GL_TEXTURE2); p_glBindTexture(GL_TEXTURE_2D, fb->depth);
+    p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, odepth_tex); p_glBindSampler(3, 0);
+    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_odepth"), 3);
+    p_glActiveTexture(GL_TEXTURE4); p_glBindTexture(GL_TEXTURE_2D, ocolor_tex); p_glBindSampler(4, 0);
+    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_ocolor"), 4);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_color"), 0);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_attr"), 1);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_depth"), 2);
