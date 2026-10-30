@@ -19,7 +19,7 @@ typedef struct {
     char error[160];
 } UpdateInfo;
 
-/* 1 if a > b (v32 > v31.2 > v31.1 > v31 > v31-nightly9 > v30) */
+/* 1 if a > b (v33 > v32 > v31.11 > v31.2 > v31.1 > v31 > v31-nightly9 > v30) */
 int update_newer(const char* a, const char* b);
 
 /* in the background; update_poll() returns 1 once, when it has finished */
