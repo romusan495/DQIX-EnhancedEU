@@ -101,6 +101,8 @@ static int g_hud = 1;                                             /* widescreen 
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
 static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
+static int g_quest_page;                                          /* ...it is a quest's sheet (quest_page()): redrawn as one modern window */
+static int g_stamp[4];                                            /* ...its Complete! stamp (quest_stamp()): x, y, w, h on the page (w 0: none) */
 static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
 static int g_shop_cut = 118;                                      /* ...the row between the list and the panels under it */
 enum { SHOP_TX = 60, SHOP_TY = 33, SHOP_TW = 113, SHOP_TH = 58, SHOP_PAD = 3, SHOP_GAP = 3 };   /* the card's text, beside its icon; the description's window */
@@ -281,6 +283,39 @@ static int top_page_mode(void) {
     return mapmarks_top_page() ? 1 : 0;
 }
 
+/* A quest's sheet (the top screen while a quest is offered, accepted or
+ * handed in, or read in the quest list): the game's parchment page with its
+ * title bar and its start date bar. In the modern style it is drawn again as
+ * one window of the minimal style, where the page pops up (g_pop_at): the
+ * title and the date in light letters (they are light on the bars), a thin
+ * grey line under the title and over the date, the description's dark
+ * letters made light, and the red stamp (Complete!) drawn again in clean
+ * ink (quest_stamp()). The page's parts, in its pixels: */
+enum { QS_X = 12, QS_Y = 10, QS_W = 235, QS_H = 174,              /* the sheet */
+       QS_IN_X = 16, QS_IN_W = 224,                               /* inside its torn edges */
+       QS_BAR_X = 18, QS_BAR_W = 221,                             /* the bars, inside their gold line */
+       QS_TITLE_Y = 16, QS_TITLE_H = 19,
+       QS_DESC_Y = 38, QS_DESC_H = 128,                           /* the description (and the stamp) */
+       QS_DATE_Y = 167, QS_DATE_H = 12 };
+static void quest_pieces(GlPresent* v) {
+    float k = g_pop_at[2], X = g_pop_at[0] - QS_X * k, Y = g_pop_at[1] - QS_Y * k;   /* (page pixels -> canvas) */
+    static const float part[7][5] = {                             /* x, y, w, h on the page; restyled (FS_COPY's u_mode) */
+        { QS_X, QS_Y, QS_W, QS_H, 2 },                            /* the window */
+        { QS_BAR_X, QS_TITLE_Y + QS_TITLE_H + 1, QS_BAR_W, 1, 4 }, { QS_BAR_X, QS_DATE_Y - 1.5f, QS_BAR_W, 1, 4 },   /* the lines */
+        { QS_BAR_X, QS_TITLE_Y, QS_BAR_W, QS_TITLE_H, 3 }, { QS_BAR_X, QS_DATE_Y, QS_BAR_W, QS_DATE_H, 3 },
+        { QS_IN_X, QS_DESC_Y, QS_IN_W, QS_DESC_H, 6 } };
+    for (int i = 0; i < 6; i++) {
+        const float* p = part[i];
+        float* q = v->piece[v->npiece++];
+        q[4] = 0; q[5] = p[0]; q[6] = p[1]; q[7] = p[2]; q[8] = p[3]; q[9] = p[4];
+        q[0] = X + p[0] * k; q[1] = Y + p[1] * k; q[2] = p[2] * k; q[3] = fmaxf(p[3] * k, 0.75f);
+    }
+    if (g_stamp[2]) {                                             /* the stamp, over the description */
+        float* l = v->layer[GL_LAYER_STAMP];
+        l[0] = X + g_stamp[0] * k; l[1] = Y + g_stamp[1] * k; l[2] = g_stamp[2] * k; l[3] = g_stamp[3] * k;
+    }
+}
+
 /* second: the layout of the second window (two windows) */
 static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
     memset(v, 0, sizeof *v);
@@ -377,7 +412,8 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
              * shop, a title): its windows alone, without the page's backdrop,
              * popped up in the middle over the big screen (pop_update()) */
             small[0] = small[1] = small[2] = small[3] = 0;
-            if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
+            if (g_pop_win[2] && g_quest_page && v->npiece + 6 <= GL_MAX_PIECES) quest_pieces(v);
+            else if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
                 float* q = v->piece[v->npiece++], w = (float)g_pop_win[2], h = (float)g_pop_win[3];
                 q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
                 q[2] = w * g_pop_at[2]; q[3] = h * g_pop_at[2]; q[0] = g_pop_at[0]; q[1] = g_pop_at[1];
@@ -1522,6 +1558,92 @@ static void pop_place(void) {
     g_pop_held = 1;
 }
 
+/* The stamp a quest's sheet gets when the quest is done (a red box, double
+ * edged, round its word: Complete!, Réussie !...), drawn again at a higher
+ * resolution (STAMP_S pixels per page pixel, GL_LAYER_STAMP) in clean ink:
+ * the box's two lines straight, rounded at the corners, and its letters
+ * from the page's red pixels, their specks filled and edges smoothed. The
+ * box: the outermost columns and rows full of red (its outer line 4 pixels
+ * wide, its inner one 2, 6 in, once it has come down: 62 rows high). */
+enum { STAMP_S = 6, STAMP_MAXW = 240, STAMP_MAXH = 128 };
+static int stamp_red(uint32_t c) { int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255; return r > 120 && r - g > 80 && r - b > 60; }   /* (not the bars' gold line) */
+static float stamp_box(float x, float y, float w, float h, float in, float rad) {   /* inside the rounded box "in" pixels in: > 0 */
+    float hx = w / 2 - in, hy = h / 2 - in, dx = fabsf(x - w / 2) - (hx - rad), dy = fabsf(y - h / 2) - (hy - rad);
+    float out = sqrtf(fmaxf(dx, 0) * fmaxf(dx, 0) + fmaxf(dy, 0) * fmaxf(dy, 0)) + fminf(fmaxf(dx, dy), 0);
+    return rad - out;
+}
+static void quest_stamp(const uint32_t* px) {
+    static uint8_t mask[STAMP_MAXH][STAMP_MAXW], *img;
+    static uint32_t shown;
+    int col[256] = { 0 }, row[192] = { 0 }, x0 = -1, x1 = -1, y0 = -1, y1 = -1;
+    for (int y = QS_DESC_Y; y < QS_DESC_Y + QS_DESC_H; y++)
+        for (int x = QS_IN_X; x < QS_IN_X + QS_IN_W; x++) if (stamp_red(px[y * 256 + x])) { col[x]++; row[y]++; }
+    for (int x = 0; x < 256; x++) if (col[x] > 30) { if (x0 < 0) x0 = x; x1 = x; }
+    for (int y = 0; y < 192; y++) if (row[y] > 100) { if (y0 < 0) y0 = y; y1 = y; }
+    int w = x1 - x0 + 1, h = y1 - y0 + 1;
+    g_stamp[2] = 0;
+    if (x0 < 0 || y0 < 0 || w < 40 || h < 24 || w > STAMP_MAXW || h > STAMP_MAXH) return;
+    uint32_t key = 2166136261u;                                   /* (drawn again only when it changes) */
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) { mask[y][x] = stamp_red(px[(y0 + y) * 256 + x0 + x]); key = (key ^ mask[y][x]) * 16777619u; }
+    key = (key ^ (uint32_t)(w << 8 | h)) * 16777619u;
+    g_stamp[0] = x0; g_stamp[1] = y0; g_stamp[2] = w; g_stamp[3] = h;
+    if (key == shown) return;
+    shown = key;
+    int W = w * STAMP_S, H = h * STAMP_S;
+    float sc = h / 62.0f;                                         /* (62 rows high once down) */
+    uint8_t* n = realloc(img, (size_t)W * H * 4);
+    if (!n) { g_stamp[2] = 0; return; }
+    img = n;
+    for (int j = 0; j < H; j++)
+        for (int i = 0; i < W; i++) {
+            float x = (i + 0.5f) / STAMP_S, y = (j + 0.5f) / STAMP_S, aa = 1.0f / STAMP_S;
+            /* the lines: outer 0..4 in, inner 6..8 in (more while it comes down, bigger: sc) */
+            float b0 = stamp_box(x, y, w, h, 0, 5 * sc), b1 = stamp_box(x, y, w, h, 4 * sc, 3 * sc), b2 = stamp_box(x, y, w, h, 6 * sc, 2 * sc), b3 = stamp_box(x, y, w, h, 8 * sc, sc);
+            float cov = fminf(fmaxf(b0 / aa + 0.5f, 0), 1) * (1 - fminf(fmaxf(b1 / aa + 0.5f, 0), 1))
+                      + fminf(fmaxf(b2 / aa + 0.5f, 0), 1) * (1 - fminf(fmaxf(b3 / aa + 0.5f, 0), 1));
+            if (b3 > sc) {                                         /* the letters: the red pixels, blurred over 3x3 and cut at half */
+                float m = 0, wsum = 0;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        float sx = x - 0.5f + dx * 0.75f, sy = y - 0.5f + dy * 0.75f;
+                        int ix = (int)floorf(sx), iy = (int)floorf(sy);
+                        float fx = sx - ix, fy = sy - iy, v = 0;
+                        for (int k = 0; k < 4; k++) {             /* (bilinear) */
+                            int xx = ix + (k & 1), yy = iy + (k >> 1);
+                            float wk = ((k & 1) ? fx : 1 - fx) * ((k >> 1) ? fy : 1 - fy);
+                            if (xx >= 0 && xx < w && yy >= 0 && yy < h) v += wk * mask[yy][xx];
+                        }
+                        float wt = dx || dy ? (dx && dy ? 0.5f : 0.75f) : 1.0f;
+                        m += v * wt; wsum += wt;
+                    }
+                m /= wsum;
+                cov += fminf(fmaxf((m - 0.38f) / 0.16f, 0), 1);
+            }
+            float a = fminf(cov, 1) * 0.92f;
+            uint8_t* o = img + ((size_t)j * W + i) * 4;               /* premultiplied */
+            o[0] = (uint8_t)(206 * a + 0.5f); o[1] = (uint8_t)(28 * a + 0.5f); o[2] = (uint8_t)(34 * a + 0.5f); o[3] = (uint8_t)(255 * a + 0.5f);
+        }
+    gl_set_layer(GL_LAYER_STAMP, img, W, H);
+}
+
+/* Is the top screen a quest's sheet (quest_pieces())? Its two dark brown
+ * bars and the light parchment between them, at their places (most of the
+ * points: letters or the stamp may lie over some). */
+static int quest_page(const uint32_t* px) {
+    int bars = 0, page = 0, n = 0;
+    for (int x = QS_IN_X + 8; x < QS_IN_X + QS_IN_W - 8; x += 8) {
+        uint32_t t = px[(QS_TITLE_Y + 1) * 256 + x], d = px[(QS_DATE_Y + 1) * 256 + x], m = px[156 * 256 + x];
+        int tr = (t >> 16) & 255, tg = (t >> 8) & 255, tb = t & 255, dr = (d >> 16) & 255, dg = (d >> 8) & 255, db = d & 255;
+        int mr = (m >> 16) & 255, mg = (m >> 8) & 255, mb = m & 255;
+        bars += tr > 75 && tr < 125 && tg > 45 && tg < 95 && tb > 20 && tb < 70 && tr > tb + 30;   /* the title bar (97, 65, 40) */
+        bars += dr > 95 && dr < 150 && dg > 50 && dg < 105 && db > 20 && db < 70 && dr > db + 50;  /* the date bar (121, 73, 40) */
+        page += mr > 210 && mg > 180 && mb > 110 && mr > mb + 50;                                  /* the parchment (251, 227, 162) */
+        n++;
+    }
+    return bars * 5 > n * 2 * 4 && page * 2 > n;                  /* (the stamp, coming down big, can hide much of the parchment) */
+}
+
 /* The top screen's page (top_page_mode() 1): which of its pixels are its
  * backdrop, left out of the pop-up (tagged 1 in the top byte, gl_set_top_cut()),
  * and the rest's bounds (g_pop_win). A backdrop of its own (the curtain behind
@@ -1530,9 +1652,27 @@ static void pop_place(void) {
  * around them, and what touches the edge (the sky, the torn border), go. */
 static void pop_update(int a_on_top) {
     if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
-    g_pop_win[2] = 0;
-    if (top_page_mode() != 1) return;
+    g_pop_win[2] = 0; g_quest_page = 0;
+    static float far;                                             /* a quest's sheet: how far the 3D was since it is up (at most) */
+    static int gone = 1 << 20;                                    /* ...frames since it was last seen */
+    if (top_page_mode() != 1) { far = 0; gone = 1 << 20; return; }
     enum { N = 256 * 192 };
+    int quest = g_winstyle == 2 && !g_shop && quest_page(g_engine_out[a_on_top ? 0 : 1]);
+    gone = quest ? 0 : gone + 1;
+    if (!quest && gone < 30) return;                              /* (fading out: not its parts cut by colour for a moment) */
+    if (quest) {                                                  /* a quest's sheet: redrawn whole (quest_pieces()) */
+        /* not while the camera comes close (the hero showing the party trick
+         * the quest gave): the sheet would hide him */
+        float w = gl_3d_centre_w();
+        if (w > far) far = w;
+        if (w > 0 && w < far * 0.8f) return;
+        g_quest_page = 1;
+        quest_stamp(g_engine_out[a_on_top ? 0 : 1]);
+        g_pop_win[0] = QS_X; g_pop_win[1] = QS_Y; g_pop_win[2] = QS_W; g_pop_win[3] = QS_H;
+        pop_place();
+        return;
+    }
+    far = 0;
     static uint8_t bg[N];
     static int lab[N], q[N], size[N], ring[N];
     static uint8_t flags[N];                                      /* 1 touches the edge, 2 reaches inside */
@@ -1677,7 +1817,7 @@ static void present_gl(void) {
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
     shop_update((pow >> 15) & 1);
     pop_update((pow >> 15) & 1);
-    gl_set_top_cut(g_pop_win[2] != 0);
+    gl_set_top_cut(g_pop_win[2] && !g_quest_page);
     gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */

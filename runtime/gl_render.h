@@ -7,6 +7,7 @@
 /* Pictures drawn over the screens besides the map's and the shop's (gl_set_layer):
  * one per user, in drawing order. Each is placed every frame by GlPresent.layer. */
 enum { GL_LAYER_HINT,                                 /* a button's sign over the game's (hints.c) */
+       GL_LAYER_STAMP,                                /* a quest sheet's Complete! stamp, drawn again (frontend_sdl.c quest_stamp) */
        GL_LAYERS };
 
 int gl_render_init(int scale);                        /* 0 on failure (use the software path) */
@@ -42,7 +43,8 @@ typedef struct {
     float skin_k;                                     /* photo pixels per canvas unit */
     int npiece;                                       /* parts of a screen drawn over the canvas (widescreen battle HUD) */
     float piece[8][10];                               /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom; 2, 3: its 2D alone, gl_set_split()); x, y, w, h on it;
-                                                       * restyled (1 its dark letters alone, made light; 2 no picture: a window of the minimal style) */
+                                                       * restyled (1 its dark letters alone, made light; 2 no picture: a window of the minimal style;
+                                                       * 3 its light letters alone; 4 no picture: a thin grey line; 5 its red ink alone, cleaned; 6 as 1, kept sharp when small, red ink left out) */
     int held;                                         /* show the picture kept by gl_hold() instead of this frame's */
     float overlay[4];                                 /* where to draw gl_set_overlay()'s picture on the canvas (w 0: not) */
     float icons[4];                                   /* ...and gl_set_icons()' */
@@ -62,6 +64,7 @@ int gl_wide_shown(int* side);                         /* widescreen: the screen 
 int gl_3d_ready(void);                                /* this frame's 3D is there to compose */
 void gl_set_hud_cut(int on);                          /* the next gl_compose(): the commands screen's card backdrops see-through (battle HUD, minimal windows) */
 void gl_set_split(int on);                            /* the next gl_compose(): the 3D screen (widescreen) drawn without its 2D, which pieces 2/3 show apart */
+float gl_3d_centre_w(void);                          /* the last 3D frame: how far (w) its polygons in the middle of the picture are, by area (0: none) */
 void gl_set_top_cut(int on);                          /* the next gl_compose(): the top screen's pixels tagged 1 (top byte) see-through (its pop-up) */
 int gl_dialog_box(int r[4]);                          /* the dialogue window on the last 3D frame: x0, y0, x1, y1 on the DS's picture; 0 when none */
 uint8_t* gl_read_full(int* w, int* h);
