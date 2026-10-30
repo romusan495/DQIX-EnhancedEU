@@ -1653,9 +1653,9 @@ static int quest_page(const uint32_t* px) {
 static void pop_update(int a_on_top) {
     if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
     g_pop_win[2] = 0; g_quest_page = 0;
-    static float far;                                             /* a quest's sheet: how far the 3D was since it is up (at most) */
+    static float sheet_far;                                       /* a quest's sheet: how far the 3D was since it is up (at most) */
     static int gone = 1 << 20;                                    /* ...frames since it was last seen */
-    if (top_page_mode() != 1) { far = 0; gone = 1 << 20; return; }
+    if (top_page_mode() != 1) { sheet_far = 0; gone = 1 << 20; return; }
     enum { N = 256 * 192 };
     int quest = g_winstyle == 2 && !g_shop && quest_page(g_engine_out[a_on_top ? 0 : 1]);
     gone = quest ? 0 : gone + 1;
@@ -1664,15 +1664,15 @@ static void pop_update(int a_on_top) {
         /* not while the camera comes close (the hero showing the party trick
          * the quest gave): the sheet would hide him */
         float w = gl_3d_centre_w();
-        if (w > far) far = w;
-        if (w > 0 && w < far * 0.8f) return;
+        if (w > sheet_far) sheet_far = w;
+        if (w > 0 && w < sheet_far * 0.8f) return;
         g_quest_page = 1;
         quest_stamp(g_engine_out[a_on_top ? 0 : 1]);
         g_pop_win[0] = QS_X; g_pop_win[1] = QS_Y; g_pop_win[2] = QS_W; g_pop_win[3] = QS_H;
         pop_place();
         return;
     }
-    far = 0;
+    sheet_far = 0;
     static uint8_t bg[N];
     static int lab[N], q[N], size[N], ring[N];
     static uint8_t flags[N];                                      /* 1 touches the edge, 2 reaches inside */
