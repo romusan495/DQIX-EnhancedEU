@@ -1040,6 +1040,8 @@ static void textures_hd_after(void) {
 #endif
 }
 
+void gl_textures_hd_start(void) { textures_hd_after(); }
+
 static void texcache_redo(void) { for (int i = 0; i < TEXCACHE; i++) g_texcache[i].w = 0; }   /* every texture decodes again */
 
 void gl_set_texture_pack(int on) { g_pack_on = on != 0; if (!g_pack_on) pack_unload(); texcache_redo(); hdsprite_update(); }

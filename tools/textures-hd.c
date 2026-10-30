@@ -1,7 +1,8 @@
 /* textures-hd: makes HD versions (textures/hd) of the textures the game dumped
  * (textures/dump) that don't have one yet, with Real-ESRGAN. The game starts it
- * when it closes after dumping new ones; double-clicking it works too. The new
- * HD textures show the next time you play.
+ * when it starts (to finish one cut short) and when it closes after dumping new
+ * ones; double-clicking it works too. The game shows how far it is
+ * (textures-hd-progress.txt) and loads the new HD textures when it's done.
  *
  * Real-ESRGAN (realesrgan-ncnn-vulkan, on the graphics card) lives in
  * textures-hd-outil/ next to the game. What it can't do well by itself:
@@ -38,12 +39,15 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #define mkdir_(p) mkdir(p, 0755)
 #define SEP "/"
 #endif
 
 #define PAD 8
 #define SCALE 4
+#define BATCH 100                                              /* textures per Real-ESRGAN run */
 static FILE* g_log;
 static int g_sharp = 0;                                        /* % of the sharp enlargement mixed into Real-ESRGAN's (TEXHD_SHARP) */
 
@@ -300,33 +304,23 @@ static void old_tmp(const char* game) {
 #endif
 }
 
-static int upscale_new(const char* game) {
-    char dump[600], hd[600], tool[600], tmp[600], in_c[640], in_a[640], out_c[640], out_a[640], logp[600];
-    snprintf(dump, sizeof dump, "%s" SEP "textures" SEP "dump", game);
-    snprintf(hd, sizeof hd, "%s" SEP "textures" SEP "hd", game);
-    snprintf(tool, sizeof tool, "%s" SEP "textures-hd-outil", game);
-    snprintf(tmp, sizeof tmp, "%s" SEP "textures-hd-tmp", game);   /* not under textures/: the game would take its pictures for HD textures */
-    snprintf(logp, sizeof logp, "%s" SEP "textures" SEP "hd-auto.log", game);
-    static char names[20000][32];
-    int n = list_dump(dump, names, 20000), todo = 0;
-    static char work[20000][32]; static int pads[20000];
-    { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); pack_names(tex, 0); qsort(g_have, (size_t)g_nhave, sizeof *g_have, cmp_name); }
-    for (int i = 0; i < n; i++) if (!in_pack(names[i])) snprintf(work[todo++], 32, "%s", names[i]);
-    if (!todo) return 0;
-    g_log = fopen(logp, "a");
-    time_t t = time(NULL); logf_("\n%s%d new texture(s) in textures/dump\n", ctime(&t), todo);
-    mkdir_(hd); mkdir_(tmp);
-    snprintf(in_c, sizeof in_c, "%s" SEP "c", tmp); snprintf(in_a, sizeof in_a, "%s" SEP "a", tmp);
-    snprintf(out_c, sizeof out_c, "%s" SEP "c4", tmp); snprintf(out_a, sizeof out_a, "%s" SEP "a4", tmp);
-    mkdir_(in_c); mkdir_(in_a); mkdir_(out_c); mkdir_(out_a);
-    static char alist[20000][32]; int na = 0;
+/* textures-hd-progress.txt next to the game, read by the game (its bar and,
+ * at the end, its "done" message): "working <done> <total>" or "done <made> <total>" */
+static char g_prog[620];
+static void progress(const char* state, int done, int total) {
+    FILE* f = fopen(g_prog, "wb"); if (f) { fprintf(f, "%s %d %d\n", state, done, total); fclose(f); }
+}
+
+/* one batch: its pictures padded, Real-ESRGAN over all of them at once, the HD textures written */
+static int upscale_batch(const char* dump, const char* hd, const char* tool, const char* in_c, const char* in_a, const char* out_c, const char* out_a,
+                         char (*work)[32], int todo) {
+    static int pads[BATCH];
+    static char alist[BATCH][32]; int na = 0;
     for (int i = 0; i < todo; i++) {
         char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", dump, work[i]);
         int w, h, c; unsigned char* px = stbi_load(p, &w, &h, &c, 4);
         pads[i] = -1;
         if (!px) { logf_("  %s: can't read\n", work[i]); continue; }
-        int blank = 1; for (int k = 1; k < w * h && blank; k++) if (memcmp(px + k * 4, px, 4) && (px[k * 4 + 3] || px[3])) blank = 0;
-        if (blank) { logf_("  %s: nothing to draw (see-through or one colour), left as it is\n", work[i]); stbi_image_free(px); continue; }
         int pd = PAD < w ? (PAD < h ? PAD : h) : (w < h ? w : h);
         pads[i] = pd;
         int solid = 1; for (int k = 0; k < w * h; k++) if (px[k * 4 + 3] != 255) { solid = 0; break; }
@@ -374,12 +368,60 @@ static int upscale_new(const char* game) {
         if (stbi_write_png(p, ow, oh, 4, o, ow * 4)) made++;
         free(o); free(sharp); stbi_image_free(px); stbi_image_free(big); stbi_image_free(ab);
     }
-    rmtree_files(in_c, work, todo); rmtree_files(out_c, work, todo); rmtree_files(in_a, alist, na); rmtree_files(out_a, alist, na);
+    rmtree_files((char*)in_c, work, todo); rmtree_files((char*)out_c, work, todo); rmtree_files((char*)in_a, alist, na); rmtree_files((char*)out_a, alist, na);
+    return rc == 0 ? made : -1;
+}
+
+/* in batches of BATCH, so a PC turned off loses one batch: the next run (the
+ * game starts one when it starts) goes on with what has no HD version yet */
+static int upscale_new(const char* game) {
+    char dump[600], hd[600], tool[600], tmp[600], in_c[640], in_a[640], out_c[640], out_a[640], logp[600];
+    snprintf(dump, sizeof dump, "%s" SEP "textures" SEP "dump", game);
+    snprintf(hd, sizeof hd, "%s" SEP "textures" SEP "hd", game);
+    snprintf(tool, sizeof tool, "%s" SEP "textures-hd-outil", game);
+    snprintf(tmp, sizeof tmp, "%s" SEP "textures-hd-tmp", game);   /* not under textures/: the game would take its pictures for HD textures */
+    snprintf(logp, sizeof logp, "%s" SEP "textures" SEP "hd-auto.log", game);
+    snprintf(g_prog, sizeof g_prog, "%s" SEP "textures-hd-progress.txt", game);
+    static char names[20000][32], work[20000][32];
+    int n = list_dump(dump, names, 20000), todo = 0, blank = 0;
+    { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); pack_names(tex, 0); qsort(g_have, (size_t)g_nhave, sizeof *g_have, cmp_name); }
+    for (int i = 0; i < n; i++) {
+        if (in_pack(names[i])) continue;
+        char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", dump, names[i]);
+        int w, h, c; unsigned char* px = stbi_load(p, &w, &h, &c, 4);
+        if (!px) continue;
+        int b = 1; for (int k = 1; k < w * h && b; k++) if (memcmp(px + k * 4, px, 4) && (px[k * 4 + 3] || px[3])) b = 0;
+        stbi_image_free(px);
+        if (b) blank++;                                          /* nothing to draw (see-through or one colour): left as it is */
+        else snprintf(work[todo++], 32, "%s", names[i]);
+    }
+    int total = n - blank, done = total - todo;
+    if (!todo) {                                                 /* nothing left: a run cut short before its end says so now */
+        FILE* f = fopen(g_prog, "rb"); char st[16] = "";
+        if (f) { if (fscanf(f, "%15s", st) != 1) st[0] = 0; fclose(f); if (!strcmp(st, "working")) progress("done", 0, total); }
+        return 0;
+    }
+    g_log = fopen(logp, "a");
+    time_t t = time(NULL); logf_("\n%s%d new texture(s) in textures/dump (%d HD already, %d with nothing to draw)\n", ctime(&t), todo, done, blank);
+    mkdir_(hd); mkdir_(tmp);
+    snprintf(in_c, sizeof in_c, "%s" SEP "c", tmp); snprintf(in_a, sizeof in_a, "%s" SEP "a", tmp);
+    snprintf(out_c, sizeof out_c, "%s" SEP "c4", tmp); snprintf(out_a, sizeof out_a, "%s" SEP "a4", tmp);
+    mkdir_(in_c); mkdir_(in_a); mkdir_(out_c); mkdir_(out_a);
+    int made = 0;
+    progress("working", done, total);
+    for (int b = 0; b < todo; b += BATCH) {
+        int k = todo - b < BATCH ? todo - b : BATCH;
+        int m = upscale_batch(dump, hd, tool, in_c, in_a, out_c, out_a, work + b, k);
+        if (m < 0) break;                                        /* Real-ESRGAN can't run: the next run tries again */
+        made += m; done += k;
+        progress("working", done, total);
+    }
 #ifdef _WIN32
     RemoveDirectoryA(in_c); RemoveDirectoryA(in_a); RemoveDirectoryA(out_c); RemoveDirectoryA(out_a); RemoveDirectoryA(tmp);
 #else
     rmdir(in_c); rmdir(in_a); rmdir(out_c); rmdir(out_a); rmdir(tmp);
 #endif
+    if (done >= total) progress("done", made, total);
     logf_("  %d HD texture(s) written to textures/hd\n", made);
     if (g_log) fclose(g_log);
     return made;
@@ -394,20 +436,27 @@ int main(int argc, char** argv) {
 #else
     if (argc > 2 && !strcmp(argv[1], "--game")) snprintf(game, sizeof game, "%s", argv[2]);
 #endif
-    /* one at a time: the game starts this when it closes, the build after an update too */
-    char lock[700]; snprintf(lock, sizeof lock, "%s" SEP "textures" SEP "hd-auto.lock", game);
-    FILE* lf = fopen(lock, "rb");
-    if (lf) {
-        fclose(lf);
-        struct stat st;
-        if (stat(lock, &st) == 0 && time(NULL) - st.st_mtime < 6 * 3600) return 0;   /* another one is at work (an older lock: left by a crash) */
-    }
+    /* one at a time: the game starts this when it starts and when it closes, the
+     * build after an update too. The lock is a file held open: Windows lets it
+     * go when this ends, even with the PC turned off or the process killed */
     { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); mkdir_(tex); }
-    lf = fopen(lock, "wb"); if (lf) fclose(lf);
+    char lock[700]; snprintf(lock, sizeof lock, "%s" SEP "textures" SEP "hd-auto.lock", game);
+#ifdef _WIN32
+    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);   /* the game comes first (Real-ESRGAN gets it too) */
+    HANDLE lh = CreateFileA(lock, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (lh == INVALID_HANDLE_VALUE) return 0;                   /* another one is at work */
+#else
+    int lfd = open(lock, O_WRONLY | O_CREAT, 0644);
+    if (lfd < 0 || flock(lfd, LOCK_EX | LOCK_NB)) return 0;
+#endif
     if (getenv("TEXHD_SHARP")) { g_sharp = atoi(getenv("TEXHD_SHARP")); if (g_sharp < 0) g_sharp = 0; if (g_sharp > 100) g_sharp = 100; }
     old_tmp(game);
     restyle(game);
     upscale_new(game);
-    remove(lock);
+#ifdef _WIN32
+    CloseHandle(lh);
+#else
+    unlink(lock); close(lfd);
+#endif
     return 0;
 }

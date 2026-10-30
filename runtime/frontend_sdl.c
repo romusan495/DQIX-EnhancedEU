@@ -909,6 +909,7 @@ static int try_gl(void) {
     if (getenv("DQIX_HD_TEXTURES")) g_texpack = atoi(getenv("DQIX_HD_TEXTURES")) != 0;   /* tests */
     if (getenv("DQIX_DUMP_TEXTURES")) g_texdump = atoi(getenv("DQIX_DUMP_TEXTURES")) != 0;
     gl_set_texture_pack(g_texpack); gl_set_texture_dump(g_texdump);
+    gl_textures_hd_start();                                       /* HD textures still to make (a PC turned off before the end): on with them */
     if (getenv("DQIX_HD_TEXT")) g_hdtext = atoi(getenv("DQIX_HD_TEXT")) != 0;
     if (getenv("DQIX_HD_MOVIES")) g_hdmovie = atoi(getenv("DQIX_HD_MOVIES")) != 0;   /* tests */
     if (getenv("DQIX_HD_FONT")) snprintf(g_hdfont, sizeof g_hdfont, "%s", getenv("DQIX_HD_FONT"));
@@ -1800,6 +1801,77 @@ static void hint_update(GlPresent* v) {
     q[2] = 2 * r * kx; q[3] = 2 * r * ky;
 }
 
+/* textures-hd at work (textures-hd-progress.txt, next to the game): a bar at
+ * the big screen's bottom left; when it's done, "HD textures ready" for a few
+ * seconds and the new ones are loaded. */
+#define HDBAR_W 76.0f                                            /* (DS pixels) */
+#define HDBAR_H 12.0f
+static void hdbar_draw(int W, int H, const char* text, float part) {
+    static uint8_t* img; static uint32_t* t; static int cap;
+    if (W * H > cap) { cap = W * H; img = realloc(img, (size_t)cap * 4); t = realloc(t, (size_t)cap * 4); }
+    float r = H * 0.22f;                                         /* the panel: rounded, dark, see-through */
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float dx = fmaxf(fmaxf(r - x - 0.5f, x + 0.5f - (W - r)), 0), dy = fmaxf(fmaxf(r - y - 0.5f, y + 0.5f - (H - r)), 0);
+            float a = fminf(fmaxf(r - hypotf(dx, dy) + 0.5f, 0), 1) * 0.78f;
+            uint8_t* p = img + ((size_t)y * W + x) * 4;
+            p[0] = (uint8_t)(16 * a); p[1] = (uint8_t)(18 * a); p[2] = (uint8_t)(28 * a); p[3] = (uint8_t)(255 * a);
+        }
+    if (part >= 0) {                                             /* the bar */
+        int bx = (int)(H * 0.3f), by = (int)(H * 0.70f), bw = W - 2 * bx, bh = (int)fmaxf(H * 0.12f, 2), fill = (int)(bw * fminf(part, 1));
+        for (int y = by; y < by + bh && y < H; y++)
+            for (int x = bx; x < bx + bw; x++) {
+                uint8_t* p = img + ((size_t)y * W + x) * 4;
+                if (x < bx + fill) { p[0] = 120; p[1] = 200; p[2] = 255; } else { p[0] = 70; p[1] = 74; p[2] = 90; }
+                p[3] = 255;
+            }
+    }
+    memset(t, 0, (size_t)W * H * 4);                             /* the text: white, its coverage from the grey drawn */
+    float px = H * (part >= 0 ? 0.36f : 0.5f);
+    int tw = text_draw(t, W, H, 0, 0, px, 0xFFFFFF, text);
+    if (tw > W - H * 0.6f && tw > 0) { px *= (W - H * 0.6f) / (float)tw; memset(t, 0, (size_t)W * H * 4); tw = text_draw(t, W, H, 0, 0, px, 0xFFFFFF, text); }
+    int ox = part >= 0 ? (int)(H * 0.3f) : (W - tw) / 2, oy = (int)(part >= 0 ? H * 0.14f : (H - px * 1.25f) / 2);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            int sx = x - ox, sy = y - oy;
+            if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+            float a = (float)(t[(size_t)sy * W + sx] & 255) / 255.0f;
+            if (a <= 0) continue;
+            uint8_t* p = img + ((size_t)y * W + x) * 4;
+            for (int c = 0; c < 3; c++) p[c] = (uint8_t)(255 * a + p[c] * (1 - a));
+            p[3] = (uint8_t)(255 * a + p[3] * (1 - a));
+        }
+    gl_set_layer(GL_LAYER_HDBAR, img, W, H);
+}
+static void hdbar_update(GlPresent* v) {
+    static int state, done, total, made; static uint64_t until; static char shown[128];
+    if (g_frame % 30 == 0) {                                     /* (twice a second) */
+        FILE* f = fopen("textures-hd-progress.txt", "rb");
+        char st[16] = ""; int a = 0, b = 0;
+        state = 0;
+        if (f) { if (fscanf(f, "%15s %d %d", st, &a, &b) != 3) st[0] = 0; fclose(f); }
+        if (!strcmp(st, "working") && b > 0 && a < b) { state = 1; done = a; total = b; }
+        else if (!strcmp(st, "done")) {                          /* once: the message, the new textures */
+            remove("textures-hd-progress.txt");
+            made = a; until = SDL_GetPerformanceCounter() + g_perf_freq * 8;
+            if (g_texpack) gl_reload_texture_pack();
+        }
+    }
+    int msg = until && SDL_GetPerformanceCounter() < until;
+    if (!state && !msg) { if (shown[0]) { gl_set_layer(GL_LAYER_HDBAR, NULL, 0, 0); shown[0] = 0; } return; }
+    const float* s = v->top[2] * v->top[3] >= v->bot[2] * v->bot[3] ? v->top : v->bot;   /* the big screen */
+    float k = s[2] / 256.0f, w = HDBAR_W * k, h = HDBAR_H * k * (msg && !state ? 1.1f : 1);
+    int W = (int)(w * v->sc + 0.5f), H = (int)(h * v->sc + 0.5f);
+    if (W < 8 || H < 4) return;
+    char text[96], key[128];
+    if (state) snprintf(text, sizeof text, T("HD textures: %d%%"), (int)(100.0 * done / total));
+    else snprintf(text, sizeof text, made > 0 ? T("HD textures ready (%d new)") : T("HD textures ready"), made);
+    snprintf(key, sizeof key, "%s %d %d %d", text, W, H, state ? done : -1);
+    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hdbar_draw(W, H, text, state ? (float)done / total : -1); }
+    float* q = v->layer[GL_LAYER_HDBAR];
+    q[0] = s[0] + 6 * k; q[1] = s[1] + s[3] - h - 6 * k; q[2] = w; q[3] = h;
+}
+
 static void present_gl(void) {
     auto_scale();
     g_wide_side = g_classic ? 0 : wide_side_target();            /* the next 3D frames (only the picture changes) */
@@ -1857,6 +1929,7 @@ static void present_gl(void) {
     }
     GlPresent v; canvas_layout(&v, w, h);
     hint_update(&v);
+    hdbar_update(&v);
     mapmarks_hover(-1, -1);
     map_overlay(&v, g_win, (pow >> 15) & 1);
     gl_present(&v);
