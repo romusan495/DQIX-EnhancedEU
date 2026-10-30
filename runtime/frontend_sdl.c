@@ -326,8 +326,8 @@ static void quest_pieces(GlPresent* v) {
 /* An item's card (a shop asking whether to buy it, Items, Equipment): the
  * game's parchment page, drawn again in the modern style as quest_pieces()
  * does a quest's: one window, the name's and the stats' light letters, the
- * description's and the jobs' dark ones made light, the icons and the rarity
- * as they are, thin grey lines between the parts. Its parts, in its pixels: */
+ * description's and the jobs' dark ones made light, the rarity off its plate,
+ * the icons as they are, thin grey lines between the parts. Its parts, in its pixels: */
 enum { CS_X = 12, CS_Y = 5, CS_W = 238, CS_H = 176 };              /* the card */
 #define CARD_K 0.42f                                              /* its size where it pops up (card_page) */
 static void card_pieces(GlPresent* v) {
@@ -337,7 +337,7 @@ static void card_pieces(GlPresent* v) {
         { 16, 27, 228, 1, 4 }, { 16, 101, 162, 1, 4 }, { 181, 30, 1, 146, 4 },   /* the lines: under the name, over the stats, before the jobs */
         { 16, 8, 17, 17, 0 },                                     /* the kind's sign */
         { 37, 10, 102, 12, 3 },                                   /* the name (light on its bar, inside its edge) */
-        { 175, 9, 73, 15, 0 },                                    /* the rarity */
+        { 175, 9, 25, 15, 9 }, { 200, 9, 48, 15, 8 },             /* the rarity: its word, its stars (off their brown plates) */
         { 24, 48, 32, 32, 0 },                                    /* the icon, big */
         { 60, 30, 114, 66, 6 },                                   /* the description */
         { 19, 105, 155, 70, 3 },                                  /* the stats (light on their panel) */
@@ -474,7 +474,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
              * popped up in the middle over the big screen (pop_update()) */
             small[0] = small[1] = small[2] = small[3] = 0;
             if (g_pop_win[2] && g_quest_page && v->npiece + 6 <= GL_MAX_PIECES) quest_pieces(v);
-            else if (g_pop_win[2] && g_card_page && v->npiece + 12 <= GL_MAX_PIECES) card_pieces(v);
+            else if (g_pop_win[2] && g_card_page && v->npiece + 13 <= GL_MAX_PIECES) card_pieces(v);
             else if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
                 float* q = v->piece[v->npiece++], w = (float)g_pop_win[2], h = (float)g_pop_win[3];
                 q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;

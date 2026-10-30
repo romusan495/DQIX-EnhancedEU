@@ -419,11 +419,14 @@ static const char* FS_COPY =
      * red ink left out (5's);
      * 5 red ink (a quest's Complete! stamp) alone, its specks and holes smoothed
      * over (u_ds: one DS pixel in u_src); 7 as 2, solid inside, the game's dark
-     * panels' grey (24, 24, 24) */
+     * panels' grey (24, 24, 24); 8 an item's rarity stars off their brown
+     * plate: the ones it has gold, the others grey, the rest nothing; 9 its
+     * word's cream letters alone, made light */
     "uniform int u_mode; uniform vec2 u_px; uniform float u_line; uniform vec2 u_ds;\n"
     "float red(vec2 uv) { vec4 c = texture(u_src, uv); vec3 r = c.rgb / max(c.a, 0.001); return smoothstep(0.3, 0.45, r.r - max(r.g, r.b)) * c.a; }\n"
     "float ink(vec2 uv, int light) { vec4 c = textureLod(u_src, uv, 0.0); float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
     "  return (light != 0 ? smoothstep(0.45, 0.65, L) : smoothstep(0.52, 0.32, L)) * c.a; }\n"
+    "float goldness(vec4 c) { vec3 r = c.rgb / max(c.a, 0.001); return smoothstep(0.3, 0.5, r.r - r.b) * smoothstep(0.5, 0.65, r.g) * smoothstep(0.25, 0.1, r.b); }\n"
     "float letters(int light) {\n"   /* (each of 4 points in the pixel at full size, then averaged: thin strokes kept when drawn small) */
     "  vec2 dx = dFdx(v_uv) * 0.25, dy = dFdy(v_uv) * 0.25; float t = 0.0;\n"
     "  for (int i = 0; i < 4; i++) { vec2 uv = v_uv + dx * (i == 0 || i == 2 ? -1.0 : 1.0) + dy * (i < 2 ? -1.0 : 1.0); t += ink(uv, light) * (light != 0 ? 1.0 : 1.0 - red(uv)); }\n"
@@ -441,6 +444,15 @@ static const char* FS_COPY =
     "  }\n"
     "  vec4 c = texture(u_src, v_uv);\n"
     "  float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
+    "  if (u_mode == 8 || u_mode == 9) {\n"   /* (the word cream, a star gold, the others dark brown; the plates brown, the edges darker) */
+    "    vec3 r = c.rgb / max(c.a, 0.001);\n"
+    "    float gold = goldness(c) * float(u_mode == 8), near = 0.0;\n"
+    "    for (int i = 0; i < 8; i++) { vec2 o = vec2(i < 3 ? -1.0 : i < 5 ? 0.0 : 1.0, i == 0 || i == 3 || i == 5 ? -1.0 : i == 1 || i == 6 ? 0.0 : 1.0); near = max(near, max(goldness(texture(u_src, v_uv + o * u_ds * 1.2)), goldness(texture(u_src, v_uv + o * u_ds * 2.4)))); }\n"
+    "    float word = smoothstep(0.6, 0.72, L) * smoothstep(0.45, 0.55, r.b);\n"
+    "    float star = smoothstep(0.17, 0.2, L) * smoothstep(0.36, 0.28, L) * (1.0 - near) * float(u_mode == 8);\n"   /* (not the gold star's dark edge) */
+    "    vec3 col = gold * vec3(0.95, 0.76, 0.0) + word * vec3(0.93) + star * vec3(0.42); float a = min(gold + word + star, 1.0) * c.a;\n"
+    "    o_color = vec4(col * c.a, a); return;\n"
+    "  }\n"
     "  if (u_mode == 1) { float t = smoothstep(0.52, 0.32, L) * c.a;\n"
     "    o_color = vec4(vec3(0.93) * t, t); return; }\n"
     "  if (u_mode == 3 || u_mode == 6) { float t = letters(u_mode == 3 ? 1 : 0); o_color = vec4(vec3(0.93) * t, t); return; }\n"
