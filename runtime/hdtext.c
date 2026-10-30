@@ -591,7 +591,11 @@ static int place(const Glyph* g, Placed* pl) {
     int adv, lsb, x0, y0, x1, y1;
     stbtt_GetCodepointHMetrics(&g_tt, cp, &adv, &lsb);
     if (!stbtt_GetCodepointBox(&g_tt, cp, &x0, &y0, &x1, &y1)) x1 = x0 = 0;
-    pl->cp = cp; pl->sx = sx; pl->scale = scale; pl->bw = bw; pl->bh = bh; pl->ox = ox; pl->oy = (base + 1) * HDT_R + by0;
+    /* the name plates' letters (font 1) raised a pixel and a half: on the
+     * game's line the PC letters, smaller in the middle than the game's,
+     * look sunk to the bottom of the plate */
+    int lift = g->font == 1 ? HDT_R * 3 / 2 : 0;
+    pl->cp = cp; pl->sx = sx; pl->scale = scale; pl->bw = bw; pl->bh = bh; pl->ox = ox; pl->oy = (base + 1) * HDT_R + by0 - lift;
     pl->lsb = (float)lsb * sx; pl->rsb = (float)(adv - x1) * sx;
     int sadv, slsb; stbtt_GetCodepointHMetrics(&g_tt, ' ', &sadv, &slsb);
     pl->space = (float)sadv * scale;
