@@ -271,14 +271,18 @@ static int wide_side_target(void) {
     return side < 0 ? 0 : side > 128 ? 128 : side;
 }
 
-/* Widescreen with the minimap, in the adventure: a page on the top screen
- * instead of the map. 1: an item's card, a title... (the field on the bottom
- * screen, or no 3D): its windows pop up over the big screen; 2: a menu with
- * its 3D model on the top screen (the monster list): both screens side by
- * side; 0: none. (Not while the other screen is black: a cutscene.) */
+/* Widescreen with the minimap: a page on the top screen instead of the map.
+ * 1: an item's card, a title... (the field on the bottom screen, or no 3D):
+ * its windows pop up over the big screen; 2: a menu with its 3D model on the
+ * top screen (the monster list, the character's creation): both screens side
+ * by side; 0: none. (Not while the other screen is black: a cutscene.) */
 static int top_page_mode(void) {
-    if (!(WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single)) || !g_minimap || g_small_blank || !in_adventure()) return 0;
+    if (!(WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single)) || !g_minimap || g_small_blank) return 0;
     int side = 0, which = g_gl ? gl_wide_shown(&side) : -1;
+    /* before the adventure, the 3D on the top screen is the character being
+     * created: its choices (body type, colours, the name's keyboard) are on
+     * the touch screen, so both are shown */
+    if (!in_adventure()) return which == 0 ? 2 : 0;
     if (which == 0) return g_top_menu && !g_hud_n && !g_hud_win[2] ? 2 : 0;
     return mapmarks_top_page() ? 1 : 0;
 }
@@ -2999,6 +3003,7 @@ static void game_menu_test(void) {
 
 /* ---------------------------------------------------------------- the journal (journal.h) */
 static void journal_ui_toggle(void) {
+    if (!journal_open() && !in_adventure()) return;              /* the title, the character's creation: nothing to show yet */
     if (!journal_open() && !g_gl) { notice("The journal needs the graphics card (OpenGL)"); return; }
     if (gamemenu_is_open()) gamemenu_close();
     journal_toggle();
