@@ -291,6 +291,7 @@ static int top_page_wide(void) {                                  /* (widescreen
 static int top_page_mode(void) {
     if (!top_page_wide() || (g_small_blank && !g_shop)) return 0;   /* (a shop's list: the top screen goes blank before its card shows) */
     int side = 0, which = g_gl ? gl_wide_shown(&side) : -1;
+    if (g_cc_n) return 0;                                         /* (the character's creation: its own pop-ups, creation_update) */
     if (which == 0) return g_top_menu && !g_hud_n && !g_hud_win[2] ? 2 : 0;
     return mapmarks_top_page() || g_shop ? 1 : 0;                 /* (a shop's list: laid out before its card shows) */
 }
@@ -1734,15 +1735,15 @@ static int card_page(const uint32_t* px) {
     return bar * 4 > n * 3 && page * 4 > n * 3;
 }
 
-/* The character's creation (before the adventure, the character's 3D on the
- * top screen): its windows on the touch screen, found by what isn't parchment
+/* The character's creation (the character's 3D on the top screen: before the
+ * adventure, or a companion at Patty's): its windows on the touch screen, found by what isn't parchment
  * in them (g_cc_box: the choices or the name's keyboard, and the
  * name above it), popped up over the big screen (canvas_layout_for()). None
  * once the name is done (OK) or outside the creation. */
 static void creation_update(int a_on_top) {
     g_cc_n = 0;
     int side = 0;
-    if (!g_gl || in_adventure() || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
+    if (!g_gl || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
     if (gl_wide_shown(&side) != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the touch screen */
     static const int probe[3][2] = { { 6, 100 }, { 249, 100 }, { 128, 164 } };   /* the parchment around its windows */
@@ -1750,6 +1751,17 @@ static void creation_update(int a_on_top) {
         uint32_t c = px[probe[i][1] * 256 + probe[i][0]];
         int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
         if (!(r > 150 && g > 110 && b < 170 && r > b + 50)) return;
+    }
+    {   /* its tabs 1-8 at the top right (dark, 12 pixels wide, every 16; the step's own is gold):
+         * only the creation has them (at the start, and Patty's companions in the adventure) */
+        int tabs = 0, run = 0;
+        for (int x = 112; x < 254; x++) {
+            uint32_t c = px[12 * 256 + x];
+            int dark = (int)((c >> 16) & 255) + (int)((c >> 8) & 255) + (int)(c & 255) < 150;
+            if (dark) run++;
+            else { if (run >= 10 && run <= 14 && ((x - run - 122) % 16 + 16) % 16 <= 1) tabs++; run = 0; }
+        }
+        if (tabs < 6) return;
     }
 #define CC_WIN(c) (!((int)(((c) >> 16) & 255) > (int)((c) & 255) + 40 && (int)(((c) >> 16) & 255) > 100))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
     int y = 24;
