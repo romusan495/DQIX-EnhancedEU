@@ -10,9 +10,13 @@
  * - see-through texels get their solid neighbours' colour first, so no dark
  *   fringes come in from the edges;
  * - alpha is upscaled as its own grey picture; on/off alpha stays on/off;
- * - Real-ESRGAN alone smooths away the drawing's grain (hair strands, eye
- *   pixels): its colours are mixed half and half with a sharp (Lanczos)
- *   enlargement of the original, which keeps the detail.
+ * - textures with nothing to draw (all see-through, or one colour) get no HD
+ *   version: the game's own draws the same, and a blank one in the pack can
+ *   stand in for a texture the game fills in later (dialogue letters);
+ * - Real-ESRGAN's picture is used as it is (smooth and painted, Romuald's
+ *   choice); TEXHD_SHARP=<0..100> mixes in that % of a sharp (Lanczos)
+ *   enlargement of the original instead, which keeps the pixels' grain
+ *   (50 = the earlier "method 5").
  * What happened goes to textures/hd-auto.log. */
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -41,6 +45,7 @@
 #define PAD 8
 #define SCALE 4
 static FILE* g_log;
+static int g_sharp = 0;                                        /* % of the sharp enlargement mixed into Real-ESRGAN's (TEXHD_SHARP) */
 
 static void logf_(const char* fmt, ...) {
     va_list a; va_start(a, fmt);
@@ -206,6 +211,72 @@ static void rmtree_files(const char* dir, char (*names)[32], int n) {
     for (int i = 0; i < n; i++) { char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", dir, names[i]); remove(p); }
 }
 
+/* HD textures made the earlier way (the half and half mix, "method 5") are
+ * put aside once, into textures-methode5/ next to textures/ (same folders: the
+ * game reads every folder of textures/), so all are made
+ * again as Real-ESRGAN alone: the ones that have their original in
+ * textures/dump, in any pack folder. textures/hd-style.txt says it is done. */
+#define HD_STYLE "ia-seule 1"
+static int g_moved; static char g_aside[620];
+static void put_aside(const char* tex, const char* rel, int depth) {
+    if (depth > 8) return;
+    char dir[900]; snprintf(dir, sizeof dir, "%s%s%s", tex, rel[0] ? SEP : "", rel);
+#ifdef _WIN32
+    char pat[920]; snprintf(pat, sizeof pat, "%s\\*", dir);
+    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        const char* nm = fd.cFileName; int isdir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    DIR* d = opendir(dir); struct dirent* e;
+    if (!d) return;
+    while ((e = readdir(d))) {
+        const char* nm = e->d_name; struct stat st; char full[1000];
+        snprintf(full, sizeof full, "%s/%s", dir, nm);
+        int isdir = stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+        if (nm[0] == '.') continue;
+        char sub[900]; snprintf(sub, sizeof sub, "%s%s%s", rel, rel[0] ? SEP : "", nm);
+        if (isdir) {
+            if (depth == 0 && (!strcmp(nm, "dump") || !strcmp(nm, "dump-2d") || !strcmp(nm, "hd-auto-tmp") || !strcmp(nm, "jobs"))) continue;
+            put_aside(tex, sub, depth + 1);
+        } else if (strlen(nm) == 20 && !strcmp(nm + 16, ".png")) {
+            char orig[1000], from[1000], to[1000];
+            snprintf(orig, sizeof orig, "%s" SEP "dump" SEP "%s", tex, nm);
+            FILE* f = fopen(orig, "rb");
+            if (!f) continue;                                   /* no original: can't be made again, stays */
+            fclose(f);
+            snprintf(from, sizeof from, "%s" SEP "%s", tex, sub);
+            mkdir_(g_aside);
+            for (char* q = sub; *q; q++) if (*q == SEP[0]) { *q = 0; snprintf(to, sizeof to, "%s" SEP "%s", g_aside, sub); mkdir_(to); *q = SEP[0]; }
+            snprintf(to, sizeof to, "%s" SEP "%s", g_aside, sub);
+            remove(to);
+            if (rename(from, to) == 0) g_moved++;
+        }
+#ifdef _WIN32
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    }
+    closedir(d);
+#endif
+}
+static void restyle(const char* game) {
+    char tex[600], mark[700], old[64] = ""; snprintf(tex, sizeof tex, "%s" SEP "textures", game);
+    snprintf(mark, sizeof mark, "%s" SEP "hd-style.txt", tex);
+    FILE* f = fopen(mark, "rb");
+    if (f) { size_t l = fread(old, 1, sizeof old - 1, f); old[l] = 0; fclose(f); }
+    if (!strncmp(old, HD_STYLE, strlen(HD_STYLE))) return;
+    snprintf(g_aside, sizeof g_aside, "%s" SEP "textures-methode5", game);
+    if (g_sharp == 0) put_aside(tex, "", 0);                    /* (TEXHD_SHARP set: the mix is wanted, keep them) */
+    f = fopen(mark, "wb"); if (f) { fprintf(f, "%s\n", HD_STYLE); fclose(f); }
+    if (g_moved) {
+        char logp[700]; snprintf(logp, sizeof logp, "%s" SEP "hd-auto.log", tex);
+        FILE* lg = fopen(logp, "a");
+        if (lg) { fprintf(lg, "\n%d HD texture(s) of the earlier kind (mixed) put aside in textures-methode5: made again as Real-ESRGAN alone\n", g_moved); fclose(lg); }
+    }
+}
+
 static int upscale_new(const char* game) {
     char dump[600], hd[600], tool[600], tmp[600], in_c[640], in_a[640], out_c[640], out_a[640], logp[600];
     snprintf(dump, sizeof dump, "%s" SEP "textures" SEP "dump", game);
@@ -231,6 +302,8 @@ static int upscale_new(const char* game) {
         int w, h, c; unsigned char* px = stbi_load(p, &w, &h, &c, 4);
         pads[i] = -1;
         if (!px) { logf_("  %s: can't read\n", work[i]); continue; }
+        int blank = 1; for (int k = 1; k < w * h && blank; k++) if (memcmp(px + k * 4, px, 4) && (px[k * 4 + 3] || px[3])) blank = 0;
+        if (blank) { logf_("  %s: nothing to draw (see-through or one colour), left as it is\n", work[i]); stbi_image_free(px); continue; }
         int pd = PAD < w ? (PAD < h ? PAD : h) : (w < h ? w : h);
         pads[i] = pd;
         int solid = 1; for (int k = 0; k < w * h; k++) if (px[k * 4 + 3] != 255) { solid = 0; break; }
@@ -269,7 +342,7 @@ static int upscale_new(const char* game) {
                 const unsigned char* s = big + ((y + pd * SCALE) * W + x + pd * SCALE) * 3;
                 unsigned char* d = o + (y * ow + x) * 4;
                 const unsigned char* g = sharp + ((size_t)y * ow + x) * 3;
-                for (int ch = 0; ch < 3; ch++) d[ch] = (unsigned char)((s[ch] + g[ch] + 1) / 2);
+                for (int ch = 0; ch < 3; ch++) d[ch] = (unsigned char)(g_sharp == 50 ? (s[ch] + g[ch] + 1) / 2 : (s[ch] * (100 - g_sharp) + g[ch] * g_sharp + 50) / 100);
                 if (solid) d[3] = 255;
                 else if (ab) { const unsigned char* q = ab + ((y + pd * SCALE) * W + x + pd * SCALE) * 3; int a = (q[0] + q[1] + q[2] + 1) / 3; d[3] = binary ? (a > 127 ? 255 : 0) : (unsigned char)a; }
                 else d[3] = px[((y / SCALE) * w + x / SCALE) * 4 + 3];      /* no upscaled alpha: the original's, blocky */
@@ -308,6 +381,8 @@ int main(int argc, char** argv) {
     }
     { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); mkdir_(tex); }
     lf = fopen(lock, "wb"); if (lf) fclose(lf);
+    if (getenv("TEXHD_SHARP")) { g_sharp = atoi(getenv("TEXHD_SHARP")); if (g_sharp < 0) g_sharp = 0; if (g_sharp > 100) g_sharp = 100; }
+    restyle(game);
     upscale_new(game);
     remove(lock);
     return 0;
