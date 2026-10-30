@@ -100,6 +100,7 @@ static int g_single;                                              /* one screen 
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
 static int g_cc_n, g_cc_box[2][4];                               /* widescreen, the character's creation: its windows on the touch screen (creation_update): x, y, w, h */
+static int g_cc_at[2][2];                                         /* ...where each goes in the pop-up (DS pixels; as on the touch screen, but for Patty's last question) */
 static int g_name_typing = 0;                                     /* Modern > Type the name with the keyboard (the character's creation: name_typing_step()) */
 static uint32_t g_type_q[64]; static int g_type_n;                /* ...the letters typed, not yet pressed on the game's keyboard ('\b' erase, '\n' OK) */
 static int g_tap_x, g_tap_y, g_tap_frames, g_tap_wait, g_tap_tries;   /* ...the game's key being pressed, for how long; then the frames to wait */
@@ -422,11 +423,11 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             small[0] = small[1] = small[2] = small[3] = 0;
             int ux0 = 256, uy0 = 192, ux1 = 0, uy1 = 0;
             for (int i = 0; i < g_cc_n; i++) {
-                const int* b = g_cc_box[i];
-                if (b[0] < ux0) ux0 = b[0];
-                if (b[1] < uy0) uy0 = b[1];
-                if (b[0] + b[2] > ux1) ux1 = b[0] + b[2];
-                if (b[1] + b[3] > uy1) uy1 = b[1] + b[3];
+                const int* b = g_cc_box[i], *a = g_cc_at[i];
+                if (a[0] < ux0) ux0 = a[0];
+                if (a[1] < uy0) uy0 = a[1];
+                if (a[0] + b[2] > ux1) ux1 = a[0] + b[2];
+                if (a[1] + b[3] > uy1) uy1 = a[1] + b[3];
             }
             const float P = 3;                                    /* the window's margin round the picture (DS pixels) */
             float rx = v->cw * 0.42f, rw = v->cw - 6 - rx, ry = 30, rh = 156;   /* (under the banner "Create your character.") */
@@ -436,7 +437,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                 const int* b = g_cc_box[i];
                 float* w = v->piece[v->npiece++], *q = v->piece[v->npiece++];
                 q[4] = 1; q[5] = (float)b[0]; q[6] = (float)b[1]; q[7] = (float)b[2]; q[8] = (float)b[3]; q[9] = 0;
-                q[0] = x + (float)(b[0] - ux0) * k; q[1] = y + (float)(b[1] - uy0) * k; q[2] = (float)b[2] * k; q[3] = (float)b[3] * k;
+                q[0] = x + (float)(g_cc_at[i][0] - ux0) * k; q[1] = y + (float)(g_cc_at[i][1] - uy0) * k; q[2] = (float)b[2] * k; q[3] = (float)b[3] * k;
                 w[4] = 1; w[5] = q[5] - P; w[6] = q[6] - P; w[7] = q[7] + 2 * P; w[8] = q[8] + 2 * P; w[9] = 7;   /* (a touch on its margin: the picture's edge) */
                 w[0] = q[0] - P * k; w[1] = q[1] - P * k; w[2] = q[2] + 2 * P * k; w[3] = q[3] + 2 * P * k;
             }
@@ -1775,8 +1776,23 @@ static void creation_update(int a_on_top) {
         if (box < 230 || !CC_L(252, 90) || !CC_L(252, 100) || !CC_D(230, 80) || !CC_D(230, 108)) return;
 #undef CC_D
 #undef CC_L
-        static const int q[2][4] = { { 216, 76, 35, 36 }, { 7, 121, 242, 65 } };   /* Yes / No; the text (their insides) */
-        memcpy(g_cc_box, q, sizeof q); g_cc_n = 2;
+        /* the text box as wide as its text (its longest line, in any language), Yes / No
+         * just over its right end (their right edges in line), as close as their windows allow */
+        int tx = 120, ty = 140;                                   /* the text's right end and bottom */
+        for (int yy = 121; yy < 186; yy++)
+            for (int x = 248; x > 8; x--) {
+                uint32_t c = px[yy * 256 + x];
+                if ((int)((c >> 16) & 255) + (int)((c >> 8) & 255) + (int)(c & 255) > 450) { if (x > tx) tx = x; if (yy > ty) ty = yy; break; }
+            }
+        int w = tx + 10 - 7, h = ty + 9 - 121;
+        if (w > 242) w = 242;
+        if (h > 65) h = 65;
+        static const int yn[4] = { 216, 76, 34, 36 };             /* Yes / No's inside (its light edge left out) */
+        int tb[4] = { 7, 121, w, h };                             /* the text box's inside, cut after the text */
+        memcpy(g_cc_box[0], yn, sizeof yn); memcpy(g_cc_box[1], tb, sizeof tb);
+        g_cc_at[0][0] = w - yn[2]; g_cc_at[0][1] = 0;
+        g_cc_at[1][0] = 0; g_cc_at[1][1] = yn[3] + 8;              /* (8: the two windows' margins, and a gap) */
+        g_cc_n = 2;
         return;
     }
 #define CC_WIN(c) (!((int)(((c) >> 16) & 255) > (int)((c) & 255) + 40 && (int)(((c) >> 16) & 255) > 100))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
@@ -1801,8 +1817,10 @@ static void creation_update(int a_on_top) {
             if (m * 5 >= h * 3) { if (x0 < 0) x0 = x; x1 = x; }
         }
         if (x0 < 0) continue;
-        int* b = g_cc_box[g_cc_n++];                              /* its inside, without the rounded corners (a window of the minimal style goes round it) */
+        int* b = g_cc_box[g_cc_n];                                /* its inside, without the rounded corners (a window of the minimal style goes round it) */
         b[0] = x0 + 2; b[1] = y0 + 2; b[2] = x1 - x0 - 3; b[3] = h - 4;
+        g_cc_at[g_cc_n][0] = b[0]; g_cc_at[g_cc_n][1] = b[1];      /* (in the pop-up as on the touch screen) */
+        g_cc_n++;
     }
 #undef CC_WIN
 }
