@@ -934,7 +934,7 @@ static void pack_add_file(const char* dir, const char* name) {  /* <16 hex digit
     t->path = malloc(len); snprintf(t->path, len, "%s/%s", dir, name);
 }
 
-static void pack_scan(const char* dir, int depth) {             /* every folder under textures/ except dump/ and dump-2d/ */
+static void pack_scan(const char* dir, int depth) {             /* every folder under textures/ except dump/, dump-2d/ and hd-auto-tmp/ */
     if (depth > 8) return;
 #ifdef _WIN32
     char pat[1024]; snprintf(pat, sizeof pat, "%s/*", dir);
@@ -943,7 +943,7 @@ static void pack_scan(const char* dir, int depth) {             /* every folder 
     do {
         if (fd.name[0] == '.') continue;
         if (fd.attrib & _A_SUBDIR) {
-            if (depth == 0 && (!strcmp(fd.name, "dump") || !strcmp(fd.name, "dump-2d"))) continue;
+            if (depth == 0 && (!strcmp(fd.name, "dump") || !strcmp(fd.name, "dump-2d") || !strcmp(fd.name, "hd-auto-tmp"))) continue;
             char sub[1024]; snprintf(sub, sizeof sub, "%s/%s", dir, fd.name); pack_scan(sub, depth + 1);
         } else pack_add_file(dir, fd.name);
     } while (_findnext(h, &fd) == 0);
@@ -956,7 +956,7 @@ static void pack_scan(const char* dir, int depth) {             /* every folder 
         if (e->d_name[0] == '.') continue;
         char sub[1024]; snprintf(sub, sizeof sub, "%s/%s", dir, e->d_name);
         struct stat st;
-        if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode)) { if (!(depth == 0 && (!strcmp(e->d_name, "dump") || !strcmp(e->d_name, "dump-2d")))) pack_scan(sub, depth + 1); }
+        if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode)) { if (!(depth == 0 && (!strcmp(e->d_name, "dump") || !strcmp(e->d_name, "dump-2d") || !strcmp(e->d_name, "hd-auto-tmp")))) pack_scan(sub, depth + 1); }
         else pack_add_file(dir, e->d_name);
     }
     closedir(d);
