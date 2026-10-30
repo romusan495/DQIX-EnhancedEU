@@ -99,6 +99,7 @@ static int g_peek;                                                /* widescreen:
 static int g_single;                                              /* one screen only (the bottom one, or the top one swapped) */
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
+static int g_cc_n, g_cc_box[2][4];                               /* widescreen, the character's creation: its windows on the touch screen (creation_update): x, y, w, h */
 static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
 static int g_quest_page;                                          /* ...it is a quest's sheet (quest_page()): redrawn as one modern window */
@@ -271,14 +272,14 @@ static int wide_side_target(void) {
     return side < 0 ? 0 : side > 128 ? 128 : side;
 }
 
-/* Widescreen with the minimap, in the adventure: a page on the top screen
- * instead of the map. 1: an item's card, a title... (the field on the bottom
- * screen, or no 3D): its windows pop up over the big screen; 2: a menu with
- * its 3D model on the top screen (the monster list): both screens side by
- * side; 0: none. (Not while the other screen is black: a cutscene.) */
+/* Widescreen with the minimap: a page on the top screen instead of the map.
+ * 1: an item's card, a title... (the field on the bottom screen, or no 3D):
+ * its windows pop up over the big screen; 2: a menu with its 3D model on the
+ * top screen (the monster list): both screens side by side; 0: none. (Not while the other screen is black: a cutscene.) */
 static int top_page_mode(void) {
-    if (!(WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single)) || !g_minimap || g_small_blank || !in_adventure()) return 0;
+    if (!(WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single)) || !g_minimap || g_small_blank) return 0;
     int side = 0, which = g_gl ? gl_wide_shown(&side) : -1;
+    if (!in_adventure()) return 0;
     if (which == 0) return g_top_menu && !g_hud_n && !g_hud_win[2] ? 2 : 0;
     return mapmarks_top_page() ? 1 : 0;
 }
@@ -374,6 +375,33 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
+        if (g_cc_n && !second && v->npiece + 2 * g_cc_n <= GL_MAX_PIECES) {
+            /* the character's creation: its windows on the touch screen (the
+             * choices, the name's keyboard and the name above it) pop up over
+             * the right of the big screen, each in a solid window of the
+             * minimal style; the character stays in view at the left */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            int ux0 = 256, uy0 = 192, ux1 = 0, uy1 = 0;
+            for (int i = 0; i < g_cc_n; i++) {
+                const int* b = g_cc_box[i];
+                if (b[0] < ux0) ux0 = b[0];
+                if (b[1] < uy0) uy0 = b[1];
+                if (b[0] + b[2] > ux1) ux1 = b[0] + b[2];
+                if (b[1] + b[3] > uy1) uy1 = b[1] + b[3];
+            }
+            const float P = 3;                                    /* the window's margin round the picture (DS pixels) */
+            float rx = v->cw * 0.42f, rw = v->cw - 6 - rx, ry = 30, rh = 156;   /* (under the banner "Create your character.") */
+            float k = fminf(1.0f, fminf(rw / ((float)(ux1 - ux0) + 2 * P), rh / ((float)(uy1 - uy0) + 2 * P)));
+            float x = rx + (rw - (float)(ux1 - ux0) * k) / 2, y = ry + (rh - (float)(uy1 - uy0) * k) / 2;
+            for (int i = 0; i < g_cc_n; i++) {
+                const int* b = g_cc_box[i];
+                float* w = v->piece[v->npiece++], *q = v->piece[v->npiece++];
+                q[4] = 1; q[5] = (float)b[0]; q[6] = (float)b[1]; q[7] = (float)b[2]; q[8] = (float)b[3]; q[9] = 0;
+                q[0] = x + (float)(b[0] - ux0) * k; q[1] = y + (float)(b[1] - uy0) * k; q[2] = (float)b[2] * k; q[3] = (float)b[3] * k;
+                w[4] = 1; w[5] = q[5] - P; w[6] = q[6] - P; w[7] = q[7] + 2 * P; w[8] = q[8] + 2 * P; w[9] = 7;   /* (a touch on its margin: the picture's edge) */
+                w[0] = q[0] - P * k; w[1] = q[1] - P * k; w[2] = q[2] + 2 * P * k; w[3] = q[3] + 2 * P * k;
+            }
+        }
         int page = top_page_mode();
         if (page == 2) {
             /* a menu with its 3D model on the top screen (the monster list):
@@ -1124,7 +1152,9 @@ static int to_touch_in(SDL_Window* win, int wx, int wy, int* tx, int* ty, int cl
         canvas_layout_for(&v, ww, wh, win == g_win2);
         lx = ((float)wx + 0.5f - v.ox) / v.sc; ly = ((float)wy + 0.5f - v.oy) / v.sc;
     } else { canvas_layout(&v, 1, 1); SDL_RenderWindowToLogical(g_ren, wx, wy, &lx, &ly); }
-    if (v.npiece && v.piece[0][4] > 0.5f) {                       /* the battle HUD's panels: back to where they are on the touch screen */
+    int bottom_pieces = 0;
+    for (int i = 0; i < v.npiece; i++) bottom_pieces |= v.piece[i][4] > 0.5f;
+    if (bottom_pieces) {                                          /* the battle HUD's panels, the character's creation: back to where they are on the touch screen */
         static int last;                                          /* the panel last touched: a drag off it stays on its edge */
         int hit = -1;
         for (int i = v.npiece - 1; i >= 0 && hit < 0; i--) {
@@ -1645,6 +1675,51 @@ static int quest_page(const uint32_t* px) {
     return bars * 5 > n * 2 * 4 && page * 2 > n;                  /* (the stamp, coming down big, can hide much of the parchment) */
 }
 
+/* The character's creation (before the adventure, the character's 3D on the
+ * top screen): its windows on the touch screen, found by what isn't parchment
+ * in them (g_cc_box: the choices or the name's keyboard, and the
+ * name above it), popped up over the big screen (canvas_layout_for()). None
+ * once the name is done (OK) or outside the creation. */
+static void creation_update(int a_on_top) {
+    g_cc_n = 0;
+    int side = 0;
+    if (!g_gl || in_adventure() || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
+    if (gl_wide_shown(&side) != 0) return;
+    const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the touch screen */
+    static const int probe[3][2] = { { 6, 100 }, { 249, 100 }, { 128, 164 } };   /* the parchment around its windows */
+    for (int i = 0; i < 3; i++) {
+        uint32_t c = px[probe[i][1] * 256 + probe[i][0]];
+        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+        if (!(r > 150 && g > 110 && b < 170 && r > b + 50)) return;
+    }
+#define CC_WIN(c) (!((int)(((c) >> 16) & 255) > (int)((c) & 255) + 40 && (int)(((c) >> 16) & 255) > 100))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
+    int y = 24;
+    while (y < 168 && g_cc_n < 2) {                               /* bands of rows mostly window, under the tabs, over the buttons' hints */
+        int n = 0;
+        for (int x = 8; x < 248; x++) n += CC_WIN(px[y * 256 + x]);
+        if (n < 40) { y++; continue; }
+        int y0 = y;
+        while (y < 168) {                                         /* (the keyboard's last row: its keys apart, fewer dark pixels) */
+            int m = 0;
+            for (int x = 8; x < 248; x++) m += CC_WIN(px[y * 256 + x]);
+            if (m < 16) break;
+            y++;
+        }
+        int h = y - y0;
+        if (h < 8) continue;
+        int x0 = -1, x1 = -1;                                     /* columns of window in most of the band's rows */
+        for (int x = 8; x < 248; x++) {
+            int m = 0;
+            for (int yy = y0; yy < y; yy++) m += CC_WIN(px[yy * 256 + x]);
+            if (m * 5 >= h * 3) { if (x0 < 0) x0 = x; x1 = x; }
+        }
+        if (x0 < 0) continue;
+        int* b = g_cc_box[g_cc_n++];                              /* its inside, without the rounded corners (a window of the minimal style goes round it) */
+        b[0] = x0 + 2; b[1] = y0 + 2; b[2] = x1 - x0 - 3; b[3] = h - 4;
+    }
+#undef CC_WIN
+}
+
 /* The top screen's page (top_page_mode() 1): which of its pixels are its
  * backdrop, left out of the pop-up (tagged 1 in the top byte, gl_set_top_cut()),
  * and the rest's bounds (g_pop_win). A backdrop of its own (the curtain behind
@@ -1889,6 +1964,7 @@ static void present_gl(void) {
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
     shop_update((pow >> 15) & 1);
     pop_update((pow >> 15) & 1);
+    creation_update((pow >> 15) & 1);
     gl_set_top_cut(g_pop_win[2] && !g_quest_page);
     gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
@@ -2999,6 +3075,7 @@ static void game_menu_test(void) {
 
 /* ---------------------------------------------------------------- the journal (journal.h) */
 static void journal_ui_toggle(void) {
+    if (!journal_open() && !in_adventure()) return;              /* the title, the character's creation: nothing to show yet */
     if (!journal_open() && !g_gl) { notice("The journal needs the graphics card (OpenGL)"); return; }
     if (gamemenu_is_open()) gamemenu_close();
     journal_toggle();

@@ -418,7 +418,8 @@ static const char* FS_COPY =
      * 6 as 1, each pixel from 4 points at full size (small, its strokes kept),
      * red ink left out (5's);
      * 5 red ink (a quest's Complete! stamp) alone, its specks and holes smoothed
-     * over (u_ds: one DS pixel in u_src) */
+     * over (u_ds: one DS pixel in u_src); 7 as 2, solid inside, the game's dark
+     * panels' grey (24, 24, 24) */
     "uniform int u_mode; uniform vec2 u_px; uniform float u_line; uniform vec2 u_ds;\n"
     "float red(vec2 uv) { vec4 c = texture(u_src, uv); vec3 r = c.rgb / max(c.a, 0.001); return smoothstep(0.3, 0.45, r.r - max(r.g, r.b)) * c.a; }\n"
     "float ink(vec2 uv, int light) { vec4 c = textureLod(u_src, uv, 0.0); float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
@@ -428,9 +429,9 @@ static const char* FS_COPY =
     "  for (int i = 0; i < 4; i++) { vec2 uv = v_uv + dx * (i == 0 || i == 2 ? -1.0 : 1.0) + dy * (i < 2 ? -1.0 : 1.0); t += ink(uv, light) * (light != 0 ? 1.0 : 1.0 - red(uv)); }\n"
     "  return t * 0.25; }\n"
     "void main() {\n"
-    "  if (u_mode == 2) {\n"
+    "  if (u_mode == 2 || u_mode == 7) {\n"
     "    vec2 p = v_uv * u_px; float d = min(min(p.x, p.y), min(u_px.x - p.x, u_px.y - p.y)) / u_line;\n"
-    "    o_color = d < 0.6 ? vec4(vec3(0.08), 0.8) : d < 1.6 ? vec4(vec3(0.5), 1.0) : vec4(0.0, 0.0, 0.0, 0.55); return;\n"
+    "    o_color = d < 0.6 ? vec4(vec3(0.08), 0.8) : d < 1.6 ? vec4(vec3(0.5), 1.0) : u_mode == 7 ? vec4(vec3(0.094), 1.0) : vec4(0.0, 0.0, 0.0, 0.55); return;\n"
     "  }\n"
     "  if (u_mode == 4) { o_color = vec4(vec3(0.5), 1.0); return; }\n"
     "  if (u_mode == 5) {\n"
@@ -2105,7 +2106,7 @@ static void draw_pieces(const GlPresent* v, GLuint src) {
         p_glUniform4f(loc_uv, ((float)g_wside + q[5]) / W, vtop - (q[6] + q[8]) / 384.0f, q[7] / W, q[8] / 384.0f);
         int mode = (int)(q[9] + 0.5f);
         p_glUniform1i(loc_mode, mode);
-        if (mode == 2) {
+        if (mode == 2 || mode == 7) {
             p_glUniform4f(loc_uv, 0, 0, 1, 1);
             p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_px"), q[2] * v->sc, q[3] * v->sc);
         }
