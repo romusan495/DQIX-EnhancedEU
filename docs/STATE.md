@@ -1,7 +1,8 @@
 # Where the project stands
 
 > **This fork (romusan495/DQIX-EnhancedEU)** makes its own weekly releases,
-> v31.1, v31.2... (procedure: `docs/roles/integration.md`): tag `v31.N`,
+> v31.1 to v31.11, then whole numbers from v32 (v32, v33...; procedure:
+> `docs/roles/integration.md`): tag `vN`,
 > branch `stable` moved to it, notes in `release-notes/`. Help > Check for
 > updates reads this repository (`runtime/update.h`). The names below the
 > line come from the upstream project; here upstream v31 is commit `9e0666a`.
