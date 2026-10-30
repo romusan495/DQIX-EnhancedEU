@@ -335,6 +335,9 @@ es = Mando: confirmar con el botón de a&bajo (Cruz / A), cancelar con el de la 
 en = Map: a &legend of the marks (under the place's name)
 es = Mapa: una &leyenda de las marcas (bajo el nombre del lugar)
 
+en = Type the character's &name with the keyboard
+es = Escribir el &nombre del personaje con el teclado
+
 en = &Start (takes effect next launch)
 es = &Inicio (en el próximo arranque)
 

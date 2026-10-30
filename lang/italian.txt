@@ -335,6 +335,9 @@ it = Controller: conferma con il tasto in &basso (Croce / A), annulla con quello
 en = Map: a &legend of the marks (under the place's name)
 it = Mappa: una &legenda dei segni (sotto il nome del luogo)
 
+en = Type the character's &name with the keyboard
+it = Scrivere il &nome del personaggio con la tastiera
+
 en = &Start (takes effect next launch)
 it = &Avvio (dal prossimo avvio)
 
