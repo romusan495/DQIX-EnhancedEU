@@ -1748,15 +1748,15 @@ static void creation_update(int a_on_top) {
     if (gl_wide_shown(&side) != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the touch screen */
     /* Fading in or out the screen is darker: every test is against the parchment's
-     * own brightness at its left edge (its torn rim, never under a window), so
+     * own brightness at its left edge (never under a window), so
      * the pop-ups are there from the first frames (not both screens side by side) */
 #define CC_SUM(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255))
-    int lp = (CC_SUM(6, 60) + CC_SUM(6, 100)) / 2;                /* the parchment: about 520 when bright */
+    int lp = CC_SUM(6, 100);                                      /* the parchment: about 520 when bright (260 greyed under Patty's last question) */
     {   uint32_t c = px[100 * 256 + 6];
         int r = (c >> 16) & 255, b = c & 255;
         if (lp < 90 || !(r * 100 > b * 140)) return;              /* (too dark to tell, or not the parchment) */
     }
-    int dark_below = lp * 29 / 100, light_above = lp * 115 / 100;   /* (150 and 600 when bright) */
+    int dark_below = lp * 35 / 100, light_above = lp * 115 / 100;   /* (180 and 600 when bright) */
     {   /* its tabs 1-8 at the top right (dark, 12 pixels wide, every 16; the step's own is gold):
          * only the creation has them (at the start, and Patty's companions in the adventure) */
         int tabs = 0, run = 0;
