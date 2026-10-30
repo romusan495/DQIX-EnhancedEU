@@ -335,6 +335,9 @@ fr = Manette : valider avec le &bouton du bas (Croix / A), annuler avec celui de
 en = Map: a &legend of the marks (under the place's name)
 fr = Carte : une &légende des repères (sous le nom du lieu)
 
+en = Type the character's &name with the keyboard
+fr = Taper le &nom du personnage au clavier
+
 en = &Start (takes effect next launch)
 fr = &Démarrage (au prochain lancement)
 

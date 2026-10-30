@@ -38,6 +38,7 @@ enum {
     MI_SAVEBAK = 360,                                                   /* keep a copy of every save (card.c) */
     MI_AUTOSAVE = 365,                                                  /* Modern > Save by itself every 10 minutes (autosave.c) */
     MI_CHEATS_HELP = 370,
+    MI_NAME_TYPING = 800,                                               /* Modern > Type the name with the keyboard (the character's creation) */
     MI_JOURNAL = 400,                                                   /* Modern > Journal: quests, progress, vocations (journal.c) */
     MI_SKIP0 = 380,                                                     /* Modern > Start: as on a DS, skip the logos, skip the movie too (+0..2, bootskip.c) */                                               /* Cheats > About these cheats */
     MI_SOFTSHADOW = 390,                                                /* Graphics > Soft shadows in corners (gl_render.c FS_POST) */

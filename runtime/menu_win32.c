@@ -234,6 +234,7 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     item(modern, MI_MAP_LEGEND, L"Map: a &legend of the marks (under the place's name)");
     sep(modern);
     item(modern, MI_JOURNAL, L"&Journal: quests, skills, vocations\tJ");
+    item(modern, MI_NAME_TYPING, L"Type the character's &name with the keyboard");
     sep(modern);
     Menu st = sub(modern, L"&Start (takes effect next launch)");
     item(st, MI_SKIP0, L"&Logos and opening movie, as on a DS");

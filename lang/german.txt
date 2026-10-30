@@ -335,6 +335,9 @@ de = Controller: mit der &unteren Taste (Kreuz / A) bestätigen, mit der rechten
 en = Map: a &legend of the marks (under the place's name)
 de = Karte: eine &Legende der Markierungen (unter dem Ortsnamen)
 
+en = Type the character's &name with the keyboard
+de = Den &Namen der Figur mit der Tastatur eingeben
+
 en = &Start (takes effect next launch)
 de = &Start (beim nächsten Start)
 

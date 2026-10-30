@@ -100,6 +100,9 @@ static int g_single;                                              /* one screen 
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
 static int g_cc_n, g_cc_box[2][4];                               /* widescreen, the character's creation: its windows on the touch screen (creation_update): x, y, w, h */
+static int g_name_typing = 0;                                     /* Modern > Type the name with the keyboard (the character's creation: name_typing_step()) */
+static uint32_t g_type_q[64]; static int g_type_n;                /* ...the letters typed, not yet pressed on the game's keyboard ('\b' erase, '\n' OK) */
+static int g_tap_x, g_tap_y, g_tap_frames, g_tap_wait, g_tap_tries;   /* ...the game's key being pressed, for how long; then the frames to wait */
 static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
 static int g_quest_page;                                          /* ...it is a quest's sheet (quest_page()): redrawn as one modern window */
@@ -668,6 +671,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "map_monsters")) g_mapmarks_monsters = atoi(val) != 0;
         else if (!strcmp(key, "interior_maps")) g_interior_maps = atoi(val) != 0;
         else if (!strcmp(key, "map_legend")) g_map_legend = atoi(val) != 0;
+        else if (!strcmp(key, "name_typing")) g_name_typing = atoi(val) != 0;
         else if (!strcmp(key, "button_hints")) g_hints = atoi(val) != 0;
         else if (!strcmp(key, "walk_any_direction")) g_analog_walk = atoi(val) != 0;   /* (the older analog_walk, off by default then, is ignored) */
         else if (!strcmp(key, "fullscreen")) g_fullscreen = atoi(val) != 0;
@@ -785,6 +789,8 @@ static void settings_save(void) {
     fprintf(f, "interior_maps = %d\n", g_interior_maps);
     fprintf(f, "# the map: a legend of its marks, under the place's name: 0 or 1\n");
     fprintf(f, "map_legend = %d\n", g_map_legend);
+    fprintf(f, "# Modern: the character's name typed with the keyboard (it presses the game's own keys): 0 or 1\n");
+    fprintf(f, "name_typing = %d\n", g_name_typing);
     fprintf(f, "# the game's DS buttons (the field's \"X Menu\") as on your controller or keyboard, whichever you used last: 0 or 1\n");
     fprintf(f, "button_hints = %d\n", g_hints);
     fprintf(f, "# 0 or 1 (F11)\n");
@@ -1720,6 +1726,71 @@ static void creation_update(int a_on_top) {
 #undef CC_WIN
 }
 
+/* Modern > Type the name with the keyboard: while the name's keyboard pops
+ * up (creation_update: the name, then the keyboard), each letter typed on
+ * the PC's keyboard presses the game's own key for it (as the stylus would),
+ * so the game does the rest (8 letters at most, its own checks). Its pages,
+ * in touch screen pixels: the letters (a..z, or A..Z after Shift (one letter)
+ * or Caps (until pressed again)), the accents (A with an accent) and the signs
+ * (@). Which one shows is read from the picture before each press. */
+static int name_typing_active(void) { return g_name_typing && g_cc_n == 2 && g_cc_box[1][3] > 80; }
+typedef struct { int page, upper, x, y; } TypeKey;               /* page 0 the letters, 1 the accents, 2 the signs; upper: 1 needs A..Z, 0 a..z, -1 either */
+static int type_key_for(uint32_t c, TypeKey* k) {
+    static const uint32_t row0[] = { '1','2','3','4','5','6','7','8','9','0','-','=' };
+    static const uint32_t r1l[] = { 'q','w','e','r','t','y','u','i','o','p','[',']' }, r2l[] = { 'a','s','d','f','g','h','j','k','l',';','\'' }, r3l[] = { 'z','x','c','v','b','n','m',',','.','/' };
+    static const uint32_t acc[5][13] = {
+        { 0xE0,0xE1,0xE2,0xE4,0xE6,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF },          /* a\u0300 ... */
+        { 0xF2,0xF3,0xF4,0xF5,0xF6,0x153,0xF9,0xFA,0xFB,0xFC,0xE7,0xF1,0xDF },
+        { 0xC0,0xC1,0xC2,0xC4,0xC6,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF },
+        { 0xD2,0xD3,0xD4,0xD5,0xD6,0x152,0xD9,0xDA,0xDB,0xDC,0xC7,0xD1,0xA1 },
+        { 0xBF,0xAA,0xBA,0x20AC,0xA2,0xA3 } };
+    static const int acc_n[5] = { 13, 13, 13, 13, 6 };
+    static const uint32_t sign[3][13] = {
+        { '!','?','&','"','\'','~',';','@','_','+','-','*','/' },
+        { '=',0x2190,0x2192,0x2191,0x2193,'(',')','{','}','%','#','$',0xA2 },
+        { 0xA3,0xB0,'|',0xAB,0xBB,0x201E,0x263A } };
+    static const int sign_n[3] = { 13, 13, 7 };
+    if (c == 0x2019 || c == 0xB4 || c == '`') c = '\'';                /* (the PC's other apostrophes) */
+    for (int i = 0; i < 12; i++) if (row0[i] == c) { k->page = 0; k->upper = -1; k->x = 39 + 16 * i; k->y = 71; return 1; }
+    uint32_t lc = c >= 'A' && c <= 'Z' ? c + 32 : c;
+    int up = c >= 'A' && c <= 'Z' ? 1 : c >= 'a' && c <= 'z' ? 0 : -1;
+    for (int i = 0; i < 12; i++) if (r1l[i] == lc) { k->page = 0; k->upper = up; k->x = 47 + 16 * i; k->y = 88; return 1; }
+    for (int i = 0; i < 11; i++) if (r2l[i] == lc) { k->page = 0; k->upper = up; k->x = 55 + 16 * i; k->y = 104; return 1; }
+    for (int i = 0; i < 10; i++) if (r3l[i] == lc) { k->page = 0; k->upper = up; k->x = 63 + 16 * i; k->y = 120; return 1; }
+    for (int r = 0; r < 5; r++) for (int i = 0; i < acc_n[r]; i++) if (acc[r][i] == c) { k->page = 1; k->upper = -1; k->x = 31 + 16 * i; k->y = 64 + 16 * r; return 1; }
+    for (int r = 0; r < 3; r++) for (int i = 0; i < sign_n[r]; i++) if (sign[r][i] == c) { k->page = 2; k->upper = -1; k->x = 31 + 16 * i; k->y = 80 + 16 * r; return 1; }
+    return 0;
+}
+static void type_tap(int x, int y) { g_tap_x = x; g_tap_y = y; g_tap_frames = 4; }
+static void name_typing_step(int a_on_top) {
+    if (!name_typing_active()) { g_type_n = 0; g_tap_tries = 0; return; }
+    if (!g_type_n || g_tap_frames || g_tap_wait) return;
+    const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];
+#define KEY_AT(x, y) ((px[(y) * 256 + (x)] & 0xFFFFFF) == 0x383838 || (px[(y) * 256 + (x)] & 0xFFFFFF) == 0x515151)   /* a key (56) or the one under the cursor (81) */
+    int page = KEY_AT(30, 58) ? 1 : KEY_AT(30, 75) ? 2 : 0;       /* the accents' first row is higher, the signs' is lower, than the letters' second one */
+    int ink = 0;                                                  /* A..Z: their tops in the row Q..P, where a..z have none */
+    for (int x = 40; x < 200; x++) ink += ((px[85 * 256 + x] >> 16) & 255) > 150;
+    int upper = ink > 35;
+#undef KEY_AT
+    uint32_t c = g_type_q[0];
+    int done = 1;
+    TypeKey k;
+    if (c == '\b') type_tap(196, 144);                             /* the arrow back */
+    else if (c == '\n') type_tap(219, 144);                        /* OK */
+    else if (c == ' ') type_tap(139, 144);
+    else if (!type_key_for(c, &k)) ;                              /* not on the game's keyboard */
+    else if (k.page != page) { type_tap(k.page == 0 ? 35 : k.page == 1 ? 60 : 83, 144); done = 0; }   /* A/1, the accents, @ */
+    else if (k.upper >= 0 && k.upper != upper) { if (k.upper) type_tap(39, 120); else type_tap(35, 104); done = 0; }   /* Shift; Caps (off) */
+    else type_tap(k.x, k.y);
+    if (!done && ++g_tap_tries > 6) done = 1;                     /* (the page didn't come: this one is left out) */
+    if (done) { g_tap_tries = 0; memmove(g_type_q, g_type_q + 1, (size_t)--g_type_n * sizeof g_type_q[0]); }
+}
+static void name_typed(uint32_t c) { if (g_type_n < 64) g_type_q[g_type_n++] = c; }
+static int text_key(SDL_Scancode k) {                             /* a key that types: the name's keyboard has it then, not the game's buttons */
+    return (k >= SDL_SCANCODE_A && k <= SDL_SCANCODE_0) || (k >= SDL_SCANCODE_SPACE && k <= SDL_SCANCODE_SLASH) || k == SDL_SCANCODE_RETURN ||
+           k == SDL_SCANCODE_BACKSPACE || k == SDL_SCANCODE_NONUSBACKSLASH || k == SDL_SCANCODE_KP_ENTER || (k >= SDL_SCANCODE_KP_DIVIDE && k <= SDL_SCANCODE_KP_PERIOD);
+}
+
 /* The top screen's page (top_page_mode() 1): which of its pixels are its
  * backdrop, left out of the pop-up (tagged 1 in the top byte, gl_set_top_cut()),
  * and the rest's bounds (g_pop_win). A backdrop of its own (the curtain behind
@@ -1965,6 +2036,7 @@ static void present_gl(void) {
     shop_update((pow >> 15) & 1);
     pop_update((pow >> 15) & 1);
     creation_update((pow >> 15) & 1);
+    name_typing_step((pow >> 15) & 1);
     gl_set_top_cut(g_pop_win[2] && !g_quest_page);
     gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
@@ -2124,6 +2196,7 @@ static void menu_sync(void) {
     menu_check(MI_MAPMONSTERS, g_mapmarks_monsters); menu_enable(MI_MAPMONSTERS, g_gl && g_mapmarks);
     menu_check(MI_INTERIOR_MAPS, g_interior_maps); menu_enable(MI_INTERIOR_MAPS, g_gl);
     menu_check(MI_MAP_LEGEND, g_map_legend); menu_enable(MI_MAP_LEGEND, g_gl && g_mapmarks);
+    menu_check(MI_NAME_TYPING, g_name_typing); menu_enable(MI_NAME_TYPING, g_gl);
     menu_check(MI_HINTS, g_hints); menu_enable(MI_HINTS, g_gl);
     menu_check(MI_CONFIRM_BOTTOM, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A);
     for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
@@ -2758,6 +2831,7 @@ static void do_action(int id) {
     case MI_MAPMONSTERS: g_mapmarks_monsters = !g_mapmarks_monsters; break;
     case MI_INTERIOR_MAPS: g_interior_maps = !g_interior_maps; break;
     case MI_MAP_LEGEND: g_map_legend = !g_map_legend; break;
+    case MI_NAME_TYPING: g_name_typing = !g_name_typing; break;
     case MI_HINTS: g_hints = !g_hints; break;
     case MI_CONFIRM_BOTTOM:                                       /* the controller's A and B (confirm, cancel) trade buttons */
         controls_set_pad(CA_A, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A ? SDL_CONTROLLER_BUTTON_B : SDL_CONTROLLER_BUTTON_A);
@@ -3256,6 +3330,11 @@ static void handle_events(void) {
             SDL_Scancode k = e.key.keysym.scancode;
             if (g_cap_action >= 0) { capture_key(k, e.key.keysym.mod); break; }   /* Game > Controls: the new key */
             int in2 = g_win2 && e.key.windowID == SDL_GetWindowID(g_win2);   /* typed in the second window */
+            if (name_typing_active() && text_key(k) && !(e.key.keysym.mod & (KMOD_ALT | KMOD_CTRL | KMOD_GUI))) {   /* the name's keyboard (letters: SDL_TEXTINPUT) */
+                if (k == SDL_SCANCODE_BACKSPACE) name_typed('\b');
+                else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER) name_typed('\n');
+                break;
+            }
             if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else game_menu_toggle(); break; }   /* the in-game menu */
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }
             if (k == SDL_SCANCODE_G && (e.key.keysym.mod & KMOD_CTRL)) { do_action(MI_FARM); break; }   /* Modern > Farm gold by itself */
@@ -3265,6 +3344,15 @@ static void handle_events(void) {
             if (a >= 0) hotkey(a);
             break;
         }
+        case SDL_TEXTINPUT:
+            if (name_typing_active())                         /* UTF-8 -> the letters, one by one */
+                for (const unsigned char* t = (const unsigned char*)e.text.text; *t; ) {
+                    uint32_t c = *t++; int more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+                    if (more) c &= 0x3F >> more;
+                    while (more-- && (*t & 0xC0) == 0x80) c = c << 6 | (*t++ & 0x3F);
+                    if (c >= ' ') name_typed(c);
+                }
+            break;
         case SDL_CONTROLLERBUTTONDOWN:
             g_hint_pad = 1;
             if (g_cap_action >= 0) capture_pad(e.cbutton.button);
@@ -3334,7 +3422,12 @@ void frontend_frame(void) {
     handle_events();
     if (g_win) {
         const Uint8* ks = SDL_GetKeyboardState(NULL);
-        g_fe_keys = key_bits(ks) | pad_bits();
+        if (name_typing_active()) {                           /* typing the name: the keys that type aren't the game's buttons */
+            static Uint8 kc[SDL_NUM_SCANCODES];
+            memcpy(kc, ks, sizeof kc);
+            for (int i = 0; i < SDL_NUM_SCANCODES; i++) if (text_key((SDL_Scancode)i)) kc[i] = 0;
+            g_fe_keys = key_bits(kc) | pad_bits();
+        } else g_fe_keys = key_bits(ks) | pad_bits();
         static int always_fast = -1; if (always_fast < 0) always_fast = getenv("DQIX_FAST") != NULL;   /* tests */
         g_fast = controls_key_held(CA_FAST, ks) || controls_pad_held(CA_FAST, g_pad) || always_fast || g_turbo || (g_farm_on && g_farm_fast) || bootskip_active();
         {   /* the controller's own shortcuts (stick clicks, triggers...): when pressed */
@@ -3366,6 +3459,10 @@ void frontend_frame(void) {
         g_fe_touch = held && !gamemenu_is_open() && !journal_open() && to_touch_in(SDL_GetMouseFocus(), mx, my, &tx, &ty, dragging);
         dragging = g_fe_touch;
         if (g_fe_touch) { g_fe_tx = tx; g_fe_ty = ty; }
+        if (g_tap_frames > 0) {                               /* the name typed: the game's key pressed (name_typing_step) */
+            g_fe_touch = 1; g_fe_tx = g_tap_x; g_fe_ty = g_tap_y;
+            if (--g_tap_frames == 0) g_tap_wait = 6;          /* (let go, and the keyboard redrawn, before the next) */
+        } else if (g_tap_wait > 0) g_tap_wait--;
         game_menu_test();
         journal_test();
         if (gamemenu_is_open() || journal_open()) g_fe_keys = 0;              /* the menu has the buttons (in a session the game goes on) */
