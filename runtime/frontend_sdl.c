@@ -1676,8 +1676,8 @@ static int quest_page(const uint32_t* px) {
 }
 
 /* The character's creation (before the adventure, the character's 3D on the
- * top screen): its windows on the touch screen, found by their dark insides
- * on the parchment (g_cc_box: the choices or the name's keyboard, and the
+ * top screen): its windows on the touch screen, found by what isn't parchment
+ * in them (g_cc_box: the choices or the name's keyboard, and the
  * name above it), popped up over the big screen (canvas_layout_for()). None
  * once the name is done (OK) or outside the creation. */
 static void creation_update(int a_on_top) {
@@ -1692,32 +1692,32 @@ static void creation_update(int a_on_top) {
         int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
         if (!(r > 150 && g > 110 && b < 170 && r > b + 50)) return;
     }
-#define CC_DARK(c) ((int)(((c) >> 16) & 255) + (int)(((c) >> 8) & 255) + (int)((c) & 255) < 150)
+#define CC_WIN(c) (!((int)(((c) >> 16) & 255) > (int)((c) & 255) + 40 && (int)(((c) >> 16) & 255) > 100))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
     int y = 24;
-    while (y < 168 && g_cc_n < 2) {                               /* bands of rows mostly dark, under the tabs, over the buttons' hints */
+    while (y < 168 && g_cc_n < 2) {                               /* bands of rows mostly window, under the tabs, over the buttons' hints */
         int n = 0;
-        for (int x = 8; x < 248; x++) n += CC_DARK(px[y * 256 + x]);
+        for (int x = 8; x < 248; x++) n += CC_WIN(px[y * 256 + x]);
         if (n < 40) { y++; continue; }
         int y0 = y;
         while (y < 168) {                                         /* (the keyboard's last row: its keys apart, fewer dark pixels) */
             int m = 0;
-            for (int x = 8; x < 248; x++) m += CC_DARK(px[y * 256 + x]);
+            for (int x = 8; x < 248; x++) m += CC_WIN(px[y * 256 + x]);
             if (m < 16) break;
             y++;
         }
         int h = y - y0;
         if (h < 8) continue;
-        int x0 = -1, x1 = -1;                                     /* columns dark in most of the band's rows */
+        int x0 = -1, x1 = -1;                                     /* columns of window in most of the band's rows */
         for (int x = 8; x < 248; x++) {
             int m = 0;
-            for (int yy = y0; yy < y; yy++) m += CC_DARK(px[yy * 256 + x]);
+            for (int yy = y0; yy < y; yy++) m += CC_WIN(px[yy * 256 + x]);
             if (m * 5 >= h * 3) { if (x0 < 0) x0 = x; x1 = x; }
         }
         if (x0 < 0) continue;
         int* b = g_cc_box[g_cc_n++];                              /* its inside, without the rounded corners (a window of the minimal style goes round it) */
         b[0] = x0 + 2; b[1] = y0 + 2; b[2] = x1 - x0 - 3; b[3] = h - 4;
     }
-#undef CC_DARK
+#undef CC_WIN
 }
 
 /* The top screen's page (top_page_mode() 1): which of its pixels are its
