@@ -276,6 +276,7 @@ static const char* FS_COMP =
     "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
     "uniform int u_only;\n"                                    /* the 3D screen apart: 1 its 2D alone (see-through where the 3D shows), 2 its 3D alone */
     "uniform vec4 u_dlg[4]; uniform int u_ndlg;\n"            /* modern windows: the 3D screen's windows (x0, y0, x1, y1, DS pixels), a line round each */
+    "uniform int u_amb; uniform sampler2D u_ambt;\n"                                     /* widescreen menus (a 3D model over a 2D page): the sides blurred */
     "vec3 dlgline(vec3 c, vec2 q) {\n"
     "  for (int i = 0; i < u_ndlg; i++) {\n"
     "    vec4 r = u_dlg[i];\n"
@@ -346,6 +347,25 @@ static const char* FS_COMP =
     "  ivec2 p2 = ivec2(min(vec2(dsx, uv.y * 192.0), vec2(255.0, 191.0)));\n"
     "  bool side = u_wide != 0 && (dsx < 0.0 || dsx >= 256.0);\n"
     "  if (side && u_only == 1) { o_color = vec4(0.0); return; }\n"
+    /* A menu over a 2D page (Equip, the adventure log): its page doesn't go
+     * on past the DS's edge, and copying the edge's column across the side
+     * drew streaks. Instead the page near the edge, mirrored, blurred and
+     * dimmed (darker toward the window's edge), under the 3D if any reaches
+     * the side, with the screen's fade. */
+    "  if (side && u_amb != 0) {\n"
+    "    float d = dsx < 0.0 ? -dsx : dsx - 256.0;\n"
+    "    float ex = dsx < 0.0 ? min(d, 48.0) : 256.0 - min(d, 48.0);\n"
+    "    float y = uv.y * 192.0;\n"
+    "    vec3 a = vec3(0.0);\n"
+    "    for (int j = -2; j <= 2; j++) a += texture(u_ambt, vec2(ex, y + float(j) * 6.0) / vec2(256.0, 192.0)).rgb * (3.0 - abs(float(j)));\n"
+    "    a = a / 9.0 * (0.6 - 0.25 * clamp(d / max(u_wside, 1.0), 0.0, 1.0));\n"
+    "    ivec2 sza = textureSize(u_3d, 0); vec4 sa = texelFetch(u_3d, min(ivec2(v_uv * vec2(sza)), sza - 1), 0);\n"
+    "    if (sa.a > 0.0) a = mix(a, sa.rgb, sa.a);\n"
+    "    int mba = int(texelFetch(u_c2, ivec2(dsx < 0.0 ? 0 : 255, p2.y), 0).a * 255.0 + 0.5);\n"
+    "    float mf = float(mba & 31) / 16.0;\n"
+    "    if ((mba >> 5) == 1) a = a + (1.0 - a) * mf; else if ((mba >> 5) == 2) a = a - a * mf;\n"
+    "    o_color = vec4(a, 1.0); return;\n"
+    "  }\n"
     "  if (side) {\n"
     /* Beyond the DS's picture there are no 2D layers: show the 3D there on lines
      * where the edge of the DS's picture shows it (the field), with that
@@ -1963,6 +1983,38 @@ static void draw_movie(int eng, const float* r) {
     p_glUseProgram(prog_comp);
 }
 
+/* Widescreen menus: the 3D screen's 2D page in blocks of 8 x 8 DS pixels,
+ * filtered: the blurred colours its
+ * sides are made of (FS_COMP, u_amb). */
+static GLuint tex_amb;
+static void amb_upload(void) {
+    enum { B = 8, AW = 256 / B, AH = 192 / B };
+    static uint8_t buf[AW * AH * 4];
+    for (int by = 0; by < AH; by++)
+        for (int bx = 0; bx < AW; bx++) {
+            unsigned r = 0, g = 0, b = 0;
+            for (int y = by * B; y < by * B + B; y++)
+                for (int x = bx * B; x < bx * B + B; x++) {
+                    uint32_t c = g_engine_out[0][y * 256 + x];
+                    r += (c >> 16) & 255; g += (c >> 8) & 255; b += c & 255;
+                }
+            uint8_t* o = &buf[(by * AW + bx) * 4];
+            o[0] = (uint8_t)(r / (B * B)); o[1] = (uint8_t)(g / (B * B)); o[2] = (uint8_t)(b / (B * B)); o[3] = 255;
+        }
+    if (!tex_amb) {
+        p_glGenTextures(1, &tex_amb);
+        p_glBindTexture(GL_TEXTURE_2D, tex_amb);
+        p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, AW, AH, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    p_glActiveTexture(GL_TEXTURE4); p_glBindTexture(GL_TEXTURE_2D, tex_amb); p_glBindSampler(4, 0);
+    p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, AW, AH, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    p_glActiveTexture(GL_TEXTURE0);
+}
+
 void gl_compose(int a_on_top, int lcd_on) {
     upload_rgb(tex_col[0], g_engine_out[0]);
     upload_rgb(tex_col[1], g_engine_out[1]);
@@ -1988,6 +2040,13 @@ void gl_compose(int a_on_top, int lcd_on) {
     GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
     GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only"), loc_dlg = p_glGetUniformLocation(prog_comp, "u_dlg"), loc_ndlg = p_glGetUniformLocation(prog_comp, "u_ndlg");
     p_glUniform1i(loc_only, 0);
+    {   /* a menu with a 3D model over its 2D page (gpu2d.c counts those pixels): its sides blurred */
+        extern int g_comp_3d_on2d;
+        int amb = g_comp_3d_on2d * 4 > 256 * 192 && has3d && g_wside > 0;
+        p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_amb"), amb);
+        p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_ambt"), 4);
+        if (amb) amb_upload();
+    }
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
     p_glUniform4f(p_glGetUniformLocation(prog_comp, "u_uv"), 0, 0, 1, 1);
