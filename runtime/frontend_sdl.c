@@ -1747,12 +1747,21 @@ static void creation_update(int a_on_top) {
     if (!g_gl || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
     if (gl_wide_shown(&side) != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the touch screen */
+    /* Fading in or out the screen is darker: every test is against the parchment's
+     * own brightness at its left edge (its torn rim, never under a window), so
+     * the pop-ups are there from the first frames (not both screens side by side) */
+#define CC_SUM(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255))
+    int lp = (CC_SUM(6, 60) + CC_SUM(6, 100)) / 2;                /* the parchment: about 520 when bright */
+    {   uint32_t c = px[100 * 256 + 6];
+        int r = (c >> 16) & 255, b = c & 255;
+        if (lp < 90 || !(r * 100 > b * 140)) return;              /* (too dark to tell, or not the parchment) */
+    }
+    int dark_below = lp * 29 / 100, light_above = lp * 115 / 100;   /* (150 and 600 when bright) */
     {   /* its tabs 1-8 at the top right (dark, 12 pixels wide, every 16; the step's own is gold):
          * only the creation has them (at the start, and Patty's companions in the adventure) */
         int tabs = 0, run = 0;
         for (int x = 112; x < 254; x++) {
-            uint32_t c = px[12 * 256 + x];
-            int dark = (int)((c >> 16) & 255) + (int)((c >> 8) & 255) + (int)(c & 255) < 150;
+            int dark = CC_SUM(x, 12) < dark_below;
             if (dark) run++;
             else { if (run >= 10 && run <= 14 && ((x - run - 122) % 16 + 16) % 16 <= 1) tabs++; run = 0; }
         }
@@ -1762,15 +1771,15 @@ static void creation_update(int a_on_top) {
     static const int probe[3][2] = { { 6, 100 }, { 249, 100 }, { 128, 164 } };   /* the parchment around its windows */
     for (int i = 0; i < 3; i++) {
         uint32_t c = px[probe[i][1] * 256 + probe[i][0]];
-        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
-        if (!(r > 150 && g > 110 && b < 170 && r > b + 50)) parchment = 0;
+        int r = (c >> 16) & 255, b = c & 255;
+        if (!(r * 100 > b * 140 && CC_SUM(probe[i][0], probe[i][1]) * 100 > lp * 70)) parchment = 0;   /* (warm, as bright as the rim) */
     }
     if (!parchment) {
         /* Patty's last question ("Add this character...?"): the game's text box
          * along the bottom and Yes / No at the right over the keyboard, greyed: those
          * two pop up alone (on No the keyboard comes back, and with it its pop-up) */
-#define CC_D(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255) < 150)
-#define CC_L(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255) > 600)
+#define CC_D(x, y) (CC_SUM(x, y) < dark_below)
+#define CC_L(x, y) (CC_SUM(x, y) > light_above)
         int box = 0;
         for (int x = 8; x < 248; x++) box += CC_D(x, 150) && CC_D(x, 180);
         if (box < 230 || !CC_L(252, 90) || !CC_L(252, 100) || !CC_D(230, 80) || !CC_D(230, 108)) return;
@@ -1781,8 +1790,7 @@ static void creation_update(int a_on_top) {
         int tx = 120, ty = 140;                                   /* the text's right end and bottom */
         for (int yy = 121; yy < 186; yy++)
             for (int x = 248; x > 8; x--) {
-                uint32_t c = px[yy * 256 + x];
-                if ((int)((c >> 16) & 255) + (int)((c >> 8) & 255) + (int)(c & 255) > 450) { if (x > tx) tx = x; if (yy > ty) ty = yy; break; }
+                if (CC_SUM(x, yy) * 100 > lp * 87) { if (x > tx) tx = x; if (yy > ty) ty = yy; break; }   /* (the text's light letters: 450 when bright) */
             }
         int w = tx + 10 - 7, h = ty + 9 - 121;
         if (w > 242) w = 242;
@@ -1795,7 +1803,7 @@ static void creation_update(int a_on_top) {
         g_cc_n = 2;
         return;
     }
-#define CC_WIN(c) (!((int)(((c) >> 16) & 255) > (int)((c) & 255) + 40 && (int)(((c) >> 16) & 255) > 100))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
+#define CC_WIN(c) (!((int)(((c) >> 16) & 255) * 100 > (int)((c) & 255) * 130 && (int)(((c) >> 16) & 255) * 520 > 100 * lp))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
     int y = 24;
     while (y < 168 && g_cc_n < 2) {                               /* bands of rows mostly window, under the tabs, over the buttons' hints */
         int n = 0;
@@ -1823,6 +1831,7 @@ static void creation_update(int a_on_top) {
         g_cc_n++;
     }
 #undef CC_WIN
+#undef CC_SUM
 }
 
 /* Modern > Type the name with the keyboard: while the name's keyboard pops
