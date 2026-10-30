@@ -1746,12 +1746,6 @@ static void creation_update(int a_on_top) {
     if (!g_gl || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
     if (gl_wide_shown(&side) != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the touch screen */
-    static const int probe[3][2] = { { 6, 100 }, { 249, 100 }, { 128, 164 } };   /* the parchment around its windows */
-    for (int i = 0; i < 3; i++) {
-        uint32_t c = px[probe[i][1] * 256 + probe[i][0]];
-        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
-        if (!(r > 150 && g > 110 && b < 170 && r > b + 50)) return;
-    }
     {   /* its tabs 1-8 at the top right (dark, 12 pixels wide, every 16; the step's own is gold):
          * only the creation has them (at the start, and Patty's companions in the adventure) */
         int tabs = 0, run = 0;
@@ -1762,6 +1756,28 @@ static void creation_update(int a_on_top) {
             else { if (run >= 10 && run <= 14 && ((x - run - 122) % 16 + 16) % 16 <= 1) tabs++; run = 0; }
         }
         if (tabs < 6) return;
+    }
+    int parchment = 1;
+    static const int probe[3][2] = { { 6, 100 }, { 249, 100 }, { 128, 164 } };   /* the parchment around its windows */
+    for (int i = 0; i < 3; i++) {
+        uint32_t c = px[probe[i][1] * 256 + probe[i][0]];
+        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+        if (!(r > 150 && g > 110 && b < 170 && r > b + 50)) parchment = 0;
+    }
+    if (!parchment) {
+        /* Patty's last question ("Add this character...?"): the game's text box
+         * along the bottom and Yes / No at the right over the keyboard, greyed: those
+         * two pop up alone (on No the keyboard comes back, and with it its pop-up) */
+#define CC_D(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255) < 150)
+#define CC_L(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255) > 600)
+        int box = 0;
+        for (int x = 8; x < 248; x++) box += CC_D(x, 150) && CC_D(x, 180);
+        if (box < 230 || !CC_L(252, 90) || !CC_L(252, 100) || !CC_D(230, 80) || !CC_D(230, 108)) return;
+#undef CC_D
+#undef CC_L
+        static const int q[2][4] = { { 216, 76, 35, 36 }, { 7, 121, 242, 65 } };   /* Yes / No; the text (their insides) */
+        memcpy(g_cc_box, q, sizeof q); g_cc_n = 2;
+        return;
     }
 #define CC_WIN(c) (!((int)(((c) >> 16) & 255) > (int)((c) & 255) + 40 && (int)(((c) >> 16) & 255) > 100))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
     int y = 24;
