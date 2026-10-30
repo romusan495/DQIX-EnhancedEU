@@ -375,10 +375,11 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
-        if (g_cc_n && !second && v->npiece + 2 * g_cc_n + 1 <= GL_MAX_PIECES) {
+        if (g_cc_n && !second && v->npiece + 2 * g_cc_n <= GL_MAX_PIECES) {
             /* the character's creation: its windows on the touch screen (the
              * choices, the name's keyboard and the name above it) pop up over
-             * the right of the big screen; the character stays in view at the left */
+             * the right of the big screen, each in a solid window of the
+             * minimal style; the character stays in view at the left */
             small[0] = small[1] = small[2] = small[3] = 0;
             int ux0 = 256, uy0 = 192, ux1 = 0, uy1 = 0;
             for (int i = 0; i < g_cc_n; i++) {
@@ -392,8 +393,6 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             float rx = v->cw * 0.42f, rw = v->cw - 6 - rx, ry = 30, rh = 156;   /* (under the banner "Create your character.") */
             float k = fminf(1.0f, fminf(rw / ((float)(ux1 - ux0) + 2 * P), rh / ((float)(uy1 - uy0) + 2 * P)));
             float x = rx + (rw - (float)(ux1 - ux0) * k) / 2, y = ry + (rh - (float)(uy1 - uy0) * k) / 2;
-            float* back = v->piece[v->npiece++];                  /* one window over the character's list, the others in it (not touched) */
-            back[4] = 0; back[9] = 7; back[0] = rx - 2; back[1] = ry - 4; back[2] = v->cw - rx; back[3] = rh + 8;
             for (int i = 0; i < g_cc_n; i++) {
                 const int* b = g_cc_box[i];
                 float* w = v->piece[v->npiece++], *q = v->piece[v->npiece++];
