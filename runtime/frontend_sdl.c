@@ -1483,11 +1483,11 @@ static void hud_update(int a_on_top) {
         int h = y - y0, mid = (y0 + y) / 2, framed = 0;
         for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) framed = 1;
         if (!framed && n == 0) continue;                          /* above the panels (while the turn plays out): the backdrop */
-        if (!framed && n >= 2) break;                             /* below them: nothing more */
+        if (!framed && n >= 1) break;                             /* below them: nothing more (alone: the empty page) */
         if (n == 8 || h < 30 || h > 80 || !framed || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
-    if (n < 2) return;
+    if (n < 1) return;                                            /* (one member alone: a party of one, early on) */
     /* a list open (Spells, Items...): its description box covers the right of
      * the panels under the one whose turn it is. Those and the tall one in
      * one piece, as on the DS; the others in the row. */
