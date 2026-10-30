@@ -277,12 +277,35 @@ static void restyle(const char* game) {
     }
 }
 
+/* the work folder used to be textures/hd-auto-tmp: the game read the alpha and
+ * padded pictures waiting there as HD textures (black squares, white shadows) */
+static void old_tmp(const char* game) {
+    static const char* sub[] = { "c", "a", "c4", "a4" };
+    static char names[20000][32];
+    char d[700];
+    for (int k = 0; k < 4; k++) {
+        snprintf(d, sizeof d, "%s" SEP "textures" SEP "hd-auto-tmp" SEP "%s", game, sub[k]);
+        rmtree_files(d, names, list_dump(d, names, 20000));
+#ifdef _WIN32
+        RemoveDirectoryA(d);
+#else
+        rmdir(d);
+#endif
+    }
+    snprintf(d, sizeof d, "%s" SEP "textures" SEP "hd-auto-tmp", game);
+#ifdef _WIN32
+    RemoveDirectoryA(d);
+#else
+    rmdir(d);
+#endif
+}
+
 static int upscale_new(const char* game) {
     char dump[600], hd[600], tool[600], tmp[600], in_c[640], in_a[640], out_c[640], out_a[640], logp[600];
     snprintf(dump, sizeof dump, "%s" SEP "textures" SEP "dump", game);
     snprintf(hd, sizeof hd, "%s" SEP "textures" SEP "hd", game);
     snprintf(tool, sizeof tool, "%s" SEP "textures-hd-outil", game);
-    snprintf(tmp, sizeof tmp, "%s" SEP "textures" SEP "hd-auto-tmp", game);
+    snprintf(tmp, sizeof tmp, "%s" SEP "textures-hd-tmp", game);   /* not under textures/: the game would take its pictures for HD textures */
     snprintf(logp, sizeof logp, "%s" SEP "textures" SEP "hd-auto.log", game);
     static char names[20000][32];
     int n = list_dump(dump, names, 20000), todo = 0;
@@ -382,6 +405,7 @@ int main(int argc, char** argv) {
     { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); mkdir_(tex); }
     lf = fopen(lock, "wb"); if (lf) fclose(lf);
     if (getenv("TEXHD_SHARP")) { g_sharp = atoi(getenv("TEXHD_SHARP")); if (g_sharp < 0) g_sharp = 0; if (g_sharp > 100) g_sharp = 100; }
+    old_tmp(game);
     restyle(game);
     upscale_new(game);
     remove(lock);

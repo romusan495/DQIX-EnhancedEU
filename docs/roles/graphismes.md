@@ -27,6 +27,9 @@ l'un après l'autre, pas en parallèle.
   (donc à la mise à jour), les textures HD qui ont leur original dans
   `textures\dump` sont déplacées dans `game\textures-methode5\` puis refaites
   (`textures\hd-style.txt` = fait).
+  Dossier de travail : `game\textures-hd-tmp\`, hors de `textures\` (le jeu lit
+  tous les dossiers de `textures\` : l'ancien `textures\hd-auto-tmp` donnait des
+  carrés noirs et des ombres blanches pendant la conversion ; le jeu l'ignore).
 - `textures-hd.exe` se compile depuis `tools/textures-hd.c` ; BUILD.bat le
   (re)construit seulement si `game\textures-hd-outil` existe (voir plus bas).
 - `textures-rom.exe` (pareil : `gcc -O2 -I runtime -o game/textures-rom.exe tools/textures-rom.c`)
