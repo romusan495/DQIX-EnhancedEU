@@ -30,6 +30,7 @@
 #define GL_FUNCS(X) \
     X(const GLubyte*, glGetString, (GLenum)) \
     X(void, glViewport, (GLint, GLint, GLsizei, GLsizei)) \
+    X(void, glScissor, (GLint, GLint, GLsizei, GLsizei)) \
     X(void, glClearColor, (GLfloat, GLfloat, GLfloat, GLfloat)) \
     X(void, glClear, (GLbitfield)) \
     X(void, glClearBufferfv, (GLenum, GLint, const GLfloat*)) \
@@ -1807,8 +1808,8 @@ static void draw_text(int eng, int top, float W, float wside) {
     int nv = 0;
     int per_row = ATLAS / SLOT_W;
     static float dx[4096];                                        /* each letter moved along its line (hdtext_follow) */
-    {   static int line[4096]; int m = n < 4096 ? n : 4096;
-        for (int i = 0; i < m; i++) { line[i] = i; dx[i] = 0; }
+    {   static int line[4096]; int m = 0;
+        for (int i = 0; i < n && i < 4096; i++) { dx[i] = 0; if (gl[i].has_color) line[m++] = i; }   /* (a letter none of whose ink shows: no say in the spacing) */
         g_line_glyphs = gl;
         qsort(line, (size_t)m, sizeof *line, by_line_glyph);
         if (hdtext_font_ok() && !party_in_battle())             /* (not in battles: the party's cards as the game has them) */
@@ -1877,8 +1878,11 @@ static void draw_sprites(int eng, int top, float W, float wside) {
     p_glEnable(GL_BLEND);
     p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    p_glEnable(GL_SCISSOR_TEST);                                  /* kept to its screen: a sprite past its edge (the top screen's cards, from its last rows) not over the other one */
+    p_glScissor(0, top ? g_fb_h : 0, g_fb3_w, g_fb_h);
     for (int i = 0; i < g_hdsprite_n[eng]; i++) {
         const HdSprite* sp = &g_hdsprites[eng][i];
+        if (!sp->shown) continue;                                 /* (hidden on the DS: by a window, a layer...) */
         GLuint t = pack_texture(sp->key);
         if (!t) continue;
         p_glBindTexture(GL_TEXTURE_2D, t);
@@ -1891,6 +1895,7 @@ static void draw_sprites(int eng, int top, float W, float wside) {
         p_glUniform4f(loc_uv, sp->hflip ? 1.0f : 0.0f, sp->vflip ? 0.0f : 1.0f, sp->hflip ? -1.0f : 1.0f, sp->vflip ? 1.0f : -1.0f);   /* (the picture's first row at the top) */
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
     }
+    p_glDisable(GL_SCISSOR_TEST);
     p_glDisable(GL_BLEND);
     p_glUseProgram(prog_comp);
 }

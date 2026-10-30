@@ -75,8 +75,8 @@ static inline uint16_t ext16(const uint8_t* p, uint32_t idx) { uint16_t v = 0; i
 /* ---------------------------------------------------------------- line buffers */
 #define PX_OPAQUE 0x10000u
 typedef struct { uint32_t col[256]; uint32_t src[256]; uint32_t tag[256]; int tags; uint8_t win[256]; int wins; uint8_t tint[256]; } BgLine;   /* raw 16-bit colour | PX_OPAQUE; src: where it came from (VRAM byte * 2 + high nibble); tag: HD text (hdtext.h); win: WIN_* (window styles); tint: g_hud_tint slot + 1 (a battle card's colour) */
-/* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite */
-typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; uint8_t mw[256]; uint32_t tag[256]; int tags; } ObjLine;   /* mw: WIN_PANEL / WIN_LINE (modern windows made of sprites); tag: HD text (letters drawn into sprites: messages, name plates) */
+/* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite; hds: an HD sprite's pixel (its g_hdsprites slot + 1, hdsp its priority) */
+typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; uint8_t mw[256]; uint32_t tag[256]; int tags; uint8_t hds[256], hdsp[256]; int hdn; } ObjLine;   /* mw: WIN_PANEL / WIN_LINE (modern windows made of sprites); tag: HD text (letters drawn into sprites: messages, name plates) */
 
 /* Window styles (g_winstyle, Enhanced): the game's menu windows are a black
  * panel blended over the 3D (colour 1) under a white frame shaded in greys
@@ -383,7 +383,7 @@ int (*g_hdsprite_check)(const uint8_t* rgba, int w, int h, uint64_t* key);
 HdSprite g_hdsprites[2][HDSPRITE_MAX];
 int g_hdsprite_n[2];
 static uint64_t hdspr_frame[2][128];                                /* g_frame + 1: checked this frame */
-static uint8_t hdspr_hd[2][128];
+static uint8_t hdspr_hd[2][128], hdspr_slot[2][128];
 static int hd_sprite(Engine* e, int eng, int i, uint32_t disp, const uint8_t* ext, int w, int h, int ox, int oy) {
     if (hdspr_frame[eng][i] == g_frame + 1) return hdspr_hd[eng][i];
     hdspr_frame[eng][i] = g_frame + 1; hdspr_hd[eng][i] = 0;
@@ -407,7 +407,8 @@ static int hd_sprite(Engine* e, int eng, int i, uint32_t disp, const uint8_t* ex
     if (!any || !g_hdsprite_check(rgba, w, h, &key) || g_hdsprite_n[eng] == HDSPRITE_MAX) return 0;
     HdSprite* s = &g_hdsprites[eng][g_hdsprite_n[eng]++];
     s->x = ox; s->y = oy >= 192 ? oy - 256 : oy; s->w = w; s->h = h;
-    s->hflip = (a1 >> 12) & 1; s->vflip = (a1 >> 13) & 1; s->key = key;
+    s->hflip = (a1 >> 12) & 1; s->vflip = (a1 >> 13) & 1; s->key = key; s->shown = 0;
+    hdspr_slot[eng][i] = (uint8_t)(g_hdsprite_n[eng] - 1);
     return hdspr_hd[eng][i] = 1;
 }
 
@@ -481,6 +482,8 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
     int hd = g_hdtext_on && g_hdtext_any && g_comp_gl && !battle;
     if (out->tags) memset(out->tag, 0, sizeof out->tag);
     out->tags = 0;
+    if (out->hdn) memset(out->hds, 0, sizeof out->hds);
+    out->hdn = 0;
     const uint8_t* ext = (disp & 0x80000000u) ? ext_obj_pal(eng) : NULL;
     memset(out->col, 0, sizeof out->col);
     memset(out->prio, 4, sizeof out->prio);
@@ -511,7 +514,17 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
         int c256 = (a0 >> 13) & 1;
         int prio = (a2 >> 10) & 3;
         uint32_t tile = a2 & 0x3FF;
-        if (g_hdsprite_on && g_comp_gl && !affine && mode < 2 && hd_sprite(e, eng, i, disp, ext, w, h, ox, oy)) continue;
+        if (g_hdsprite_on && g_comp_gl && !affine && mode < 2 && hd_sprite(e, eng, i, disp, ext, w, h, ox, oy)) {
+            /* left out of the picture, drawn in HD over it: where it would show (compose_line) */
+            int ty = (a1 & 0x2000) ? h - 1 - ly : ly;
+            for (int lx = 0; lx < w; lx++) {
+                int sx = ox + lx; uint32_t src;
+                if (sx < 0 || sx >= 256 || (out->hds[sx] && out->hdsp[sx] <= prio)) continue;
+                if (!obj_index(e, disp, tile, c256, w, (a1 & 0x1000) ? w - 1 - lx : lx, ty, &src)) continue;
+                out->hds[sx] = (uint8_t)(hdspr_slot[eng][i] + 1); out->hdsp[sx] = (uint8_t)prio; out->hdn = 1;
+            }
+            continue;
+        }
         int16_t pa = 0x100, pb = 0, pc = 0, pd = 0x100;
         if (affine) {
             int p = (a1 >> 9) & 31;
@@ -904,23 +917,53 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 }
             }
             /* the panel stops at the line: where the frame's outer shading
-             * hid a row or column of it beyond the line, left out */
-            WinLayer wl[4]; int bx[4], by[4], have = 0;
+             * hid a row or column of it beyond the line, or a panel tile's
+             * see-through corner was filled beyond it (a name plate over a
+             * dialogue window, beside the plate), left out */
+            WinLayer wl[4]; int bx[4], by[4];
+            for (int bg = 0; bg < 4; bg++) if (winl & (1 << bg)) text_layer(e, eng, bg, y, &wl[bg], &bx[bg], &by[bg]);
+            static const int dir[4][2] = { { 0, 1 }, { 0, -1 }, { 1, 0 }, { -1, 0 } };
             for (int x = 0; x < 256; x++) {
                 if (kind[x] != WIN_PANEL || lay[x] < 0) continue;
-                int f = -1, p = lay[x];
-                for (int bg = 0; bg < 4; bg++) if (bg != p && (winl & (1 << bg)) && (bgl[bg].win[x] == WIN_EDGE || bgl[bg].win[x] == WIN_SHADE)) f = bg;
-                if (f < 0) continue;
-                for (int bg = 0; bg < 4; bg++) if ((bg == f || bg == p) && !(have & (1 << bg))) { have |= 1 << bg; text_layer(e, eng, bg, y, &wl[bg], &bx[bg], &by[bg]); }
-                int fx = (x + bx[f]) & (int)(wl[f].w - 1), px = (x + bx[p]) & (int)(wl[p].w - 1), out = 0;
-                static const int dir[4][2] = { { 0, 1 }, { 0, -1 }, { 1, 0 }, { -1, 0 } };
-                for (int d = 0; d < 4 && !out; d++)
-                    for (int k = 1; k <= 3; k++)
-                        if (win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k)) {
-                            out = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
-                            break;
-                        }
+                int p = lay[x], px = (x + bx[p]) & (int)(wl[p].w - 1), out = 0;
+                int filled = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px, by[p]) == 0;
+                for (int f = 0; f < 4 && !out; f++) {
+                    if (f == p || !(winl & (1 << f))) continue;
+                    if (!filled && bgl[f].win[x] != WIN_EDGE && bgl[f].win[x] != WIN_SHADE) continue;
+                    int fx = (x + bx[f]) & (int)(wl[f].w - 1);
+                    for (int d = 0; d < 4 && !out; d++)
+                        for (int k = 1; k <= (filled ? 6 : 3); k++)
+                            if (win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k)) {
+                                out = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
+                                break;
+                            }
+                }
                 if (out) { bgl[p].col[x] = 0; bgl[p].win[x] = 0; kind[x] = 0; lay[x] = -1; }
+            }
+            /* ...and reaches it: a row of the frame's shading between the line
+             * and the panel (above or below), the panel */
+            for (int x = 0; x < 256; x++) {
+                if (kind[x]) continue;
+                for (int f = 0; f < 4 && !kind[x]; f++) {
+                    if (!(winl & (1 << f)) || (bgl[f].win[x] != WIN_EDGE && bgl[f].win[x] != WIN_SHADE)) continue;
+                    int fx = (x + bx[f]) & (int)(wl[f].w - 1);
+                    for (int d = -1; d <= 1 && !kind[x]; d += 2)          /* the line on that side, the panel on the other */
+                        for (int k = 1; k <= 2 && !kind[x]; k++) {
+                            if (!win_line(&wl[f], fx, by[f] + d * k)) continue;
+                            for (int p = 0; p < 4 && !kind[x]; p++) {
+                                if (!(winl & (1 << p))) continue;
+                                int px = (x + bx[p]) & (int)(wl[p].w - 1);
+                                for (int j = 1; j <= 2; j++) {
+                                    int py = (by[p] - d * j) & (int)(wl[p].h - 1);
+                                    if (win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px, py) != 1) continue;
+                                    uint16_t ent = map_ent(wl[p].mapbase, wl[p].w, wl[p].h, px >> 3, py >> 3);
+                                    bgl[p].col[x] = palc(e, (ent >> 12) * 16u, 1) | PX_OPAQUE; bgl[p].win[x] = WIN_PANEL; bgl[p].wins |= WIN_PANEL;
+                                    kind[x] = WIN_PANEL; lay[x] = (int8_t)p;
+                                    break;
+                                }
+                            }
+                        }
+                }
             }
             for (int x = 1; x < 255; x++) {
                 if (kind[x]) continue;
@@ -959,6 +1002,17 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             }
         }
     }
+
+    /* HD sprites: shown if some of their pixels would be in front (a window,
+     * a layer of a higher priority or another sprite hides the rest) */
+    if (obj_on && objl.hdn)
+        for (int x = 0; x < 256; x++) {
+            if (!objl.hds[x] || !(winmask[x] & 0x10)) continue;
+            int p = objl.hdsp[x], hid = (objl.col[x] & PX_OPAQUE) && objl.prio[x] < p;
+            for (int bg = 0; bg < 4 && !hid; bg++)
+                hid = bg_on[bg] && !(bg == 0 && bg_3d) && (winmask[x] & (1 << bg)) && (int)(R16(e, 0x08 + bg * 2) & 3) < p && (bgl[bg].col[x] & PX_OPAQUE);
+            if (!hid && objl.hds[x] <= g_hdsprite_n[eng]) g_hdsprites[eng][objl.hds[x] - 1].shown = 1;
+        }
 
     uint16_t bldcnt = R16(e, 0x50), bldalpha = R16(e, 0x52), bldy = R16(e, 0x54);
     uint32_t eva = bldalpha & 31, evb = (bldalpha >> 8) & 31, evy = bldy & 31;

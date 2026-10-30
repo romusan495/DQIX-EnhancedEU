@@ -5,7 +5,7 @@
 #pragma once
 #include <stdint.h>
 
-typedef struct { int x, y, w, h, hflip, vflip; uint64_t key; } HdSprite;   /* DS pixels on its screen */
+typedef struct { int x, y, w, h, hflip, vflip; uint64_t key; int shown; } HdSprite;   /* DS pixels on its screen; shown: some of it in front (not hidden by a window, a layer or another sprite) */
 #define HDSPRITE_MAX 128
 
 /* set by the renderer: on (the pack or the dump), and the check of one
