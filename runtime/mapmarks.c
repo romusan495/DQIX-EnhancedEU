@@ -1879,11 +1879,12 @@ int mapmarks_shop(uint32_t* px, uint8_t* info, int desc_y, const uint8_t** rgba,
     *rgba = g_icons; *changed = 0;
     uint32_t shop = rd32(SHOP_PTR);
     int n = 0, page = 0, lines = 0;
-    if (px && rd32(FIELD_PTR) != 0 && mapmarks_top_page() && shop >= 0x02000000 && shop < 0x02400000) {
+    if (px && rd32(FIELD_PTR) != 0 && shop >= 0x02000000 && shop < 0x02400000) {   /* (its signs, checked below, say it's up: not waiting for the card) */
         n = g_main_ram[(shop + 0x5D) & (MAIN_RAM_SIZE - 1)];
         page = rd16(shop + 0x83C);
         lines = n - page * SHOP_LINES;
         if (lines > SHOP_LINES) lines = SHOP_LINES;
+        if (n > 64) lines = 0;
     }
     /* every line of the page shows its kind's sign (white) where it should */
     for (int i = 0; i < lines; i++) {
@@ -1915,8 +1916,8 @@ int mapmarks_shop(uint32_t* px, uint8_t* info, int desc_y, const uint8_t** rgba,
     if (key != last_key) {
         last_key = key; *changed = 1;
         memset(g_icons, 0, sizeof g_icons);
-        for (int i = 0; i < lines; i++) {                         /* a little bigger than the sign, centred on it */
-            int s = (SHOP_DY + 1) * MAPMARKS_R, cx = (SHOP_X0 + SHOP_X1) * MAPMARKS_R / 2, cy = (SHOP_Y0 + SHOP_DY * i) * MAPMARKS_R + SHOP_DY * MAPMARKS_R / 2;
+        for (int i = 0; i < lines; i++) {                         /* the sign's size, centred on it */
+            int s = (SHOP_DY - 2) * MAPMARKS_R, cx = (SHOP_X0 + SHOP_X1) * MAPMARKS_R / 2, cy = (SHOP_Y0 + SHOP_DY * i) * MAPMARKS_R + SHOP_DY * MAPMARKS_R / 2;
             draw_icon(rd16(shop + 0x70 + 2 * (page * SHOP_LINES + i)), cx - s / 2, cy - s / 2, s);
         }
         if (desc_y >= 0)                                          /* the chosen one big, at the left of its description */

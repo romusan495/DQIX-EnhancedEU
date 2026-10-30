@@ -33,6 +33,22 @@ typedef struct { uint16_t glyph; uint8_t color, used; } Inst;
 static Inst* g_inst;
 static uint32_t g_inst_next = 1;
 
+/* Where a font's letters sit in their 12 rows (place()): from its first
+ * capital with a flat top and bottom seen. Letters drawn before it was seen
+ * were placed by a guess: all are drawn again (the font's generation), else
+ * they would stand higher or lower than the ones drawn after (a menu's
+ * "Acheter" with its A above the rest). */
+static uint32_t g_font_gen;
+static struct { int8_t known, top, base; } g_metrics[256];
+static void font_learn(const Glyph* g) {
+    if (g->font < 0 || g->font > 255 || g_metrics[g->font].known || !g->str[0] || g->str[1] || !strchr("HEFIKLMNTXZ", g->str[0])) return;
+    int t = -1, b = -1;
+    for (int y = 0; y < 12; y++) if (g->rows[y]) { if (t < 0) t = y; b = y; }
+    if (t < 0) return;
+    g_metrics[g->font].known = 1; g_metrics[g->font].top = (int8_t)t; g_metrics[g->font].base = (int8_t)b;
+    if (t != 3 || b != 9) g_font_gen++;                          /* (not the guess: the letters drawn so far, again) */
+}
+
 static int glyph_find(uint32_t key, int font, int w, const uint16_t* rows, const char* str) {
     uint32_t h = (key * 2654435761u) % (MAX_GLYPHS * 2);
     while (g_glyph_hash[h]) {
@@ -45,6 +61,7 @@ static int glyph_find(uint32_t key, int font, int w, const uint16_t* rows, const
     g->key = key; g->font = font; g->w = w; memcpy(g->rows, rows, sizeof g->rows);
     snprintf(g->str, sizeof g->str, "%s", str);
     g_glyph_hash[h] = ++g_nglyphs;
+    font_learn(g);
     return g_nglyphs - 1;
 }
 
@@ -409,7 +426,7 @@ int hdtext_texture_letter(const uint8_t* p, int w, int h, int* glyph, int* ox, i
 static stbtt_fontinfo g_tt;
 static unsigned char* g_tt_data;
 static char g_font_name[256] = "original";
-static uint32_t g_font_gen = 1;
+static uint32_t g_font_gen = 1;                                /* (declared above: font_learn()) */
 
 static int load_ttf(const char* name) {
     char paths[6][600]; int n = 0;
@@ -492,17 +509,12 @@ static int codepoint(const char* s) {
     return 0;
 }
 
-/* Where the game's letters sit in their 12 rows, per font: from its "H". */
+/* Where the game's letters sit in their 12 rows, per font (font_learn()). */
 static int font_metrics(int font, int* top, int* base) {
-    *top = 3; *base = 9;                                        /* the usual, until an H has been drawn */
-    for (int i = 0; i < g_nglyphs; i++) {
-        const Glyph* g = &g_glyphs[i];
-        if (g->font != font || strcmp(g->str, "H") != 0) continue;
-        int t = -1, b = -1;
-        for (int y = 0; y < 12; y++) if (g->rows[y]) { if (t < 0) t = y; b = y; }
-        if (t >= 0) { *top = t; *base = b; return 1; }
-    }
-    return 0;
+    *top = 3; *base = 9;                                        /* the usual, until a capital has been drawn */
+    if (font < 0 || font > 255 || !g_metrics[font].known) return 0;
+    *top = g_metrics[font].top; *base = g_metrics[font].base;
+    return 1;
 }
 
 /* The game's own letter, smoothed: the picture interpolated and cut at half,
@@ -562,7 +574,8 @@ static int place(const Glyph* g, Placed* pl) {
     if (!stbtt_GetCodepointBox(&g_tt, 'H', &hx0, &hy0, &hx1, &hy1) || hy1 <= 0) hy1 = 1400;
     static float size = -1;                                     /* capitals a little lower than the game's: PC fonts are wider */
     if (size < 0) { const char* e = getenv("DQIX_HD_TEXT_SIZE"); size = e ? (float)atof(e) : 0.9f; if (size <= 0) size = 0.9f; }
-    float scale = (float)((base - top + 1) * HDT_R) * size / (float)hy1, sx = scale;
+    int rows = base - top + 1 < 7 ? 7 : base - top + 1;          /* (a small font's letters as tall as the usual's: readable on a PC screen) */
+    float scale = (float)(rows * HDT_R) * size / (float)hy1, sx = scale;
     int bx0, by0, bx1, by1;
     stbtt_GetCodepointBitmapBox(&g_tt, cp, sx, scale, &bx0, &by0, &bx1, &by1);
     if (bx1 - bx0 > W) {                                        /* wider than the game's letter (m, w): narrowed to fit, not cut */

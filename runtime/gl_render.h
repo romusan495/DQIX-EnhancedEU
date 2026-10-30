@@ -44,7 +44,7 @@ typedef struct {
     int skin;                                         /* draw the console photo (gl_set_skin) instead */
     float skin_k;                                     /* photo pixels per canvas unit */
     int npiece;                                       /* parts of a screen drawn over the canvas (widescreen battle HUD) */
-    float piece[8][10];                               /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom; 2, 3: its 2D alone, gl_set_split()); x, y, w, h on it;
+    float piece[16][10];                               /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom; 2, 3: its 2D alone, gl_set_split()); x, y, w, h on it;
                                                        * restyled (1 its dark letters alone, made light; 2 no picture: a window of the minimal style;
                                                        * 3 its light letters alone; 4 no picture: a thin grey line; 5 its red ink alone, cleaned; 6 as 1, kept sharp when small, red ink left out;
                                                        * 7 as 2, solid inside) */
@@ -53,7 +53,7 @@ typedef struct {
     float icons[4];                                   /* ...and gl_set_icons()' */
     float layer[GL_LAYERS][4];                        /* ...and each gl_set_layer()'s (w 0: not this frame) */
 } GlPresent;
-#define GL_MAX_PIECES 8
+#define GL_MAX_PIECES 16
 void gl_hold(void);                                   /* keep this frame's picture (the map window during battles) */
 void gl_set_skin(const uint8_t* rgba, int w, int h);
 void gl_set_menu(const uint8_t* rgba, int w, int h);      /* the in-game menu over the whole window (premultiplied RGBA, rows top-down; NULL: none) */

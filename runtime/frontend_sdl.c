@@ -106,9 +106,10 @@ static int g_tap_x, g_tap_y, g_tap_frames, g_tap_wait, g_tap_tries;   /* ...the 
 static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
 static int g_quest_page;                                          /* ...it is a quest's sheet (quest_page()): redrawn as one modern window */
+static int g_card_page;                                           /* ...or an item's card (card_page()): the same */
 static int g_stamp[4];                                            /* ...its Complete! stamp (quest_stamp()): x, y, w, h on the page (w 0: none) */
 static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
-static int g_shop_cut = 118;                                      /* ...the row between the list and the panels under it */
+static int g_shop_cut = 118, g_shop_cut2 = 118;                   /* ...the list's rows end at the first, the panels under it start at the second */
 enum { SHOP_TX = 60, SHOP_TY = 33, SHOP_TW = 113, SHOP_TH = 58, SHOP_PAD = 3, SHOP_GAP = 3 };   /* the card's text, beside its icon; the description's window */
 static int g_hud_list;                                            /* ...a list open (spells, items, targets): modern, the chooser alone */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
@@ -279,12 +280,14 @@ static int wide_side_target(void) {
  * 1: an item's card, a title... (the field on the bottom screen, or no 3D):
  * its windows pop up over the big screen; 2: a menu with its 3D model on the
  * top screen (the monster list): both screens side by side; 0: none. (Not while the other screen is black: a cutscene.) */
+static int top_page_wide(void) {                                  /* (widescreen, one screen, the adventure) */
+    return WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single) && g_minimap && in_adventure();
+}
 static int top_page_mode(void) {
-    if (!(WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single)) || !g_minimap || g_small_blank) return 0;
+    if (!top_page_wide() || (g_small_blank && !g_shop)) return 0;   /* (a shop's list: the top screen goes blank before its card shows) */
     int side = 0, which = g_gl ? gl_wide_shown(&side) : -1;
-    if (!in_adventure()) return 0;
     if (which == 0) return g_top_menu && !g_hud_n && !g_hud_win[2] ? 2 : 0;
-    return mapmarks_top_page() ? 1 : 0;
+    return mapmarks_top_page() || g_shop ? 1 : 0;                 /* (a shop's list: laid out before its card shows) */
 }
 
 /* A quest's sheet (the top screen while a quest is offered, accepted or
@@ -317,6 +320,33 @@ static void quest_pieces(GlPresent* v) {
     if (g_stamp[2]) {                                             /* the stamp, over the description */
         float* l = v->layer[GL_LAYER_STAMP];
         l[0] = X + g_stamp[0] * k; l[1] = Y + g_stamp[1] * k; l[2] = g_stamp[2] * k; l[3] = g_stamp[3] * k;
+    }
+}
+
+/* An item's card (a shop asking whether to buy it, Items, Equipment): the
+ * game's parchment page, drawn again in the modern style as quest_pieces()
+ * does a quest's: one window, the name's and the stats' light letters, the
+ * description's and the jobs' dark ones made light, the icons and the rarity
+ * as they are, thin grey lines between the parts. Its parts, in its pixels: */
+enum { CS_X = 12, CS_Y = 5, CS_W = 238, CS_H = 176 };              /* the card */
+#define CARD_K 0.42f                                              /* its size where it pops up (card_page) */
+static void card_pieces(GlPresent* v) {
+    float k = g_pop_at[2], X = g_pop_at[0] - CS_X * k, Y = g_pop_at[1] - CS_Y * k;   /* (page pixels -> canvas) */
+    static const float part[][5] = {                              /* x, y, w, h on the page; restyled (FS_COPY's u_mode) */
+        { CS_X, CS_Y, CS_W, CS_H, 7 },                            /* the window (solid: it may lie over the field's menus) */
+        { 16, 27, 228, 1, 4 }, { 16, 101, 162, 1, 4 }, { 181, 30, 1, 146, 4 },   /* the lines: under the name, over the stats, before the jobs */
+        { 16, 8, 17, 17, 0 },                                     /* the kind's sign */
+        { 37, 10, 102, 12, 3 },                                   /* the name (light on its bar, inside its edge) */
+        { 175, 9, 73, 15, 0 },                                    /* the rarity */
+        { 24, 48, 32, 32, 0 },                                    /* the icon, big */
+        { 60, 30, 114, 66, 6 },                                   /* the description */
+        { 19, 105, 155, 70, 3 },                                  /* the stats (light on their panel) */
+        { 184, 33, 62, 15, 6 }, { 186, 50, 54, 124, 6 } };        /* "Equips:" and the jobs' signs (those who can't: faint) */
+    for (int i = 0; i < (int)(sizeof part / sizeof *part); i++) {
+        const float* p = part[i];
+        float* q = v->piece[v->npiece++];
+        q[4] = 0; q[5] = p[0]; q[6] = p[1]; q[7] = p[2]; q[8] = p[3]; q[9] = p[4];
+        q[0] = X + p[0] * k; q[1] = Y + p[1] * k; q[2] = fmaxf(p[2] * k, 0.75f); q[3] = fmaxf(p[3] * k, 0.75f);
     }
 }
 
@@ -422,17 +452,17 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
              * the panels under the list (who can equip it, how many held);
              * over the field, which stays whole */
             small[0] = small[1] = small[2] = small[3] = 0;
-            float L = (float)g_shop_cut, dh = g_pop_win[2] ? SHOP_TH + 2 * SHOP_PAD : 0, gap = SHOP_GAP;
-            float k = 192.0f / (192.0f + (dh > 0 ? dh + 2 * gap : 0)), x = (v->cw - 256 * k) / 2;
+            float L = (float)g_shop_cut, L2 = (float)g_shop_cut2, dh = SHOP_TH + 2 * SHOP_PAD, gap = SHOP_GAP;   /* (the description's window from the start: its text once the card shows) */
+            float k = 192.0f / (192.0f - (L2 - L) + dh + 2 * gap), x = (v->cw - 256 * k) / 2;   /* (the rows between the list and the panels left out) */
             float* q = v->piece[v->npiece++];
             q[4] = 3; q[5] = 0; q[6] = 0; q[7] = 256; q[8] = L;
             q[0] = x; q[1] = 0; q[2] = 256 * k; q[3] = L * k;
             q = v->piece[v->npiece++];
-            q[4] = 3; q[5] = 0; q[6] = L; q[7] = 256; q[8] = 192 - L;
-            q[0] = x; q[1] = 192 - (192 - L) * k; q[2] = 256 * k; q[3] = (192 - L) * k;
-            if (dh > 0) {
-                q = v->piece[v->npiece++];                        /* the window */
-                q[9] = 2; q[0] = x + 8 * k; q[1] = (L + gap) * k; q[2] = 240 * k; q[3] = dh * k;
+            q[4] = 3; q[5] = 0; q[6] = L2; q[7] = 256; q[8] = 192 - L2;
+            q[0] = x; q[1] = 192 - (192 - L2) * k; q[2] = 256 * k; q[3] = (192 - L2) * k;
+            q = v->piece[v->npiece++];                            /* the window */
+            q[9] = 2; q[0] = x + 8 * k; q[1] = (L + gap) * k; q[2] = 240 * k; q[3] = dh * k;
+            if (g_pop_win[2]) {
                 q = v->piece[v->npiece++];                        /* its text */
                 q[4] = 0; q[5] = SHOP_TX; q[6] = SHOP_TY; q[7] = SHOP_TW; q[8] = SHOP_TH; q[9] = 1;   /* (the item's icon at its left: mapmarks_shop()) */
                 q[0] = x + (SHOP_DESC_X + SHOP_DESC_ICON + 8) * k; q[1] = (L + gap + SHOP_PAD) * k; q[2] = SHOP_TW * k; q[3] = SHOP_TH * k;
@@ -444,6 +474,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
              * popped up in the middle over the big screen (pop_update()) */
             small[0] = small[1] = small[2] = small[3] = 0;
             if (g_pop_win[2] && g_quest_page && v->npiece + 6 <= GL_MAX_PIECES) quest_pieces(v);
+            else if (g_pop_win[2] && g_card_page && v->npiece + 12 <= GL_MAX_PIECES) card_pieces(v);
             else if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
                 float* q = v->piece[v->npiece++], w = (float)g_pop_win[2], h = (float)g_pop_win[3];
                 q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
@@ -1681,6 +1712,20 @@ static int quest_page(const uint32_t* px) {
     return bars * 5 > n * 2 * 4 && page * 2 > n;                  /* (the stamp, coming down big, can hide much of the parchment) */
 }
 
+/* Is the top screen an item's card (card_pieces())? Its name's dark bar and
+ * the description's parchment under the text, at their places. */
+static int card_page(const uint32_t* px) {
+    int bar = 0, page = 0, n = 0;
+    for (int x = 40; x < 140; x += 8) {
+        uint32_t t = px[16 * 256 + x], d = px[96 * 256 + x + 30];
+        int tr = (t >> 16) & 255, tg = (t >> 8) & 255, tb = t & 255, dr = (d >> 16) & 255, dg = (d >> 8) & 255, db = d & 255;
+        bar += tr > 45 && tr < 90 && tg > 30 && tg < 70 && tb > 15 && tb < 50 && tr > tb + 20;      /* the name's bar (65, 48, 32) */
+        page += dr > 170 && dg > 140 && db > 60 && db < 130 && dr > db + 70;                       /* the parchment (203, 170, 89) */
+        n++;
+    }
+    return bar * 4 > n * 3 && page * 4 > n * 3;
+}
+
 /* The character's creation (before the adventure, the character's 3D on the
  * top screen): its windows on the touch screen, found by what isn't parchment
  * in them (g_cc_box: the choices or the name's keyboard, and the
@@ -1799,10 +1844,10 @@ static int text_key(SDL_Scancode k) {                             /* a key that 
  * around them, and what touches the edge (the sky, the torn border), go. */
 static void pop_update(int a_on_top) {
     if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
-    g_pop_win[2] = 0; g_quest_page = 0;
+    g_pop_win[2] = 0; g_quest_page = g_card_page = 0;
     static float sheet_far;                                       /* a quest's sheet: how far the 3D was since it is up (at most) */
     static int gone = 1 << 20;                                    /* ...frames since it was last seen */
-    if (top_page_mode() != 1) { sheet_far = 0; gone = 1 << 20; return; }
+    if (top_page_mode() != 1 || !mapmarks_top_page()) { sheet_far = 0; gone = 1 << 20; return; }   /* (a shop's list up before its card) */
     enum { N = 256 * 192 };
     int quest = g_winstyle == 2 && !g_shop && quest_page(g_engine_out[a_on_top ? 0 : 1]);
     gone = quest ? 0 : gone + 1;
@@ -1820,6 +1865,12 @@ static void pop_update(int a_on_top) {
         return;
     }
     sheet_far = 0;
+    if (g_winstyle == 2 && !g_shop && card_page(g_engine_out[a_on_top ? 0 : 1])) {   /* an item's card: redrawn whole (card_pieces()) */
+        g_card_page = 1;
+        g_pop_win[0] = CS_X; g_pop_win[1] = CS_Y; g_pop_win[2] = CS_W; g_pop_win[3] = CS_H;
+        g_pop_at[0] = 4; g_pop_at[1] = 4; g_pop_at[2] = CARD_K;   /* small, in the top left corner: off the lists (Equip, a shop's) */
+        return;
+    }
     static uint8_t bg[N];
     static int lab[N], q[N], size[N], ring[N];
     static uint8_t flags[N];                                      /* 1 touches the edge, 2 reaches inside */
@@ -1879,18 +1930,39 @@ static void pop_update(int a_on_top) {
  * (canvas_layout_for()); the row under the list: the first one below
  * y 100 with nothing of the 2D across it (the page number is just above). */
 static void shop_update(int a_on_top) {
-    int side = 0, ok = top_page_mode() == 1 && !a_on_top && g_comp_has3d && gl_wide_shown(&side) == 1;
+    int side = 0, ok = top_page_wide() && g_gl && !a_on_top && g_comp_has3d && gl_wide_shown(&side) == 1;   /* (not waiting for the item's card: the list shows first) */
     const uint8_t* rgba; int changed;
-    g_shop_cut = 118;
+    g_shop_cut = g_shop_cut2 = 118;
     for (int y = 100; ok && y < 140; y++) {
-        int n = 0;
-        for (int x = 8; x < 248; x++) n += (g_comp_info[(y * 256 + x) * 4] & 3) == 1;
-        if (n == 240) { g_shop_cut = y; break; }
+        int n = 0, line = 0;
+        for (int x = 8; x < 248; x++) { int m = g_comp_info[(y * 256 + x) * 4] & 3; n += m == 1; line += m == 0; }
+        if (n == 240) { g_shop_cut = g_shop_cut2 = y; break; }
+        if (line >= 200) {                                        /* the list's bottom line, the panels' top one a few rows under it */
+            g_shop_cut = g_shop_cut2 = y + 1;
+            for (int y2 = y + 2; y2 < y + 10 && y2 < 192; y2++) {
+                int l2 = 0;
+                for (int x = 8; x < 248; x++) l2 += (g_comp_info[(y2 * 256 + x) * 4] & 3) == 0;
+                if (l2 >= 200) { g_shop_cut2 = y2; break; }
+            }
+            break;
+        }
     }
-    /* (the description's window, canvas_layout_for(), in the list's pixels; while the card shows) */
-    int desc_y = g_pop_win[2] ? g_shop_cut + SHOP_GAP + SHOP_PAD + (SHOP_TH - SHOP_DESC_ICON) / 2 : -1;
+    /* (the description's window, canvas_layout_for(), in the list's pixels) */
+    int desc_y = g_shop_cut + SHOP_GAP + SHOP_PAD + (SHOP_TH - SHOP_DESC_ICON) / 2;
     g_shop = mapmarks_shop(ok ? g_engine_out[0] : NULL, g_comp_info, desc_y, &rgba, &changed);
     if (changed) gl_set_icons(g_shop ? rgba : NULL, MAPMARKS_W, MAPMARKS_H);
+    /* the panels' lines (under "Attack", "Number held") stop at their windows'
+     * edges: a pixel of them where the field or a window's grey edge is above
+     * and under it becomes that */
+    uint32_t* px = g_engine_out[0];
+    for (int y = g_shop_cut2 + 1; g_shop && y < 191; y++)
+        for (int x = 0; x < 256; x++) {
+            int i = y * 256 + x, u = i - 256, d = i + 256, mu = g_comp_info[u * 4] & 3;
+            if (mu != (g_comp_info[d * 4] & 3) || (px[u] & 0xFFFFFF) != (px[d] & 0xFFFFFF) || (px[i] & 0xFFFFFF) == (px[u] & 0xFFFFFF)) continue;
+            uint32_t c = px[u];
+            int grey = mu == 0 && abs((int)((c >> 16) & 255) - 130) < 20 && abs((int)((c >> 8) & 255) - 130) < 20 && abs((int)(c & 255) - 130) < 20;
+            if (mu == 1 || grey) { px[i] = px[u]; memcpy(&g_comp_info[i * 4], &g_comp_info[u * 4], 4); }
+        }
 }
 
 /* The map's markers (mapmarks.c) over the top screen, in whichever window
@@ -2037,7 +2109,7 @@ static void present_gl(void) {
     pop_update((pow >> 15) & 1);
     creation_update((pow >> 15) & 1);
     name_typing_step((pow >> 15) & 1);
-    gl_set_top_cut(g_pop_win[2] && !g_quest_page);
+    gl_set_top_cut(g_pop_win[2] && !g_quest_page && !g_card_page);
     gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */
