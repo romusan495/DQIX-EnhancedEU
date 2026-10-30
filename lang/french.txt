@@ -1188,3 +1188,10 @@ fr = Bouton arrière 4
 en = Touchpad click
 fr = Clic du pavé tactile
 
+
+en = HD textures: %d%%
+fr = Textures HD : %d%%
+en = HD textures ready (%d new)
+fr = Textures HD prêtes (%d nouvelles)
+en = HD textures ready
+fr = Textures HD prêtes

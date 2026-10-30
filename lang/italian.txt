@@ -1188,3 +1188,10 @@ it = Tasto posteriore 4
 en = Touchpad click
 it = Clic del touchpad
 
+
+en = HD textures: %d%%
+it = Texture HD: %d%%
+en = HD textures ready (%d new)
+it = Texture HD pronte (%d nuove)
+en = HD textures ready
+it = Texture HD pronte

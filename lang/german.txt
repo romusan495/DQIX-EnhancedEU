@@ -1188,3 +1188,10 @@ de = Rücktaste 4
 en = Touchpad click
 de = Touchpad-Klick
 
+
+en = HD textures: %d%%
+de = HD-Texturen: %d%%
+en = HD textures ready (%d new)
+de = HD-Texturen fertig (%d neue)
+en = HD textures ready
+de = HD-Texturen fertig

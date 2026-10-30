@@ -8,6 +8,7 @@
  * one per user, in drawing order. Each is placed every frame by GlPresent.layer. */
 enum { GL_LAYER_HINT,                                 /* a button's sign over the game's (hints.c) */
        GL_LAYER_STAMP,                                /* a quest sheet's Complete! stamp, drawn again (frontend_sdl.c quest_stamp) */
+       GL_LAYER_HDBAR,                                /* how far textures-hd is, and its "done" message (frontend_sdl.c hdbar_update) */
        GL_LAYERS };
 
 int gl_render_init(int scale);                        /* 0 on failure (use the software path) */
@@ -23,6 +24,7 @@ void gl_set_ink_lines(int on);                        /* Enhanced: thin dark lin
 void gl_set_smooth2d(int on);                         /* Enhanced: the 2D screens smoothed (xBR) */
 void gl_set_tex_upscale(int on);                      /* Enhanced: the 3D textures upscaled (xBR, 4x) */
 int gl_reload_texture_pack(void);                     /* look in textures/ again; how many were found */
+void gl_textures_hd_start(void);                      /* Windows: textures-hd.exe at work in the background (it goes on with one cut short) */
 const Renderer3D* gl_renderer3d(void);
 void gl_compose(int a_on_top, int lcd_on);           /* at VBlank: 2D + 3D -> both screens */
 /* How to show the screens: canvas (DS pixels) placed in the window at

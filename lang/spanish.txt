@@ -1188,3 +1188,10 @@ es = Botón trasero 4
 en = Touchpad click
 es = Clic del panel táctil
 
+
+en = HD textures: %d%%
+es = Texturas HD: %d%%
+en = HD textures ready (%d new)
+es = Texturas HD listas (%d nuevas)
+en = HD textures ready
+es = Texturas HD listas
