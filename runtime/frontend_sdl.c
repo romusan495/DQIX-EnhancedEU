@@ -476,6 +476,23 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                 q[0] = x + (SHOP_DESC_X + SHOP_DESC_ICON + 8) * k; q[1] = (L + gap + SHOP_PAD) * k; q[2] = SHOP_TW * k; q[3] = SHOP_TH * k;
             }
             v->icons[0] = x; v->icons[1] = 0; v->icons[2] = 256 * k; v->icons[3] = 192 * k;
+        } else if (page == 1 && which < 0 && g_pop_win[2] && !g_quest_page && !g_card_page && !second) {
+            /* a page on the top screen over a menu without the field (allocating
+             * skill points: the skill's table over the list of skills, after a
+             * battle or from the menu): popped up in the middle it would hide
+             * the menu, and there is nothing else to keep in view, so both side
+             * by side at the same size, as large as the window allows: the menu
+             * at the left, the page's windows (without its backdrop) at its
+             * right, as high up as on the DS */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            float w = (float)g_pop_win[2], h = (float)g_pop_win[3], gap = 4;
+            float k = fminf(1.0f, (v->cw - 3 * gap) / (256.0f + w));
+            float x = (v->cw - (256.0f + w) * k - gap) / 2;
+            big[2] = 256 * k; big[3] = 192 * k; big[0] = x; big[1] = (192 - big[3]) / 2;
+            bigx[1] = 256;
+            float* q = v->piece[v->npiece++];
+            q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
+            q[0] = x + big[2] + gap; q[1] = big[1] + (float)g_pop_win[1] * k; q[2] = w * k; q[3] = h * k;
         } else if (page == 1) {
             /* a page on the top screen (an item's card in Items, Equipment or a
              * shop, a title): its windows alone, without the page's backdrop,
