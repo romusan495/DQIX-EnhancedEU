@@ -109,6 +109,7 @@ static int g_pop_win[4];                                          /* widescreen:
 static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
 static int g_quest_page;                                          /* ...it is a quest's sheet (quest_page()): redrawn as one modern window */
 static int g_card_page;                                           /* ...or an item's card (card_page()): the same */
+static int g_pop_nook;                                            /* ...over a menu without the field: the parchment is bare right of the stats panel (skill points: NOOK_*) */
 static int g_stamp[4];                                            /* ...its Complete! stamp (quest_stamp()): x, y, w, h on the page (w 0: none) */
 static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
 static int g_shop_cut = 118, g_shop_cut2 = 118;                   /* ...the list's rows end at the first, the panels under it start at the second */
@@ -358,6 +359,10 @@ static void card_pieces(GlPresent* v) {
     }
 }
 
+/* The bare parchment at the right of the stats panel, under the list, while
+ * allocating skill points (the menu's pixels): the skill's table goes there */
+enum { NOOK_X = 129, NOOK_Y = 105, NOOK_W = 122, NOOK_H = 85 };
+
 /* second: the layout of the second window (two windows) */
 static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
     memset(v, 0, sizeof *v);
@@ -476,6 +481,22 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                 q[0] = x + (SHOP_DESC_X + SHOP_DESC_ICON + 8) * k; q[1] = (L + gap + SHOP_PAD) * k; q[2] = SHOP_TW * k; q[3] = SHOP_TH * k;
             }
             v->icons[0] = x; v->icons[1] = 0; v->icons[2] = 256 * k; v->icons[3] = 192 * k;
+        } else if (page == 1 && which < 0 && g_pop_win[2] && !g_quest_page && !g_card_page && !second) {
+            /* a page on the top screen over a menu without the field (allocating
+             * skill points: the skill's table over the list of skills, after a
+             * battle or from the menu): popped up in the middle it would hide
+             * the menu; the menu stays whole, and the page's windows (without
+             * their backdrop) sit small on the bare parchment beside the
+             * character's stats panel */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            float w = (float)g_pop_win[2], h = (float)g_pop_win[3], kb = big[2] / 256.0f;   /* (the menu's pixels -> canvas) */
+            float k = fminf(NOOK_W / w, NOOK_H / h);
+            if (g_pop_nook && v->npiece < GL_MAX_PIECES) {           /* (not while the question lies over the parchment) */
+                float* q = v->piece[v->npiece++];
+                q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
+                q[2] = w * k * kb; q[3] = h * k * kb;
+                q[0] = big[0] + NOOK_X * kb; q[1] = big[1] + (NOOK_Y + NOOK_H) * kb - q[3];   /* against the stats panel, its bottom in line */
+            }
         } else if (page == 1) {
             /* a page on the top screen (an item's card in Items, Equipment or a
              * shop, a title): its windows alone, without the page's backdrop,
@@ -1956,7 +1977,7 @@ static int text_key(SDL_Scancode k) {                             /* a key that 
  * around them, and what touches the edge (the sky, the torn border), go. */
 static void pop_update(int a_on_top) {
     if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
-    g_pop_win[2] = 0; g_quest_page = g_card_page = 0;
+    g_pop_win[2] = 0; g_quest_page = g_card_page = g_pop_nook = 0;
     static float sheet_far;                                       /* a quest's sheet: how far the 3D was since it is up (at most) */
     static int gone = 1 << 20;                                    /* ...frames since it was last seen */
     if (top_page_mode() != 1 || !mapmarks_top_page()) { sheet_far = 0; gone = 1 << 20; return; }   /* (a shop's list up before its card) */
@@ -2035,6 +2056,18 @@ static void pop_update(int a_on_top) {
     for (int i = 0; i < N; i++) px[i] = (px[i] & 0xFFFFFF) | (bg[i] ? 1u << 24 : 0);
     g_pop_win[0] = x0; g_pop_win[1] = y0; g_pop_win[2] = x1 - x0 + 1; g_pop_win[3] = y1 - y0 + 1;
     if (!g_shop) pop_place();
+    {   /* allocating skill points: the parchment bare at the right of the
+         * character's stats panel (not while the question "Finish...?" lies over it) */
+        const uint32_t* b = g_engine_out[a_on_top ? 1 : 0];
+        int warm = 0, n = 0;
+        for (int y = NOOK_Y + 3; y < NOOK_Y + NOOK_H - 2; y += 6)
+            for (int x = NOOK_X + 3; x < NOOK_X + NOOK_W - 2; x += 6) {
+                uint32_t c = b[y * 256 + x];
+                int r = (c >> 16) & 255, bl = c & 255;
+                warm += r > 120 && r > bl + 60; n++;
+            }
+        g_pop_nook = warm * 10 >= n * 9;
+    }
 }
 
 /* A shop's buy list on the field's screen (mapmarks_shop()): its signs
