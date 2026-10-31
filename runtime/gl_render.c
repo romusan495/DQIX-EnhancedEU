@@ -291,22 +291,54 @@ static const char* FS_COMP =
      * so staircases become slopes and round shapes become round. */
     "vec3 px2(ivec2 p) { return texelFetch(u_col, clamp(p, ivec2(0), ivec2(255, 191)), 0).rgb; }\n"
     "float dd(vec3 a, vec3 b) { vec3 d = a - b; return 48.0 * abs(dot(d, vec3(0.299, 0.587, 0.114))) + 7.0 * abs(dot(d, vec3(-0.169, -0.331, 0.5))) + 6.0 * abs(dot(d, vec3(0.5, -0.419, -0.081))); }\n"
-    "vec3 smooth2d(ivec2 p, vec2 f) {\n"
-    "  ivec2 s = ivec2(f.x < 0.0 ? -1 : 1, f.y < 0.0 ? -1 : 1); vec2 a = abs(f);\n"
+    "float s2d_w(ivec2 p, vec2 f, out ivec2 pn) {\n"          /* how much of this point is the neighbour pn's (0: all E's) */
+    "  ivec2 s = ivec2(f.x < 0.0 ? -1 : 1, f.y < 0.0 ? -1 : 1); vec2 a = abs(f); pn = p;\n"
     "  vec3 E = px2(p), F = px2(p + ivec2(1, 0) * s), H = px2(p + ivec2(0, 1) * s), I = px2(p + s);\n"
     "  vec3 B = px2(p - ivec2(0, 1) * s), D = px2(p - ivec2(1, 0) * s), C = px2(p + ivec2(1, -1) * s), G = px2(p + ivec2(-1, 1) * s);\n"
     "  vec3 F4 = px2(p + ivec2(2, 0) * s), H5 = px2(p + ivec2(0, 2) * s), I4 = px2(p + ivec2(2, 1) * s), I5 = px2(p + ivec2(1, 2) * s);\n"
     "  float wd1 = dd(E, C) + dd(E, G) + dd(I, F4) + dd(I, H5) + 4.0 * dd(H, F);\n"
     "  float wd2 = dd(H, D) + dd(H, I5) + dd(F, I4) + dd(F, B) + 4.0 * dd(E, I);\n"
     "  float eF = dd(E, F), eH = dd(E, H);\n"
-    "  if (!(wd1 < wd2 && eF > 0.01 && eH > 0.01)) return E;\n"
-    "  ivec2 pn = eF <= eH ? p + ivec2(1, 0) * s : p + ivec2(0, 1) * s;\n"
-    /* (not toward a pixel where the 3D shows: its 2D colour there is the
-     * backdrop - the magenta round the quill of the save box) */
-    "  if (u_has3d != 0 && (texelFetch(u_info, clamp(pn, ivec2(0), ivec2(255, 191)), 0).r & 3u) != 0u) return E;\n"
-    "  vec3 N = eF <= eH ? F : H;\n"
+    "  if (!(wd1 < wd2 && eF > 0.01 && eH > 0.01)) return 0.0;\n"
+    "  pn = clamp(eF <= eH ? p + ivec2(1, 0) * s : p + ivec2(0, 1) * s, ivec2(0), ivec2(255, 191));\n"
     "  float k = max(u_s2d, 0.05);\n"
-    "  return mix(E, N, smoothstep(0.5 - k, 0.5 + k, a.x + a.y));\n"
+    "  return smoothstep(0.5 - k, 0.5 + k, a.x + a.y);\n"
+    "}\n"
+    /* (toward a pixel where the 3D shows, main() takes the 3D, not its 2D
+     * colour there: that is the backdrop - the magenta round the quill of the save box) */
+    "int s2d_mode(ivec2 q) { return u_has3d != 0 ? int(texelFetch(u_info, q, 0).r & 3u) : 0; }\n"
+    "vec3 smooth2d(ivec2 p, vec2 f) {\n"
+    "  ivec2 pn; float w = s2d_w(p, f, pn); vec3 E = px2(p);\n"
+    "  if (w <= 0.0 || s2d_mode(pn) != 0) return E;\n"
+    "  return mix(E, px2(pn), w);\n"
+    "}\n"
+    /* DS pixel q's 2D over or under the 3D (s, this point's), at q2 (DS pixels) */
+    "vec3 comp(ivec2 q, vec4 s, vec2 q2) {\n"
+    "  uvec4 info = texelFetch(u_info, q, 0); int mode = int(info.r & 3u);\n"
+    "  vec3 col = texelFetch(u_col, q, 0).rgb;\n"
+    "  vec4 c2t = texelFetch(u_c2, q, 0);\n"
+    "  vec3 c2 = c2t.rgb; int mb = int(c2t.a * 255.0 + 0.5);\n"
+    "  float A = s.a; vec3 c3 = s.rgb;\n"
+    "  float eva = float(info.g) / 16.0, evb = float(info.b) / 16.0, evy = float(info.a) / 16.0;\n"
+    "  vec3 o;\n"
+    "  if (mode == 1) {\n"
+    "    bool sec = (info.r & 4u) != 0u; int eff = int((info.r >> 3) & 3u);\n"
+    /* The 3D layer over a 2nd blend target: the DS blends by the 3D pixel's own
+     * alpha, never by EVA/EVB (solid models stay solid: the equipment screen
+     * asks for 10/16 over its background), whatever the effect is set to */
+    "    if (A <= 0.0) o = col;\n"
+    "    else if (sec) o = A < 0.999 ? c3 * A + c2 * (1.0 - A) : c3;\n"
+    "    else if (eff == 2) o = c3 + (1.0 - c3) * evy;\n"
+    "    else if (eff == 3) o = c3 - c3 * evy;\n"
+    "    else o = c3;\n"
+    "  } else {\n"
+    "    vec3 under = A > 0.0 ? c3 : c2;\n"
+    "    o = min(col * eva + under * evb, vec3(1.0));\n"
+    "  }\n"
+    "  o = dlgline(o, q2);\n"
+    "  int mbm = mb >> 5; float mbf = float(mb & 31) / 16.0;\n"
+    "  if (mbm == 1) o = o + (1.0 - o) * mbf; else if (mbm == 2) o = o - o * mbf;\n"
+    "  return o;\n"
     "}\n"
     "void main() {\n"
     "  vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);\n"                  /* row 0 = top line */
@@ -342,42 +374,27 @@ static const char* FS_COMP =
     "  }\n"
     "  uvec4 info = texelFetch(u_info, p2, 0);\n"
     "  int mode = int(info.r & 3u);\n"
+    /* Smooth 2D where a sprite meets the 3D (an item's picture over the
+     * field): the slope's other side is the 3D (or the sprite, seen from the
+     * 3D's side), not left in steps */
+    "  ivec2 pe = p2; float we = 0.0;\n"
+    "  if (u_s2d > 0.0 && !side && mode < 2) { ivec2 pn; float w = s2d_w(p2, fr, pn); int mn = s2d_mode(pn);\n"
+    "    if (w > 0.0 && (mode == 0 ? mn == 1 : mn == 0)) { pe = pn; we = w; } }\n"
     "  if (u_s2d > 0.0 && !side && mode == 0) col = smooth2d(p2, fr);\n"
     /* (premultiplied: a window blended over the 3D keeps its part, EVA, and lets EVB of what is under through) */
     "  if (u_only == 1 && mode != 0) { float a = mode == 2 ? clamp(1.0 - float(info.b) / 16.0, 0.0, 1.0) : 0.0;\n"
+    "    if (we > 0.0) { o_color = vec4(px2(pe) * we, we); return; }\n"
     "    o_color = vec4(mode == 2 ? min(col * float(info.g) / 16.0, vec3(1.0)) : vec3(0.0), a); return; }\n"
     "  if (u_only == 1 || (u_only == 2 && mode != 1)) {\n"
-    "    if (u_only == 1) { o_color = vec4(col, 1.0); return; }\n"
+    "    if (u_only == 1) { o_color = vec4(col * (1.0 - we), 1.0 - we); return; }\n"
     "    ivec2 sz0 = textureSize(u_3d, 0); vec4 s0 = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz0)), sz0 - 1), 0);\n"
     "    o_color = vec4(dlgline(s0.a > 0.0 ? s0.rgb : vec3(0.0), vec2(dsx, uv.y * 192.0)), 1.0); return;\n"
     "  }\n"
-
-    "  if (mode == 0) { o_color = vec4(col, 1.0); return; }\n"
-    "  vec4 c2t = texelFetch(u_c2, p2, 0);\n"
-    "  vec3 c2 = c2t.rgb; int mb = int(c2t.a * 255.0 + 0.5);\n"
     "  ivec2 sz = textureSize(u_3d, 0);\n"
     "  vec4 s = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz)), sz - 1), 0);\n"
-    "  float A = s.a; vec3 c3 = s.rgb;\n"
-    "  float eva = float(info.g) / 16.0, evb = float(info.b) / 16.0, evy = float(info.a) / 16.0;\n"
-    "  vec3 o;\n"
-    "  if (mode == 1) {\n"
-    "    bool sec = (info.r & 4u) != 0u; int eff = int((info.r >> 3) & 3u);\n"
-    /* The 3D layer over a 2nd blend target: the DS blends by the 3D pixel's own
-     * alpha, never by EVA/EVB (solid models stay solid: the equipment screen
-     * asks for 10/16 over its background), whatever the effect is set to */
-    "    if (A <= 0.0) o = col;\n"
-    "    else if (sec) o = A < 0.999 ? c3 * A + c2 * (1.0 - A) : c3;\n"
-    "    else if (eff == 2) o = c3 + (1.0 - c3) * evy;\n"
-    "    else if (eff == 3) o = c3 - c3 * evy;\n"
-    "    else o = c3;\n"
-    "  } else {\n"
-    "    vec3 under = A > 0.0 ? c3 : c2;\n"
-    "    o = min(col * eva + under * evb, vec3(1.0));\n"
-    "  }\n"
-    "  o = dlgline(o, vec2(dsx, uv.y * 192.0));\n"
-    "  int mbm = mb >> 5; float mbf = float(mb & 31) / 16.0;\n"
-    "  if (mbm == 1) o = o + (1.0 - o) * mbf; else if (mbm == 2) o = o - o * mbf;\n"
-    "  o_color = vec4(o, 1.0);\n"
+    "  if (mode == 0) { o_color = vec4(we > 0.0 ? mix(col, comp(pe, s, vec2(dsx, uv.y * 192.0)), we) : col, 1.0); return; }\n"
+    "  vec3 o = comp(p2, s, vec2(dsx, uv.y * 192.0));\n"
+    "  o_color = vec4(we > 0.0 ? mix(o, px2(pe), we) : o, 1.0);\n"
     "}\n";
 
 /* HD text (hdtext.h): each letter a quad in DS pixels of one screen, its
@@ -1850,8 +1867,8 @@ static void draw_text(int eng, int top, float W, float wside) {
         }
     }
     { static int lg = -1; if (lg < 0) lg = getenv("DQIX_HDTEXT_LOG") != NULL;
-      if (lg) { int col = 0; for (int i = 0; i < n; i++) col += gl[i].has_color; fprintf(stderr, "hdtext f%llu eng %d: %d letters, %d with colour, %d vertices; first at %d,%d w %d glyph %d colour %06x\n",
-                (unsigned long long)g_frame, eng, n, col, nv, gl[0].x, gl[0].y, gl[0].w, gl[0].glyph, gl[0].color); } }
+      if (lg) { int col = 0; for (int i = 0; i < n; i++) col += gl[i].has_color; fprintf(stderr, "hdtext f%llu eng %d: %d letters, %d with colour, %d vertices; first at %d,%d w %d glyph %d font %d colour %06x\n",
+                (unsigned long long)g_frame, eng, n, col, nv, gl[0].x, gl[0].y, gl[0].w, gl[0].glyph, gl[0].font, gl[0].color); } }
     if (!nv) return;
     if (g_atlas_dirty) { p_glBindTexture(GL_TEXTURE_2D, atlas_tex); p_glGenerateMipmap(GL_TEXTURE_2D);
         p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); g_atlas_dirty = 0; }
