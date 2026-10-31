@@ -2004,6 +2004,16 @@ static void hint_update(GlPresent* v) {
     static char shown[96];
     int side = 0, pad = g_hint_pad < 0 ? g_pad != NULL : g_hint_pad && g_pad;
     if (!g_hints || !g_sign_move || g_frame - g_sign_frame >= 4 || gl_wide_shown(&side) != 1 || v->bot[2] <= 0 || v->botx[1] <= 0) return;
+    {   /* not when the game's menus are over the sign (the sign is 3D, under them; the button would show
+         * alone over a window: the bag's "Sort", an item's card) */
+        int n = 0, covered = 0;
+        for (int y = g_sign_rect[1]; y < g_sign_rect[3]; y++)
+            for (int x = g_sign_rect[0] - g_sign_dx; x < g_sign_rect[2] - g_sign_dx; x++) {
+                if (x < 0 || x > 255 || y < 0 || y > 191) continue;
+                n++; covered += (g_comp_info[(y * 256 + x) * 4] & 3) != 1;
+            }
+        if (n == 0 || covered * 4 > n) return;
+    }
     int style = HINT_KEYBOARD, face = HINT_OTHER, b = pad ? g_ctl_pad[CA_X] : CTL_NONE;
     char lab[64] = "", key[96];
     if (b != CTL_NONE) {
