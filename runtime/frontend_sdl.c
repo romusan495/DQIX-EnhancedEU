@@ -339,9 +339,9 @@ static void card_pieces(GlPresent* v) {
     float k = g_pop_at[2], X = g_pop_at[0] - CS_X * k, Y = g_pop_at[1] - CS_Y * k;   /* (page pixels -> canvas) */
     static const float part[][5] = {                              /* x, y, w, h on the page; restyled (FS_COPY's u_mode) */
         { CS_X, CS_Y, CS_W, CS_H, 7 },                            /* the window (solid: it may lie over the field's menus) */
-        { 16, 27, 228, 1, 4 }, { 16, 101, 162, 1, 4 }, { 181, 30, 1, 146, 4 },   /* the lines: under the name, over the stats, before the jobs */
+        { 16, 27, 228, 1, 4 }, { 16, 101, 165, 1, 4 }, { 181, 30, 1, 146, 4 },   /* the lines: under the name, over the stats (up to the jobs' line), before the jobs */
         { 16, 8, 17, 17, 0 },                                     /* the kind's sign */
-        { 37, 10, 102, 12, 3 },                                   /* the name (light on its bar, inside its edge) */
+        { 37, 11, 102, 11, 3 },                                   /* the name (light on its bar, inside its edge: not its light top row) */
         { 175, 9, 25, 15, 9 }, { 200, 9, 48, 15, 8 },             /* the rarity: its word, its stars (off their brown plates) */
         { 24, 48, 32, 32, 0 },                                    /* the icon, big */
         { 60, 30, 114, 66, 6 },                                   /* the description */
