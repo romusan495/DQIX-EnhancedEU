@@ -49,6 +49,7 @@ extern int g_wide_cull;
  * g_sign_rect: where it is now (DS pixels of the 3D screen, x0 y0 x1 y1). */
 #define GX_SIGN_DY 144
 extern int g_sign_move;
+extern int g_sign_crop;                            /* > 0: the sign's left part cut off (1/16 DS pixels): its button */
 extern uint64_t g_sign_frame;
 extern int g_sign_rect[4], g_sign_dx;               /* ...and how far right it went */
 

@@ -1204,3 +1204,41 @@ en = HD textures ready (%d new)
 es = Texturas HD listas (%d nuevas)
 en = HD textures ready
 es = Texturas HD listas
+
+# ---- hints.c (the name on a keyboard key, under the X Menu sign: short)
+
+en = Del
+es = Supr
+
+en = Ins
+es = Insert
+
+en = End
+es = Fin
+
+en = PgUp
+es = Re pág
+
+en = PgDn
+es = Av pág
+
+en = Ctrl
+es = Ctrl
+
+en = Alt
+es = Alt
+
+en = AltGr
+es = AltGr
+
+en = PrtSc
+es = Impr pant
+
+en = ScrLk
+es = Bloq despl
+
+en = NumLk
+es = Bloq num
+
+en = num
+es = num

@@ -75,6 +75,17 @@ void controls_key_name(int key, char* out, size_t n) {
              nm && nm[0] ? nm : "?");
 }
 
+/* What a key shows on its button hint: the character it types on this keyboard's
+ * layout ("A" for the key in QWERTY's Q place on AZERTY), else its scancode name. */
+void controls_key_label(int key, char* out, size_t n) {
+    if (!key) { snprintf(out, n, "-"); return; }
+    SDL_Keycode kc = SDL_GetKeyFromScancode((SDL_Scancode)(key & 0xFFFF));
+    const char* nm = kc > 0x20 && kc != 0x7F && !(kc & SDLK_SCANCODE_MASK) ? SDL_GetKeyName(kc) : NULL;
+    if (!nm || !nm[0]) nm = SDL_GetScancodeName((SDL_Scancode)(key & 0xFFFF));
+    snprintf(out, n, "%s%s%s%s", key & CTL_MOD_CTRL ? "Ctrl+" : "", key & CTL_MOD_ALT ? "Alt+" : "", key & CTL_MOD_SHIFT ? "Shift+" : "",
+             nm && nm[0] ? nm : "?");
+}
+
 /* names: generic, then as printed on PlayStation, Xbox and Nintendo controllers
  * (the buttons are by position, so on a Nintendo one the right button is A) */
 static const struct { int pad; const char* ini; const char* name; const char* ps; const char* xb; const char* nin; } PADS[] = {

@@ -46,6 +46,7 @@ uint16_t controls_ds_keys(const Uint8* ks);             /* the DS's buttons held
 uint16_t controls_ds_pad(SDL_GameController* p);        /* ... on the controller */
 
 void controls_key_name(int key, char* out, size_t n);   /* "Ctrl+R", "Left Shift", "-" */
+void controls_key_label(int key, char* out, size_t n);  /* the same, with the character the key types on this layout ("A" on AZERTY) */
 void controls_pad_name(int pad, char* out, size_t n);   /* "Right face button", "Left trigger" ("Circle", "L2" on a PlayStation controller) */
 /* The connected controller, for the names above: call when one is opened or closed. */
 enum { CTL_STYLE_GENERIC, CTL_STYLE_PLAYSTATION, CTL_STYLE_XBOX, CTL_STYLE_NINTENDO };
