@@ -138,22 +138,52 @@ static int win_idx(Engine* e, uint32_t charbase, uint32_t mapbase, uint32_t w, u
     const uint8_t* row = vram_ptr(charbase + (ent & 0x3FF) * 32 + py * 4);
     return row ? (row[px >> 1] >> ((px & 1) * 4)) & 15 : -1;
 }
-typedef struct { Engine* e; uint32_t charbase, mapbase, w, h; } WinLayer;
+typedef struct { Engine* e; uint32_t charbase, mapbase, w, h; int eng, bg; uint16_t* c; } WinLayer;
+/* The modern frame looks at many pixels around each one (win_line,
+ * win_sep), asked again and again for the same pixels by every line of a
+ * window's panel near its frame: each pixel's colour index and answers kept
+ * for the frame, per layer (a dialogue with a name plate otherwise took 20+
+ * ms of 2D per frame). Per pixel: bits 0-4 its index + 2 (0: not known yet,
+ * 1: not the windows' palette), 5 win_line known, 6 its answer, 7 win_sep
+ * known, 8 its answer. */
+static uint16_t g_wc[2][4][512 * 512];
+typedef struct { uint32_t charbase, mapbase, w, h; uint32_t gen; } WinCacheKey;
+static WinCacheKey g_wc_key[2][4];
+static uint32_t g_wc_gen = 1;                                       /* gpu_frame_start: a new frame */
+static void win_layer_ready(WinLayer* L) {
+    WinCacheKey* k = &g_wc_key[L->eng][L->bg];
+    if (k->gen != g_wc_gen || k->charbase != L->charbase || k->mapbase != L->mapbase || k->w != L->w || k->h != L->h) {
+        if (k->gen) memset(g_wc[L->eng][L->bg], 0, sizeof(uint16_t) * k->w * k->h);
+        k->gen = g_wc_gen; k->charbase = L->charbase; k->mapbase = L->mapbase; k->w = L->w; k->h = L->h;
+    }
+    L->c = g_wc[L->eng][L->bg];
+}
+static inline uint16_t* win_px(const WinLayer* L, int bx, int by) {   /* (the layer wraps: the same pixel) */
+    return &L->c[((uint32_t)by & (L->h - 1)) * L->w + ((uint32_t)bx & (L->w - 1))];
+}
+static inline int win_idx_l(const WinLayer* L, int bx, int by) {
+    uint16_t* c = win_px(L, bx, by);
+    if (!(*c & 31)) *c |= (uint16_t)(win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx, by) + 2);
+    return (*c & 31) - 2;
+}
 /* a window's separator (the line under its title): colour 15 (white) across the
  * window, 12 pixels or more in a row (not a letter's) */
 static int win_sep(const WinLayer* L, int bx, int by) {
+    uint16_t* c = win_px(L, bx, by);
+    if (*c & 0x80) return (*c >> 8) & 1;
     int n = 1;
-    for (int d = 1; d < 12 && win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx - d, by) == 15; d++) n++;
-    for (int d = 1; d < 12 && win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx + d, by) == 15; d++) n++;
+    for (int d = 1; d < 12 && win_idx_l(L, bx - d, by) == 15; d++) n++;
+    for (int d = 1; d < 12 && win_idx_l(L, bx + d, by) == 15; d++) n++;
+    *c |= (uint16_t)(0x80 | (n >= 12) << 8);
     return n >= 12;
 }
-static int win_e(const WinLayer* L, int bx, int by) { return win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx, by) == 10; }
+static inline int win_e(const WinLayer* L, int bx, int by) { return win_idx_l(L, bx, by) == 10; }
 static int win_run(const WinLayer* L, int bx, int by, int dx, int dy) {   /* the line's pixels from (bx, by) on (up to 4) */
     int n = 0;
     while (n < 4 && win_e(L, bx + dx * n, by + dy * n)) n++;
     return n;
 }
-static int win_line(const WinLayer* L, int bx, int by) {
+static int win_line_(const WinLayer* L, int bx, int by) {
     if (win_e(L, bx, by) && (win_run(L, bx, by, -1, 0) + win_run(L, bx, by, 1, 0) > 4 || win_run(L, bx, by, 0, -1) + win_run(L, bx, by, 0, 1) > 4)) return 1;
     for (int axis = 0; axis < 2; axis++) {                          /* 0: on a row, toward a straight part along it */
         int ax = axis == 0, ay = axis == 1;
@@ -171,6 +201,11 @@ static int win_line(const WinLayer* L, int bx, int by) {
             }
     }
     return 0;
+}
+static int win_line(const WinLayer* L, int bx, int by) {
+    uint16_t* c = win_px(L, bx, by);
+    if (!(*c & 0x20)) *c |= (uint16_t)(0x20 | win_line_(L, bx, by) << 6);
+    return (*c >> 6) & 1;
 }
 static int panel_tile(Engine* e, uint32_t charbase, uint16_t ent) {
     if (!win_palette_bg(e, (ent >> 12) * 16u)) return 0;
@@ -207,11 +242,12 @@ static int ramp_palette(Engine* e, uint32_t palbase) {
 static void text_layer(Engine* e, int eng, int bg, int y, WinLayer* L, int* bx, int* by) {
     uint32_t disp = R32(e, 0);
     uint16_t cnt = R16(e, 0x08 + bg * 2);
-    L->e = e;
+    L->e = e; L->eng = eng; L->bg = bg;
     L->charbase = e->bgvram + ((cnt >> 2) & 15) * 0x4000 + (eng == 0 ? ((disp >> 24) & 7) * 0x10000 : 0);
     L->mapbase  = e->bgvram + ((cnt >> 8) & 31) * 0x800  + (eng == 0 ? ((disp >> 27) & 7) * 0x10000 : 0);
     L->w = (cnt >> 14) & 1 ? 512 : 256; L->h = (cnt >> 14) & 2 ? 512 : 256;
     *bx = R16(e, 0x10 + bg * 4) & 0x1FF; *by = (int)((y + (R16(e, 0x12 + bg * 4) & 0x1FF)) & (L->h - 1));
+    win_layer_ready(L);
 }
 
 static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
@@ -277,13 +313,13 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 if (modern && (winpal & b) && k == WIN_SHADE && !win_palette(e, palbase)) {
                     /* a greyed window: its cursor (the command chosen) is drawn in the
                      * frame's greys; a grey pixel 3 or more away from the frame's line kept */
-                    WinLayer wl = { e, charbase, mapbase, w, h };
+                    WinLayer wl = { e, charbase, mapbase, w, h, eng, bg, NULL }; win_layer_ready(&wl);
                     int bx0 = (int)((x + hofs) & (w - 1)), near = 0;
                     for (int d = -2; d <= 2 && !near; d++) near = win_e(&wl, bx0 + d, (int)yy) || win_e(&wl, bx0, (int)yy + d);
                     if (!near) k = 0;
                 }
                 if (modern && (winpal & b) && idx == 15) {
-                    WinLayer wl = { e, charbase, mapbase, w, h };
+                    WinLayer wl = { e, charbase, mapbase, w, h, eng, bg, NULL }; win_layer_ready(&wl);
                     int bx0 = (int)((x + hofs) & (w - 1));
                     if (idx == 15 && win_sep(&wl, bx0, (int)yy)) {      /* the separator: the frame's grey, like its line */
                         out->win[x] = WIN_LINE; out->wins |= WIN_LINE; out->tint[x] = 0;
@@ -292,7 +328,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                     }
                 }
                 if (modern && (winpal & b) && k) {
-                    WinLayer wl = { e, charbase, mapbase, w, h };
+                    WinLayer wl = { e, charbase, mapbase, w, h, eng, bg, NULL }; win_layer_ready(&wl);
                     int line = (k == WIN_EDGE || k == WIN_SHADE) && win_line(&wl, (int)((x + hofs) & (w - 1)), (int)yy);
                     if (line || (ptile && k != WIN_PANEL) || (ptile && idx == 1)) {
                         k = line ? WIN_LINE : WIN_PANEL;
@@ -944,7 +980,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             for (int x = 0; x < 256; x++) {
                 if (kind[x] != WIN_PANEL || lay[x] < 0) continue;
                 int p = lay[x], px = (x + bx[p]) & (int)(wl[p].w - 1), out = 0;
-                int filled = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px, by[p]) == 0;
+                int filled = win_idx_l(&wl[p], px, by[p]) == 0;
                 for (int f = 0; f < 4 && !out; f++) {
                     if (f == p || !(winl & (1 << f))) continue;
                     /* (nothing of the frame here: only the column right beside the line -
@@ -955,9 +991,9 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                         for (int k = 1; k <= (filled ? 6 : bare ? 1 : 3); k++)
                             if (((!bare || d >= 2) && win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k))
                                 || (d < 2 && k == 1 && (win_line(&wl[f], fx - 1, by[f] + dir[d][1]) || win_line(&wl[f], fx + 1, by[f] + dir[d][1])))   /* (across, the line's corner beside it: the row a window's panel shows beyond its top line, by another window) */
-                                || (dir[d][1] == 0 && k == 1 && win_idx(e, wl[f].charbase, wl[f].mapbase, wl[f].w, wl[f].h, fx + dir[d][0], by[f]) == 15
+                                || (dir[d][1] == 0 && k == 1 && win_idx_l(&wl[f], fx + dir[d][0], by[f]) == 15
                                     && win_sep(&wl[f], fx + dir[d][0], by[f]))) {   /* (or the separator's end, where it crosses the line: the panel's row beyond it) */
-                                out = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
+                                out = win_idx_l(&wl[p], px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
                                 break;
                             }
                 }
@@ -978,7 +1014,7 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                                 int px = (x + bx[p]) & (int)(wl[p].w - 1);
                                 for (int j = 1; j <= 2; j++) {
                                     int py = (by[p] - d * j) & (int)(wl[p].h - 1);
-                                    if (win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px, py) != 1) continue;
+                                    if (win_idx_l(&wl[p], px, py) != 1) continue;
                                     uint16_t ent = map_ent(wl[p].mapbase, wl[p].w, wl[p].h, px >> 3, py >> 3);
                                     bgl[p].col[x] = palc(e, (ent >> 12) * 16u, 1) | PX_OPAQUE; bgl[p].win[x] = WIN_PANEL; bgl[p].wins |= WIN_PANEL;
                                     kind[x] = WIN_PANEL; lay[x] = (int8_t)p; winl |= 1 << p;   /* (drawn as a window's panel) */
@@ -1248,6 +1284,7 @@ static void latch_affine(int eng, int bg) {
 void gpu_affine_written(int eng, int bg) { latch_affine(eng, bg); }
 
 void gpu_frame_start(void) {
+    g_wc_gen++;
     if (g_hdtext_on) hdtext_frame_start();
     g_hdsprite_n[0] = g_hdsprite_n[1] = 0;
     for (int eng = 0; eng < 2; eng++) {
