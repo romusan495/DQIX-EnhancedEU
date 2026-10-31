@@ -230,6 +230,9 @@ es = Escalado &entero
 en = &Fullscreen\tF11
 es = &Pantalla completa\tF11
 
+en = Normal &brightness in fullscreen with HDR
+es = &Brillo normal en pantalla completa con HDR
+
 en = &Readability of the options menu (Esc)
 es = &Legibilidad del menú de opciones (Esc)
 

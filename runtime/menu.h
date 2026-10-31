@@ -10,6 +10,7 @@ enum {
     MI_LCD = 120, MI_LCDCOL, MI_GRID, MI_GHOST, MI_BL1, MI_BL2, MI_BL3, MI_BL4,
     MI_SHELL = 130, MI_GAP, MI_ACTUAL, MI_SHELLC0,                      /* MI_SHELLC0 + colour index */
     MI_STACKED = 150, MI_SIDE, MI_SIZE1, MI_SIZE2, MI_SIZE3, MI_SIZE4, MI_INTEGER, MI_FULL,
+    MI_HDR_FIX = 158,                                                   /* View > Fullscreen: normal brightness with Windows HDR on */
     MI_CONTROLS = 170, MI_ABOUT, MI_UPDATE, MI_UPDATE_AUTO,
     MI_NET = 180, MI_SRV_ALTWFC, MI_SRV_WIIMMFI, MI_SRV_CUSTOM, MI_NET_HELP, MI_SRV_BUILTIN,
     MI_SES_HOST = 190, MI_SES_JOIN, MI_SES_START, MI_SES_LEAVE, MI_SES_NAME, MI_SES_HELP,
@@ -72,6 +73,10 @@ int menu_enabled(int id);
 /* Size of one pixel of the monitor the window is on, in millimetres, from
  * the monitor's own description of itself (EDID). 0 if unknown. */
 float display_mm_per_pixel(SDL_Window* win);
+
+/* 1 if Windows shows the monitor the window is on in HDR (Settings > Display >
+ * Use HDR), else 0 (other systems: always 0). */
+int display_hdr_on(SDL_Window* win);
 
 /* A box where the player types a description (bug reports). Returns the text
  * (UTF-8, caller frees) or NULL if the box was closed without saving or isn't

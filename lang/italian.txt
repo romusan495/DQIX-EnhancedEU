@@ -230,6 +230,9 @@ it = Scala &intera
 en = &Fullscreen\tF11
 it = &Schermo intero\tF11
 
+en = Normal &brightness in fullscreen with HDR
+it = &Luminosità normale a schermo intero con HDR
+
 en = &Readability of the options menu (Esc)
 it = &Leggibilità del menu delle opzioni (Esc)
 
