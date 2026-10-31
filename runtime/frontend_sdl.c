@@ -100,6 +100,7 @@ static int g_single;                                              /* one screen 
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
 static int g_cc_n, g_cc_box[2][4];                               /* widescreen, the character's creation: its windows on the touch screen (creation_update): x, y, w, h */
+static int g_cc_at[2][2];                                         /* ...where each goes in the pop-up (DS pixels; as on the touch screen, but for Patty's last question) */
 static int g_name_typing = 0;                                     /* Modern > Type the name with the keyboard (the character's creation: name_typing_step()) */
 static uint32_t g_type_q[64]; static int g_type_n;                /* ...the letters typed, not yet pressed on the game's keyboard ('\b' erase, '\n' OK) */
 static int g_tap_x, g_tap_y, g_tap_frames, g_tap_wait, g_tap_tries;   /* ...the game's key being pressed, for how long; then the frames to wait */
@@ -291,6 +292,7 @@ static int top_page_wide(void) {                                  /* (widescreen
 static int top_page_mode(void) {
     if (!top_page_wide() || (g_small_blank && !g_shop)) return 0;   /* (a shop's list: the top screen goes blank before its card shows) */
     int side = 0, which = g_gl ? gl_wide_shown(&side) : -1;
+    if (g_cc_n) return 0;                                         /* (the character's creation: its own pop-ups, creation_update) */
     if (which == 0) return g_top_menu && !g_hud_n && !g_hud_win[2] ? 2 : 0;
     return mapmarks_top_page() || g_shop ? 1 : 0;                 /* (a shop's list: laid out before its card shows) */
 }
@@ -421,11 +423,11 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             small[0] = small[1] = small[2] = small[3] = 0;
             int ux0 = 256, uy0 = 192, ux1 = 0, uy1 = 0;
             for (int i = 0; i < g_cc_n; i++) {
-                const int* b = g_cc_box[i];
-                if (b[0] < ux0) ux0 = b[0];
-                if (b[1] < uy0) uy0 = b[1];
-                if (b[0] + b[2] > ux1) ux1 = b[0] + b[2];
-                if (b[1] + b[3] > uy1) uy1 = b[1] + b[3];
+                const int* b = g_cc_box[i], *a = g_cc_at[i];
+                if (a[0] < ux0) ux0 = a[0];
+                if (a[1] < uy0) uy0 = a[1];
+                if (a[0] + b[2] > ux1) ux1 = a[0] + b[2];
+                if (a[1] + b[3] > uy1) uy1 = a[1] + b[3];
             }
             const float P = 3;                                    /* the window's margin round the picture (DS pixels) */
             float rx = v->cw * 0.42f, rw = v->cw - 6 - rx, ry = 30, rh = 156;   /* (under the banner "Create your character.") */
@@ -435,7 +437,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                 const int* b = g_cc_box[i];
                 float* w = v->piece[v->npiece++], *q = v->piece[v->npiece++];
                 q[4] = 1; q[5] = (float)b[0]; q[6] = (float)b[1]; q[7] = (float)b[2]; q[8] = (float)b[3]; q[9] = 0;
-                q[0] = x + (float)(b[0] - ux0) * k; q[1] = y + (float)(b[1] - uy0) * k; q[2] = (float)b[2] * k; q[3] = (float)b[3] * k;
+                q[0] = x + (float)(g_cc_at[i][0] - ux0) * k; q[1] = y + (float)(g_cc_at[i][1] - uy0) * k; q[2] = (float)b[2] * k; q[3] = (float)b[3] * k;
                 w[4] = 1; w[5] = q[5] - P; w[6] = q[6] - P; w[7] = q[7] + 2 * P; w[8] = q[8] + 2 * P; w[9] = 7;   /* (a touch on its margin: the picture's edge) */
                 w[0] = q[0] - P * k; w[1] = q[1] - P * k; w[2] = q[2] + 2 * P * k; w[3] = q[3] + 2 * P * k;
             }
@@ -1734,24 +1736,74 @@ static int card_page(const uint32_t* px) {
     return bar * 4 > n * 3 && page * 4 > n * 3;
 }
 
-/* The character's creation (before the adventure, the character's 3D on the
- * top screen): its windows on the touch screen, found by what isn't parchment
+/* The character's creation (the character's 3D on the top screen: before the
+ * adventure, or a companion at Patty's): its windows on the touch screen, found by what isn't parchment
  * in them (g_cc_box: the choices or the name's keyboard, and the
  * name above it), popped up over the big screen (canvas_layout_for()). None
  * once the name is done (OK) or outside the creation. */
 static void creation_update(int a_on_top) {
     g_cc_n = 0;
     int side = 0;
-    if (!g_gl || in_adventure() || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
+    if (!g_gl || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
     if (gl_wide_shown(&side) != 0) return;
     const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the touch screen */
+    /* Fading in or out the screen is darker: every test is against the parchment's
+     * own brightness at its left edge (never under a window), so
+     * the pop-ups are there from the first frames (not both screens side by side) */
+#define CC_SUM(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255))
+    int lp = CC_SUM(6, 100);                                      /* the parchment: about 520 when bright (260 greyed under Patty's last question) */
+    {   uint32_t c = px[100 * 256 + 6];
+        int r = (c >> 16) & 255, b = c & 255;
+        if (lp < 90 || !(r * 100 > b * 140)) return;              /* (too dark to tell, or not the parchment) */
+    }
+    int dark_below = lp * 35 / 100, light_above = lp * 115 / 100;   /* (180 and 600 when bright) */
+    {   /* its tabs 1-8 at the top right (dark, 12 pixels wide, every 16; the step's own is gold):
+         * only the creation has them (at the start, and Patty's companions in the adventure) */
+        int tabs = 0, run = 0;
+        for (int x = 112; x < 254; x++) {
+            int dark = CC_SUM(x, 12) < dark_below;
+            if (dark) run++;
+            else { if (run >= 10 && run <= 14 && ((x - run - 122) % 16 + 16) % 16 <= 1) tabs++; run = 0; }
+        }
+        if (tabs < 6) return;
+    }
+    int parchment = 1;
     static const int probe[3][2] = { { 6, 100 }, { 249, 100 }, { 128, 164 } };   /* the parchment around its windows */
     for (int i = 0; i < 3; i++) {
         uint32_t c = px[probe[i][1] * 256 + probe[i][0]];
-        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
-        if (!(r > 150 && g > 110 && b < 170 && r > b + 50)) return;
+        int r = (c >> 16) & 255, b = c & 255;
+        if (!(r * 100 > b * 140 && CC_SUM(probe[i][0], probe[i][1]) * 100 > lp * 70)) parchment = 0;   /* (warm, as bright as the rim) */
     }
-#define CC_WIN(c) (!((int)(((c) >> 16) & 255) > (int)((c) & 255) + 40 && (int)(((c) >> 16) & 255) > 100))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
+    if (!parchment) {
+        /* Patty's last question ("Add this character...?"): the game's text box
+         * along the bottom and Yes / No at the right over the keyboard, greyed: those
+         * two pop up alone (on No the keyboard comes back, and with it its pop-up) */
+#define CC_D(x, y) (CC_SUM(x, y) < dark_below)
+#define CC_L(x, y) (CC_SUM(x, y) > light_above)
+        int box = 0;
+        for (int x = 8; x < 248; x++) box += CC_D(x, 150) && CC_D(x, 180);
+        if (box < 230 || !CC_L(252, 90) || !CC_L(252, 100) || !CC_D(230, 80) || !CC_D(230, 108)) return;
+#undef CC_D
+#undef CC_L
+        /* the text box as wide as its text (its longest line, in any language), Yes / No
+         * just over its right end (their right edges in line), as close as their windows allow */
+        int tx = 120, ty = 140;                                   /* the text's right end and bottom */
+        for (int yy = 121; yy < 186; yy++)
+            for (int x = 248; x > 8; x--) {
+                if (CC_SUM(x, yy) * 100 > lp * 87) { if (x > tx) tx = x; if (yy > ty) ty = yy; break; }   /* (the text's light letters: 450 when bright) */
+            }
+        int w = tx + 10 - 7, h = ty + 9 - 121;
+        if (w > 242) w = 242;
+        if (h > 65) h = 65;
+        static const int yn[4] = { 216, 76, 34, 36 };             /* Yes / No's inside (its light edge left out) */
+        int tb[4] = { 7, 121, w, h };                             /* the text box's inside, cut after the text */
+        memcpy(g_cc_box[0], yn, sizeof yn); memcpy(g_cc_box[1], tb, sizeof tb);
+        g_cc_at[0][0] = w - yn[2]; g_cc_at[0][1] = 0;
+        g_cc_at[1][0] = 0; g_cc_at[1][1] = yn[3] + 8;              /* (8: the two windows' margins, and a gap) */
+        g_cc_n = 2;
+        return;
+    }
+#define CC_WIN(c) (!((int)(((c) >> 16) & 255) * 100 > (int)((c) & 255) * 130 && (int)(((c) >> 16) & 255) * 520 > 100 * lp))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
     int y = 24;
     while (y < 168 && g_cc_n < 2) {                               /* bands of rows mostly window, under the tabs, over the buttons' hints */
         int n = 0;
@@ -1773,10 +1825,13 @@ static void creation_update(int a_on_top) {
             if (m * 5 >= h * 3) { if (x0 < 0) x0 = x; x1 = x; }
         }
         if (x0 < 0) continue;
-        int* b = g_cc_box[g_cc_n++];                              /* its inside, without the rounded corners (a window of the minimal style goes round it) */
-        b[0] = x0 + 2; b[1] = y0 + 2; b[2] = x1 - x0 - 3; b[3] = h - 4;
+        int* b = g_cc_box[g_cc_n];                                /* its inside, without the rounded corners (a window of the minimal style goes round it) */
+        b[0] = x0 + 4; b[1] = y0 + 4; b[2] = x1 - x0 - 7; b[3] = h - 8;   /* (4: past its light corner pixels) */
+        g_cc_at[g_cc_n][0] = b[0]; g_cc_at[g_cc_n][1] = b[1];      /* (in the pop-up as on the touch screen) */
+        g_cc_n++;
     }
 #undef CC_WIN
+#undef CC_SUM
 }
 
 /* Modern > Type the name with the keyboard: while the name's keyboard pops
