@@ -139,6 +139,14 @@ static int win_idx(Engine* e, uint32_t charbase, uint32_t mapbase, uint32_t w, u
     return row ? (row[px >> 1] >> ((px & 1) * 4)) & 15 : -1;
 }
 typedef struct { Engine* e; uint32_t charbase, mapbase, w, h; } WinLayer;
+/* a window's separator (the line under its title): colour 15 (white) across the
+ * window, 12 pixels or more in a row (not a letter's) */
+static int win_sep(const WinLayer* L, int bx, int by) {
+    int n = 1;
+    for (int d = 1; d < 12 && win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx - d, by) == 15; d++) n++;
+    for (int d = 1; d < 12 && win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx + d, by) == 15; d++) n++;
+    return n >= 12;
+}
 static int win_e(const WinLayer* L, int bx, int by) { return win_idx(L->e, L->charbase, L->mapbase, L->w, L->h, bx, by) == 10; }
 static int win_run(const WinLayer* L, int bx, int by, int dx, int dy) {   /* the line's pixels from (bx, by) on (up to 4) */
     int n = 0;
@@ -262,7 +270,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                 }
                 int k = 0;
                 if (winpal & b)                                     /* (the panel even inside a letter's box, not its shading) */
-                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? ((eng == 1 ? g_win_outline : g_dlg_outline) && !modern ? 0 : WIN_EDGE) : (idx == 2 || idx == 4 || idx == 6 || idx == 8) ? WIN_SHADE : 0;
+                    k = idx == 1 ? WIN_PANEL : hd && out->tag[x] ? 0 : idx == 10 ? ((eng == 1 ? g_win_outline : g_dlg_outline) && !modern ? 0 : WIN_EDGE) : (idx == 2 || idx == 4 || idx == 6 || idx == 8 || (modern && idx == 14)) ? WIN_SHADE : 0;   /* (14: a dark speck of the frame where two windows touch) */
                 else if (cardpal & b) k = idx == 3 ? WIN_BOX : (idx == 4 || idx == 9 || idx == 14 || idx == 15) ? WIN_CLEAR : idx ? WIN_INK : 0;
                 else if ((ramppal & b) && idx) k = WIN_CLEAR;
                 else if ((inkpal & b) && idx == 1) k = WIN_PANEL;
@@ -273,6 +281,15 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
                     int bx0 = (int)((x + hofs) & (w - 1)), near = 0;
                     for (int d = -2; d <= 2 && !near; d++) near = win_e(&wl, bx0 + d, (int)yy) || win_e(&wl, bx0, (int)yy + d);
                     if (!near) k = 0;
+                }
+                if (modern && (winpal & b) && idx == 15) {
+                    WinLayer wl = { e, charbase, mapbase, w, h };
+                    int bx0 = (int)((x + hofs) & (w - 1));
+                    if (idx == 15 && win_sep(&wl, bx0, (int)yy)) {      /* the separator: the frame's grey, like its line */
+                        out->win[x] = WIN_LINE; out->wins |= WIN_LINE; out->tint[x] = 0;
+                        out->col[x] = WIN_LINE_COL | PX_OPAQUE;
+                        continue;
+                    }
                 }
                 if (modern && (winpal & b) && k) {
                     WinLayer wl = { e, charbase, mapbase, w, h };
@@ -934,9 +951,12 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                      * a dialogue window's rounded corner, a pixel out on its left) */
                     int bare = !filled && bgl[f].win[x] != WIN_EDGE && bgl[f].win[x] != WIN_SHADE;
                     int fx = (x + bx[f]) & (int)(wl[f].w - 1);
-                    for (int d = bare ? 2 : 0; d < 4 && !out; d++)
+                    for (int d = 0; d < 4 && !out; d++)
                         for (int k = 1; k <= (filled ? 6 : bare ? 1 : 3); k++)
-                            if (win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k)) {
+                            if (((!bare || d >= 2) && win_line(&wl[f], fx + dir[d][0] * k, by[f] + dir[d][1] * k))
+                                || (d < 2 && k == 1 && (win_line(&wl[f], fx - 1, by[f] + dir[d][1]) || win_line(&wl[f], fx + 1, by[f] + dir[d][1])))   /* (across, the line's corner beside it: the row a window's panel shows beyond its top line, by another window) */
+                                || (dir[d][1] == 0 && k == 1 && win_idx(e, wl[f].charbase, wl[f].mapbase, wl[f].w, wl[f].h, fx + dir[d][0], by[f]) == 15
+                                    && win_sep(&wl[f], fx + dir[d][0], by[f]))) {   /* (or the separator's end, where it crosses the line: the panel's row beyond it) */
                                 out = win_idx(e, wl[p].charbase, wl[p].mapbase, wl[p].w, wl[p].h, px + dir[d][0] * (k + 3), by[p] + dir[d][1] * (k + 3)) == 1;
                                 break;
                             }
