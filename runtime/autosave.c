@@ -64,7 +64,14 @@ static int save_now(Cpu* c) {
     mem_write32(SAVE_TARGET, SAVE_BUF);
     c->r[13] = sp; c->r[0] = sp; c->r[1] = SAVE_DATA; c->r[2] = 1; c->r[3] = 0;
     c->r[14] = regs.r[14];
+    /* no interrupt taken inside it: its time would bring the VBlank's, and with
+     * it the game's other threads would run in the middle of this field frame
+     * (after one, the next dialogues showed bars or other words' letters, and
+     * the priest's "record your adventure?" lost its Yes / No). They come
+     * after, as if the routine had taken no time. */
+    g_c9.irq_depth += 100;
     dispatch_call(c, WRITE_SAVE_USA + (rom_is_eur() ? 0x10 : 0), regs.r[14]);
+    g_c9.irq_depth -= 100;
     int ok = c->r[0] == 1 && !c->fault_addr;
     mem_write32(SAVE_TARGET, 0);
     *c = regs;
