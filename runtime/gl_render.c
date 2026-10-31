@@ -350,8 +350,9 @@ static const char* FS_COMP =
     /* A menu over a 2D page (Equip, the adventure log): its page doesn't go
      * on past the DS's edge, and copying the edge's column across the side
      * drew streaks. Instead the page near the edge, mirrored, blurred and
-     * dimmed (darker toward the window's edge), under the 3D if any reaches
-     * the side, with the screen's fade. */
+     * dimmed (darker toward the window's edge), with the screen's fade. Not
+     * the 3D there: a menu's own 3D past the edge is its list's rows that
+     * the DS doesn't show (Equip's long names). */
     "  if (side && u_amb != 0) {\n"
     "    float d = dsx < 0.0 ? -dsx : dsx - 256.0;\n"
     "    float ex = dsx < 0.0 ? min(d, 48.0) : 256.0 - min(d, 48.0);\n"
@@ -359,8 +360,6 @@ static const char* FS_COMP =
     "    vec3 a = vec3(0.0);\n"
     "    for (int j = -2; j <= 2; j++) a += texture(u_ambt, vec2(ex, y + float(j) * 6.0) / vec2(256.0, 192.0)).rgb * (3.0 - abs(float(j)));\n"
     "    a = a / 9.0 * (0.6 - 0.25 * clamp(d / max(u_wside, 1.0), 0.0, 1.0));\n"
-    "    ivec2 sza = textureSize(u_3d, 0); vec4 sa = texelFetch(u_3d, min(ivec2(v_uv * vec2(sza)), sza - 1), 0);\n"
-    "    if (sa.a > 0.0) a = mix(a, sa.rgb, sa.a);\n"
     "    int mba = int(texelFetch(u_c2, ivec2(dsx < 0.0 ? 0 : 255, p2.y), 0).a * 255.0 + 0.5);\n"
     "    float mf = float(mba & 31) / 16.0;\n"
     "    if ((mba >> 5) == 1) a = a + (1.0 - a) * mf; else if ((mba >> 5) == 2) a = a - a * mf;\n"
