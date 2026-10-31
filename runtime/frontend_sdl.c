@@ -264,15 +264,20 @@ static const char* BACKLIGHT_NAME[5] = { "", "low", "medium", "high", "max" };
 /* Canvas (in DS pixels) for the current layout, and where the screens sit on it.
  * The DS Lite: 0.24 mm per pixel; the lid and base are 133 mm wide; the
  * screens are 90 pixels (21.5 mm) apart. */
-/* Widescreen: DS pixels to add left and right of the 3D picture. 16:9 in a
- * window; in fullscreen, as wide as the monitor (up to 2:1 more). */
+/* Widescreen: DS pixels to add left and right of the 3D picture: as wide as
+ * the window (or the monitor in fullscreen), so it fills it whatever the
+ * screen's shape (16:9, 16:10, 21:9...), up to 2:1 more. g_side_aspect > 0:
+ * the shape to use instead (the window being sized for the monitor's). */
+static float g_side_aspect;
 static int wide_side_target(void) {
     if (!(WIDE_GL && g_wide && !g_side_by_side)) return 0;
     int side = 43;                                                /* (192 * 16 / 9 - 256) / 2 */
-    if (g_fullscreen && g_win) {
+    float aspect = g_side_aspect;
+    if (aspect <= 0 && g_win) {
         int w, h; SDL_GetWindowSize(g_win, &w, &h);
-        if (h > 0) side = (int)lroundf(((float)w / (float)h * 192.0f - 256.0f) / 2.0f);
+        if (h > 0 && w > 0) aspect = (float)w / (float)h;
     }
+    if (aspect > 0) side = (int)lroundf((aspect * 192.0f - 256.0f) / 2.0f);
     return side < 0 ? 0 : side > 128 ? 128 : side;
 }
 
@@ -556,7 +561,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
     v->win_w = ww; v->win_h = wh;
     float sc = fminf((float)ww / v->cw, (float)wh / v->ch);
     if (g_opt.actual && g_actual_sc > 0) { if (g_actual_sc < sc) sc = g_actual_sc; }   /* real size (smaller if it doesn't fit) */
-    else if (g_opt.integer && sc >= 1.0f) sc = floorf(sc);
+    else if (g_opt.integer && sc >= 1.0f && !wide) sc = floorf(sc);   /* (widescreen fills the window: no bars) */
     v->sc = sc;
     v->ox = floorf(((float)ww - v->cw * sc) / 2); v->oy = floorf(((float)wh - v->ch * sc) / 2);
     v->shell = shell;
@@ -925,7 +930,11 @@ static void menu_build(void);
  * the start) the chosen size. */
 static float g_last_cw, g_last_ch;                              /* the canvas the window was last sized for */
 static void layout_window_keep(int keep) {
+    SDL_Rect r;
+    int usable = SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(g_win), &r) == 0;
+    if (usable && !g_fullscreen && r.h > 64) g_side_aspect = (float)(r.w - 16) / (float)(r.h - 64);   /* widescreen: the monitor's shape */
     GlPresent v; canvas_layout(&v, 1, 1);
+    g_side_aspect = 0;
     int w = (int)v.cw, h = (int)v.ch;
     if (!g_gl) SDL_RenderSetLogicalSize(g_ren, w, h);
     float lw = g_last_cw, lh = g_last_ch;
@@ -938,8 +947,7 @@ static void layout_window_keep(int keep) {
         float cur = fminf((float)ww / lw, (float)wh / lh);       /* the zoom the window has now */
         if (cur > 0.25f) s = cur;
     }
-    SDL_Rect r;
-    if (SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(g_win), &r) == 0) {
+    if (usable) {
         float fit = fminf((float)(r.w - 16) / (float)w, (float)(r.h - 64) / (float)h);   /* room for the title and menu bars */
         if (s > fit) s = fit;
     }
