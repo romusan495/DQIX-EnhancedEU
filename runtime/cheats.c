@@ -22,8 +22,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nds.h"
+#include "uitext.h"
 #include "session.h"
 #include "cheats.h"
+#include "cpu.h"
+#include "farm.h"
 
 typedef struct {
     const char* key;      /* settings.ini */
@@ -32,6 +35,8 @@ typedef struct {
     const char* eur;      /* NULL: the same as the USA's; "": none for this version */
     int max;              /* > 0: the player chooses the number (0..max), first the code's own */
     int def;
+    int battle;           /* 1: its codes run only in battles (the monsters' records are elsewhere's data the rest of the time) */
+    int native;           /* 1: done by the runtime, not by codes (hook_RandBelow) */
 } Cheat;
 
 static const Cheat CHEATS[] = {
@@ -62,8 +67,9 @@ static const Cheat CHEATS[] = {
     { "time", "Time of day: Start+Up for day, Start+Down for night",
       "94000130 FFB70000 020F37A4 43520000 D2000000 00000000 "
       "94000130 FF770000 020F37A4 43D20000 D2000000 00000000", NULL },
-    { "oneshot", "Monsters: HP to 0, any hit finishes them (press B+Start in battle)",
-      "94000130 FFF50000 C0000000 00000007 122A4638 00000000 DC000000 000000A4 D2000000 00000000", NULL },
+    { "oneshot", "Monsters: HP to 0 in battles, any hit finishes them",
+      "C0000000 00000007 122A4638 00000000 DC000000 000000A4 D2000000 00000000", NULL, .battle = 1 },
+    { "drops", "Monsters: always drop their item (the rare one first)", "", NULL, .native = 1 },
 };
 #define N_ALL ((int)(sizeof CHEATS / sizeof CHEATS[0]))
 
@@ -77,7 +83,7 @@ static const char* codes_of(const Cheat* c) { return rom_is_eur() && c->eur ? c-
 static void list_init(void) {
     if (g_n >= 0) return;
     g_n = 0;
-    for (int i = 0; i < N_ALL; i++) if (*codes_of(&CHEATS[i])) { g_val[g_n] = CHEATS[i].def; g_list[g_n++] = i; }
+    for (int i = 0; i < N_ALL; i++) if (*codes_of(&CHEATS[i]) || CHEATS[i].native) { g_val[g_n] = CHEATS[i].def; g_list[g_n++] = i; }
 }
 int cheats_european(void) { return rom_is_eur(); }
 int cheats_count(void) { list_init(); return g_n; }
@@ -88,7 +94,7 @@ const char* cheats_name(int i) {
     char num[16] = "", grouped[24]; int n = snprintf(num, sizeof num, "%d", g_val[i]), k = 0;
     for (int j = 0; j < n; j++) { if (j && (n - j) % 3 == 0) grouped[k++] = ','; grouped[k++] = num[j]; }   /* 9,999,999 */
     grouped[k] = 0;
-    snprintf(names[i], sizeof names[i], CHEATS[g_list[i]].name, grouped);
+    snprintf(names[i], sizeof names[i], T(CHEATS[g_list[i]].name), grouped);   /* in the player's language (uitext.h) */
     return names[i];
 }
 int cheats_max(int i) { list_init(); return i >= 0 && i < g_n ? CHEATS[g_list[i]].max : 0; }
@@ -230,8 +236,32 @@ void cheats_frame(void) {
         }
     }
     if (session_requested()) return;
-    for (int i = 0; i < g_n; i++) if (g_on[i]) run(words[i], nwords[i]);
+    int battle = -1;
+    for (int i = 0; i < g_n; i++) {
+        if (!g_on[i] || !nwords[i]) continue;
+        if (CHEATS[g_list[i]].battle) { if (battle < 0) battle = party_in_battle(); if (!battle) continue; }
+        run(words[i], nwords[i]);
+    }
     static uint32_t test[96]; static int ntest = -1;    /* tests: DQIX_CHEAT_CODE="XXXXXXXX YYYYYYYY ...", run after them */
     if (ntest < 0) { const char* e = getenv("DQIX_CHEAT_CODE"); ntest = e ? parse(e, test, 96) : 0; }
     if (ntest) run(test, ntest);
+}
+
+/* ---------------------------------------------------------------- drops */
+/* func_02032370 (USA): a random number from 0 to r0 - 1. The battle's end
+ * (overlay 23, at 0x021f4a04 and 0x021f4acc) calls it with the rare item's,
+ * then the common item's odds (the "1 in N" of the monster's record): 0 is a
+ * drop. With "drops" on, those two calls get 0: the rare item drops, or the
+ * common one for a monster without one. Other calls (and other overlays at
+ * those addresses) are left alone. */
+static int drops_on(void) {
+    list_init();
+    for (int i = 0; i < g_n; i++) if (g_on[i] && !strcmp(CHEATS[g_list[i]].key, "drops")) return !session_requested();
+    return 0;
+}
+void hook_RandBelow(Cpu* c, void (*orig)(Cpu*)) {
+    uint32_t lr = c->r[14];
+    orig(c);
+    if (((lr == 0x021F4A08u && mem_read32(0x021F4A04u) == 0xEBF8F65Du) || (lr == 0x021F4AD0u && mem_read32(0x021F4ACCu) == 0xEBF8F62Bu)) && drops_on())
+        c->r[0] = 0;                                              /* (those two calls, battle overlay loaded) */
 }

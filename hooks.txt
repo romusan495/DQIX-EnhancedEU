@@ -8,3 +8,17 @@
 main 0205b36c GlyphBlit                    # draws one letter into a text window
 main 02001a40 Memcpy                       # memcpy: the letters' tags go along
 main 02045864 GlyphCell                    # draws one letter into its own texture (dialogue windows)
+
+# Modern > Save by itself (runtime/autosave.c): the field's frame, where the
+# adventure is saved every 10 minutes.
+ov017 0218d0ec FieldFrame                  # once a frame on the field
+
+# Modern > Map markers (runtime/mapmarks.c): the rank the game gives each
+# chest of a grotto's floor, shown beside its mark.
+main 0201afd0 GrottoFloorObjects           # a grotto's floor: its chests (and the rest) placed
+main 02090018 GrottoChestRank              # ActiveGrottoClass::RandomizeChestRank: one chest's rank (1-10)
+
+# Cheats > Monsters always drop their item (runtime/cheats.c): the battle's
+# end rolls each monster's item with this (a random number below r0; 0 drops
+# it); the hook makes it 0 for those two calls only (rare item, then common).
+main 02032370 RandBelow                    # a random number from 0 to r0 - 1

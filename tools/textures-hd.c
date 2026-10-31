@@ -1,7 +1,8 @@
 /* textures-hd: makes HD versions (textures/hd) of the textures the game dumped
  * (textures/dump) that don't have one yet, with Real-ESRGAN. The game starts it
- * when it closes after dumping new ones; double-clicking it works too. The new
- * HD textures show the next time you play.
+ * when it starts (to finish one cut short) and when it closes after dumping new
+ * ones; double-clicking it works too. The game shows how far it is
+ * (textures-hd-progress.txt) and loads the new HD textures when it's done.
  *
  * Real-ESRGAN (realesrgan-ncnn-vulkan, on the graphics card) lives in
  * textures-hd-outil/ next to the game. What it can't do well by itself:
@@ -10,9 +11,13 @@
  * - see-through texels get their solid neighbours' colour first, so no dark
  *   fringes come in from the edges;
  * - alpha is upscaled as its own grey picture; on/off alpha stays on/off;
- * - Real-ESRGAN alone smooths away the drawing's grain (hair strands, eye
- *   pixels): its colours are mixed half and half with a sharp (Lanczos)
- *   enlargement of the original, which keeps the detail.
+ * - textures with nothing to draw (all see-through, or one colour) get no HD
+ *   version: the game's own draws the same, and a blank one in the pack can
+ *   stand in for a texture the game fills in later (dialogue letters);
+ * - Real-ESRGAN's picture is used as it is (smooth and painted, Romuald's
+ *   choice); TEXHD_SHARP=<0..100> mixes in that % of a sharp (Lanczos)
+ *   enlargement of the original instead, which keeps the pixels' grain
+ *   (50 = the earlier "method 5").
  * What happened goes to textures/hd-auto.log. */
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -27,19 +32,24 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
+#include <sys/stat.h>
 #define mkdir_(p) _mkdir(p)
 #define SEP "\\"
 #else
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #define mkdir_(p) mkdir(p, 0755)
 #define SEP "/"
 #endif
 
 #define PAD 8
 #define SCALE 4
+#define BATCH 100                                              /* textures per Real-ESRGAN run */
 static FILE* g_log;
+static int g_sharp = 0;                                        /* % of the sharp enlargement mixed into Real-ESRGAN's (TEXHD_SHARP) */
 
 static void logf_(const char* fmt, ...) {
     va_list a; va_start(a, fmt);
@@ -47,7 +57,6 @@ static void logf_(const char* fmt, ...) {
     va_end(a);
 }
 
-static int exists(const char* p) { FILE* f = fopen(p, "rb"); if (f) fclose(f); return f != NULL; }
 
 /* the dumped textures' names: 16 hex digits + ".png" */
 static int list_dump(const char* dir, char (*names)[32], int max) {
@@ -66,6 +75,45 @@ static int list_dump(const char* dir, char (*names)[32], int max) {
 #endif
     return n;
 }
+
+/* the HD textures already in the pack, in any folder of textures/ (hd/, or a
+ * pack put next to it: rom/...) except the originals: those aren't redone */
+static char (*g_have)[32]; static int g_nhave, g_caphave;
+static void pack_names(const char* dir, int depth) {
+    if (depth > 8) return;
+#ifdef _WIN32
+    char pat[700]; snprintf(pat, sizeof pat, "%s\\*", dir);
+    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        const char* nm = fd.cFileName;
+        if (nm[0] == '.') continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+#else
+    DIR* d = opendir(dir); struct dirent* e;
+    if (!d) return;
+    while ((e = readdir(d))) {
+        const char* nm = e->d_name; struct stat st; char full[700];
+        if (nm[0] == '.') continue;
+        snprintf(full, sizeof full, "%s/%s", dir, nm);
+        if (stat(full, &st) == 0 && S_ISDIR(st.st_mode)) {
+#endif
+            if (depth == 0 && (!strcmp(nm, "dump") || !strcmp(nm, "dump-2d") || !strcmp(nm, "hd-auto-tmp"))) continue;
+            char sub[700]; snprintf(sub, sizeof sub, "%s" SEP "%s", dir, nm); pack_names(sub, depth + 1);
+        } else if (strlen(nm) == 20 && !strcmp(nm + 16, ".png")) {
+            if (g_nhave == g_caphave) { g_caphave = g_caphave ? g_caphave * 2 : 4096; g_have = realloc(g_have, sizeof *g_have * (size_t)g_caphave); }
+            snprintf(g_have[g_nhave++], 32, "%s", nm);
+        }
+#ifdef _WIN32
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    }
+    closedir(d);
+#endif
+}
+static int cmp_name(const void* a, const void* b) { return strcmp((const char*)a, (const char*)b); }
+static int in_pack(const char* name) { return g_nhave && bsearch(name, g_have, (size_t)g_nhave, sizeof *g_have, cmp_name) != NULL; }
 
 /* see-through texels take the average colour of their solid (or already filled) neighbours */
 static void bleed(unsigned char* px, int w, int h) {
@@ -167,25 +215,107 @@ static void rmtree_files(const char* dir, char (*names)[32], int n) {
     for (int i = 0; i < n; i++) { char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", dir, names[i]); remove(p); }
 }
 
-static int upscale_new(const char* game) {
-    char dump[600], hd[600], tool[600], tmp[600], in_c[640], in_a[640], out_c[640], out_a[640], logp[600];
-    snprintf(dump, sizeof dump, "%s" SEP "textures" SEP "dump", game);
-    snprintf(hd, sizeof hd, "%s" SEP "textures" SEP "hd", game);
-    snprintf(tool, sizeof tool, "%s" SEP "textures-hd-outil", game);
-    snprintf(tmp, sizeof tmp, "%s" SEP "textures" SEP "hd-auto-tmp", game);
-    snprintf(logp, sizeof logp, "%s" SEP "textures" SEP "hd-auto.log", game);
+/* HD textures made the earlier way (the half and half mix, "method 5") are
+ * put aside once, into textures-methode5/ next to textures/ (same folders: the
+ * game reads every folder of textures/), so all are made
+ * again as Real-ESRGAN alone: the ones that have their original in
+ * textures/dump, in any pack folder. textures/hd-style.txt says it is done. */
+#define HD_STYLE "ia-seule 1"
+static int g_moved; static char g_aside[620];
+static void put_aside(const char* tex, const char* rel, int depth) {
+    if (depth > 8) return;
+    char dir[900]; snprintf(dir, sizeof dir, "%s%s%s", tex, rel[0] ? SEP : "", rel);
+#ifdef _WIN32
+    char pat[920]; snprintf(pat, sizeof pat, "%s\\*", dir);
+    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        const char* nm = fd.cFileName; int isdir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    DIR* d = opendir(dir); struct dirent* e;
+    if (!d) return;
+    while ((e = readdir(d))) {
+        const char* nm = e->d_name; struct stat st; char full[1000];
+        snprintf(full, sizeof full, "%s/%s", dir, nm);
+        int isdir = stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+        if (nm[0] == '.') continue;
+        char sub[900]; snprintf(sub, sizeof sub, "%s%s%s", rel, rel[0] ? SEP : "", nm);
+        if (isdir) {
+            if (depth == 0 && (!strcmp(nm, "dump") || !strcmp(nm, "dump-2d") || !strcmp(nm, "hd-auto-tmp") || !strcmp(nm, "jobs"))) continue;
+            put_aside(tex, sub, depth + 1);
+        } else if (strlen(nm) == 20 && !strcmp(nm + 16, ".png")) {
+            char orig[1000], from[1000], to[1000];
+            snprintf(orig, sizeof orig, "%s" SEP "dump" SEP "%s", tex, nm);
+            FILE* f = fopen(orig, "rb");
+            if (!f) continue;                                   /* no original: can't be made again, stays */
+            fclose(f);
+            snprintf(from, sizeof from, "%s" SEP "%s", tex, sub);
+            mkdir_(g_aside);
+            for (char* q = sub; *q; q++) if (*q == SEP[0]) { *q = 0; snprintf(to, sizeof to, "%s" SEP "%s", g_aside, sub); mkdir_(to); *q = SEP[0]; }
+            snprintf(to, sizeof to, "%s" SEP "%s", g_aside, sub);
+            remove(to);
+            if (rename(from, to) == 0) g_moved++;
+        }
+#ifdef _WIN32
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    }
+    closedir(d);
+#endif
+}
+static void restyle(const char* game) {
+    char tex[600], mark[700], old[64] = ""; snprintf(tex, sizeof tex, "%s" SEP "textures", game);
+    snprintf(mark, sizeof mark, "%s" SEP "hd-style.txt", tex);
+    FILE* f = fopen(mark, "rb");
+    if (f) { size_t l = fread(old, 1, sizeof old - 1, f); old[l] = 0; fclose(f); }
+    if (!strncmp(old, HD_STYLE, strlen(HD_STYLE))) return;
+    snprintf(g_aside, sizeof g_aside, "%s" SEP "textures-methode5", game);
+    if (g_sharp == 0) put_aside(tex, "", 0);                    /* (TEXHD_SHARP set: the mix is wanted, keep them) */
+    f = fopen(mark, "wb"); if (f) { fprintf(f, "%s\n", HD_STYLE); fclose(f); }
+    if (g_moved) {
+        char logp[700]; snprintf(logp, sizeof logp, "%s" SEP "hd-auto.log", tex);
+        FILE* lg = fopen(logp, "a");
+        if (lg) { fprintf(lg, "\n%d HD texture(s) of the earlier kind (mixed) put aside in textures-methode5: made again as Real-ESRGAN alone\n", g_moved); fclose(lg); }
+    }
+}
+
+/* the work folder used to be textures/hd-auto-tmp: the game read the alpha and
+ * padded pictures waiting there as HD textures (black squares, white shadows) */
+static void old_tmp(const char* game) {
+    static const char* sub[] = { "c", "a", "c4", "a4" };
     static char names[20000][32];
-    int n = list_dump(dump, names, 20000), todo = 0;
-    static char work[20000][32]; static int pads[20000];
-    for (int i = 0; i < n; i++) { char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", hd, names[i]); if (!exists(p)) snprintf(work[todo++], 32, "%s", names[i]); }
-    if (!todo) return 0;
-    g_log = fopen(logp, "a");
-    time_t t = time(NULL); logf_("\n%s%d new texture(s) in textures/dump\n", ctime(&t), todo);
-    mkdir_(hd); mkdir_(tmp);
-    snprintf(in_c, sizeof in_c, "%s" SEP "c", tmp); snprintf(in_a, sizeof in_a, "%s" SEP "a", tmp);
-    snprintf(out_c, sizeof out_c, "%s" SEP "c4", tmp); snprintf(out_a, sizeof out_a, "%s" SEP "a4", tmp);
-    mkdir_(in_c); mkdir_(in_a); mkdir_(out_c); mkdir_(out_a);
-    static char alist[20000][32]; int na = 0;
+    char d[700];
+    for (int k = 0; k < 4; k++) {
+        snprintf(d, sizeof d, "%s" SEP "textures" SEP "hd-auto-tmp" SEP "%s", game, sub[k]);
+        rmtree_files(d, names, list_dump(d, names, 20000));
+#ifdef _WIN32
+        RemoveDirectoryA(d);
+#else
+        rmdir(d);
+#endif
+    }
+    snprintf(d, sizeof d, "%s" SEP "textures" SEP "hd-auto-tmp", game);
+#ifdef _WIN32
+    RemoveDirectoryA(d);
+#else
+    rmdir(d);
+#endif
+}
+
+/* textures-hd-progress.txt next to the game, read by the game (its bar and,
+ * at the end, its "done" message): "working <done> <total>" or "done <made> <total>" */
+static char g_prog[620];
+static void progress(const char* state, int done, int total) {
+    FILE* f = fopen(g_prog, "wb"); if (f) { fprintf(f, "%s %d %d\n", state, done, total); fclose(f); }
+}
+
+/* one batch: its pictures padded, Real-ESRGAN over all of them at once, the HD textures written */
+static int upscale_batch(const char* dump, const char* hd, const char* tool, const char* in_c, const char* in_a, const char* out_c, const char* out_a,
+                         char (*work)[32], int todo) {
+    static int pads[BATCH];
+    static char alist[BATCH][32]; int na = 0;
     for (int i = 0; i < todo; i++) {
         char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", dump, work[i]);
         int w, h, c; unsigned char* px = stbi_load(p, &w, &h, &c, 4);
@@ -229,7 +359,7 @@ static int upscale_new(const char* game) {
                 const unsigned char* s = big + ((y + pd * SCALE) * W + x + pd * SCALE) * 3;
                 unsigned char* d = o + (y * ow + x) * 4;
                 const unsigned char* g = sharp + ((size_t)y * ow + x) * 3;
-                for (int ch = 0; ch < 3; ch++) d[ch] = (unsigned char)((s[ch] + g[ch] + 1) / 2);
+                for (int ch = 0; ch < 3; ch++) d[ch] = (unsigned char)(g_sharp == 50 ? (s[ch] + g[ch] + 1) / 2 : (s[ch] * (100 - g_sharp) + g[ch] * g_sharp + 50) / 100);
                 if (solid) d[3] = 255;
                 else if (ab) { const unsigned char* q = ab + ((y + pd * SCALE) * W + x + pd * SCALE) * 3; int a = (q[0] + q[1] + q[2] + 1) / 3; d[3] = binary ? (a > 127 ? 255 : 0) : (unsigned char)a; }
                 else d[3] = px[((y / SCALE) * w + x / SCALE) * 4 + 3];      /* no upscaled alpha: the original's, blocky */
@@ -238,12 +368,60 @@ static int upscale_new(const char* game) {
         if (stbi_write_png(p, ow, oh, 4, o, ow * 4)) made++;
         free(o); free(sharp); stbi_image_free(px); stbi_image_free(big); stbi_image_free(ab);
     }
-    rmtree_files(in_c, work, todo); rmtree_files(out_c, work, todo); rmtree_files(in_a, alist, na); rmtree_files(out_a, alist, na);
+    rmtree_files((char*)in_c, work, todo); rmtree_files((char*)out_c, work, todo); rmtree_files((char*)in_a, alist, na); rmtree_files((char*)out_a, alist, na);
+    return rc == 0 ? made : -1;
+}
+
+/* in batches of BATCH, so a PC turned off loses one batch: the next run (the
+ * game starts one when it starts) goes on with what has no HD version yet */
+static int upscale_new(const char* game) {
+    char dump[600], hd[600], tool[600], tmp[600], in_c[640], in_a[640], out_c[640], out_a[640], logp[600];
+    snprintf(dump, sizeof dump, "%s" SEP "textures" SEP "dump", game);
+    snprintf(hd, sizeof hd, "%s" SEP "textures" SEP "hd", game);
+    snprintf(tool, sizeof tool, "%s" SEP "textures-hd-outil", game);
+    snprintf(tmp, sizeof tmp, "%s" SEP "textures-hd-tmp", game);   /* not under textures/: the game would take its pictures for HD textures */
+    snprintf(logp, sizeof logp, "%s" SEP "textures" SEP "hd-auto.log", game);
+    snprintf(g_prog, sizeof g_prog, "%s" SEP "textures-hd-progress.txt", game);
+    static char names[20000][32], work[20000][32];
+    int n = list_dump(dump, names, 20000), todo = 0, blank = 0;
+    { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); pack_names(tex, 0); qsort(g_have, (size_t)g_nhave, sizeof *g_have, cmp_name); }
+    for (int i = 0; i < n; i++) {
+        if (in_pack(names[i])) continue;
+        char p[700]; snprintf(p, sizeof p, "%s" SEP "%s", dump, names[i]);
+        int w, h, c; unsigned char* px = stbi_load(p, &w, &h, &c, 4);
+        if (!px) continue;
+        int b = 1; for (int k = 1; k < w * h && b; k++) if (memcmp(px + k * 4, px, 4) && (px[k * 4 + 3] || px[3])) b = 0;
+        stbi_image_free(px);
+        if (b) blank++;                                          /* nothing to draw (see-through or one colour): left as it is */
+        else snprintf(work[todo++], 32, "%s", names[i]);
+    }
+    int total = n - blank, done = total - todo;
+    if (!todo) {                                                 /* nothing left: a run cut short before its end says so now */
+        FILE* f = fopen(g_prog, "rb"); char st[16] = "";
+        if (f) { if (fscanf(f, "%15s", st) != 1) st[0] = 0; fclose(f); if (!strcmp(st, "working")) progress("done", 0, total); }
+        return 0;
+    }
+    g_log = fopen(logp, "a");
+    time_t t = time(NULL); logf_("\n%s%d new texture(s) in textures/dump (%d HD already, %d with nothing to draw)\n", ctime(&t), todo, done, blank);
+    mkdir_(hd); mkdir_(tmp);
+    snprintf(in_c, sizeof in_c, "%s" SEP "c", tmp); snprintf(in_a, sizeof in_a, "%s" SEP "a", tmp);
+    snprintf(out_c, sizeof out_c, "%s" SEP "c4", tmp); snprintf(out_a, sizeof out_a, "%s" SEP "a4", tmp);
+    mkdir_(in_c); mkdir_(in_a); mkdir_(out_c); mkdir_(out_a);
+    int made = 0;
+    progress("working", done, total);
+    for (int b = 0; b < todo; b += BATCH) {
+        int k = todo - b < BATCH ? todo - b : BATCH;
+        int m = upscale_batch(dump, hd, tool, in_c, in_a, out_c, out_a, work + b, k);
+        if (m < 0) break;                                        /* Real-ESRGAN can't run: the next run tries again */
+        made += m; done += k;
+        progress("working", done, total);
+    }
 #ifdef _WIN32
     RemoveDirectoryA(in_c); RemoveDirectoryA(in_a); RemoveDirectoryA(out_c); RemoveDirectoryA(out_a); RemoveDirectoryA(tmp);
 #else
     rmdir(in_c); rmdir(in_a); rmdir(out_c); rmdir(out_a); rmdir(tmp);
 #endif
+    if (done >= total) progress("done", made, total);
     logf_("  %d HD texture(s) written to textures/hd\n", made);
     if (g_log) fclose(g_log);
     return made;
@@ -258,6 +436,27 @@ int main(int argc, char** argv) {
 #else
     if (argc > 2 && !strcmp(argv[1], "--game")) snprintf(game, sizeof game, "%s", argv[2]);
 #endif
+    /* one at a time: the game starts this when it starts and when it closes, the
+     * build after an update too. The lock is a file held open: Windows lets it
+     * go when this ends, even with the PC turned off or the process killed */
+    { char tex[600]; snprintf(tex, sizeof tex, "%s" SEP "textures", game); mkdir_(tex); }
+    char lock[700]; snprintf(lock, sizeof lock, "%s" SEP "textures" SEP "hd-auto.lock", game);
+#ifdef _WIN32
+    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);   /* the game comes first (Real-ESRGAN gets it too) */
+    HANDLE lh = CreateFileA(lock, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (lh == INVALID_HANDLE_VALUE) return 0;                   /* another one is at work */
+#else
+    int lfd = open(lock, O_WRONLY | O_CREAT, 0644);
+    if (lfd < 0 || flock(lfd, LOCK_EX | LOCK_NB)) return 0;
+#endif
+    if (getenv("TEXHD_SHARP")) { g_sharp = atoi(getenv("TEXHD_SHARP")); if (g_sharp < 0) g_sharp = 0; if (g_sharp > 100) g_sharp = 100; }
+    old_tmp(game);
+    restyle(game);
     upscale_new(game);
+#ifdef _WIN32
+    CloseHandle(lh);
+#else
+    unlink(lock); close(lfd);
+#endif
     return 0;
 }

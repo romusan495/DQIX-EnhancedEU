@@ -2,35 +2,81 @@
 #include "menu.h"
 #include "controls.h"
 #include "cheats.h"
+#include "uitext.h"
+#include <stdio.h>
+#include <string.h>
+#include <wchar.h>
 
+/* ---------------------------------------------------------------- the menus, on every system
+ * One tree, built by menu_init: the menu bar shows it (Windows) and so does
+ * the in-game menu (gamemenu.c), so both always list the same things. */
+#define MAX_NODES 512
+static MenuNode g_node[MAX_NODES];
+static int g_nnode;
+static unsigned char g_checked[MENU_MAX_ID], g_disabled[MENU_MAX_ID];
+typedef int Menu;                                 /* a submenu: its node; 0 = the bar */
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include "SDL_syswm.h"
-#include <string.h>
-#include <wchar.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-static HWND g_hwnd;
 static HMENU g_bar;
+static HMENU g_hm[MAX_NODES];                     /* each submenu's popup menu */
+#endif
 
-static void item(HMENU m, int id, const wchar_t* text) { AppendMenuW(m, MF_STRING, (UINT_PTR)id, text); }
-static void sep(HMENU m) { AppendMenuW(m, MF_SEPARATOR, 0, NULL); }
-static HMENU sub(HMENU parent, const wchar_t* text) {
-    HMENU m = CreatePopupMenu();
-    AppendMenuW(parent, MF_POPUP, (UINT_PTR)m, text);
-    return m;
+/* L"..." -> UTF-8, as it is ("&Window size\tF3") */
+static void to_utf8(const wchar_t* w, char* o, size_t cap) {
+    for (; *w; w++) {
+        unsigned c = (unsigned)*w;
+        char b[4]; int k;
+        if (c < 0x80) { b[0] = (char)c; k = 1; }
+        else if (c < 0x800) { b[0] = (char)(0xC0 | c >> 6); b[1] = (char)(0x80 | (c & 63)); k = 2; }
+        else { b[0] = (char)(0xE0 | c >> 12); b[1] = (char)(0x80 | ((c >> 6) & 63)); b[2] = (char)(0x80 | (c & 63)); k = 3; }
+        if (cap <= (size_t)k) break;
+        memcpy(o, b, (size_t)k); o += k; cap -= (size_t)k;
+    }
+    *o = 0;
+}
+/* "&Window size\tF3" -> text "Window size", key "F3" */
+static void split(const char* s, MenuNode* n) {
+    char* o = n->text; size_t cap = sizeof n->text;
+    for (; *s; s++) {
+        if (*s == '&') continue;
+        if (*s == '\t') { *o = 0; o = n->key; cap = sizeof n->key; continue; }
+        if (cap > 1) { *o++ = *s; cap--; }
+    }
+    *o = 0;
 }
 
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) {
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(win, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return;
-    g_hwnd = info.info.win.window;
-    g_bar = CreateMenu();
+static int add(Menu parent, int kind, int id, const wchar_t* w, const char* utf8) {
+    if (g_nnode >= MAX_NODES) return 0;
+    int i = g_nnode++;
+    MenuNode* n = &g_node[i];
+    memset(n, 0, sizeof *n);
+    n->parent = (short)parent; n->kind = (short)kind; n->id = id;
+    char u[400];
+    if (w) { to_utf8(w, u, sizeof u); utf8 = u; }
+    if (utf8) { utf8 = T(utf8); split(utf8, n); }           /* in the player's language (uitext.h) */
+#ifdef _WIN32
+    HMENU pm = parent ? g_hm[parent] : g_bar;
+    wchar_t buf[400];
+    w = utf8 && MultiByteToWideChar(CP_UTF8, 0, utf8, -1, buf, 400) ? buf : NULL;
+    if (pm && i > 0) {                                /* (node 0 is the bar itself, not one of its menus) */
+        if (kind == MENU_SUB) { g_hm[i] = CreatePopupMenu(); AppendMenuW(pm, MF_POPUP, (UINT_PTR)g_hm[i], w); }
+        else if (kind == MENU_SEP) AppendMenuW(pm, MF_SEPARATOR, 0, NULL);
+        else AppendMenuW(pm, kind == MENU_LABEL ? MF_STRING | MF_GRAYED : MF_STRING, (UINT_PTR)id, w);
+    }
+#endif
+    return i;
+}
+static void item(Menu m, int id, const wchar_t* text) { add(m, MENU_ITEM, id, text, NULL); }
+static void item8(Menu m, int id, const char* text) { add(m, MENU_ITEM, id, NULL, text); }
+static void label(Menu m, const wchar_t* text) { add(m, MENU_LABEL, 0, text, NULL); }
+static void sep(Menu m) { add(m, MENU_SEP, 0, NULL, NULL); }
+static Menu sub(Menu parent, const wchar_t* text) { return add(parent, MENU_SUB, 0, text, NULL); }
 
-    HMENU game = sub(g_bar, L"&Game");
+static void build(int all, const char* const* shell_names, int n_shells) {
+    g_nnode = 0;
+    add(0, MENU_SUB, 0, L"Menu", NULL);           /* node 0: the bar itself */
+    Menu game = sub(0, L"&Game");
     item(game, MI_PAUSE, L"&Pause\tP");
     item(game, MI_TURBO, L"&Fast forward\t(or hold Tab)");
     item(game, MI_RESET, L"&Reset...\tCtrl+R");
@@ -38,6 +84,8 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(game, MI_VOLUME, L"&Volume...\t- / =");
     item(game, MI_MUTE, L"&Mute");
     item(game, MI_CONTROLS_EDIT, L"&Controls...");
+    item(game, MI_HINTS, L"Show the game's &buttons as on your controller or keyboard");
+    item(game, MI_CONFIRM_BOTTOM, L"Controller: confirm with the &bottom button (Cross / A), cancel with the right one");
     sep(game);
     item(game, MI_SAVEBAK, L"&Keep a copy of every save (save-backups folder)");
     sep(game);
@@ -48,12 +96,12 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
 
     /* all = 0 (the usual): only what the project's own setup uses; the rest
      * keeps working from settings.ini (all_options = 1 shows it again) */
-    HMENU gfx = sub(g_bar, L"G&raphics");
+    Menu gfx = sub(0, L"G&raphics");
     if (all) {
         item(gfx, MI_CLASSIC, L"&Classic: exactly like the DS\tF5");
         item(gfx, MI_ENHANCED, L"&Enhanced: sharper 3D\tF5");
         sep(gfx);
-        HMENU res = sub(gfx, L"3D &resolution (Enhanced)\tF4");
+        Menu res = sub(gfx, L"3D &resolution (Enhanced)\tF4");
         item(res, MI_RES1, L"1x (DS)");
         item(res, MI_RES2, L"2x");
         item(res, MI_RES3, L"3x");
@@ -66,14 +114,17 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(gfx, MI_SMOOTH, L"&Smooth textures (Enhanced)");
     item(gfx, MI_TEXUP, L"&Upscaled textures, xBR (Enhanced)");
     item(gfx, MI_SMOOTH2D, L"Smooth &2D: menus, maps, sprites (Enhanced)");
+    item(gfx, MI_SOFTSHADOW, L"Soft sha&dows in corners and under furniture (Enhanced)");
+    item(gfx, MI_INKLINES, L"Thin dar&k lines round things (Enhanced)");
     if (all) {
-        HMENU oln = sub(gfx, L"Character &outlines (Enhanced)");
+        Menu oln = sub(gfx, L"Character &outlines (Enhanced)");
         item(oln, MI_OUTLINE0, L"Like the &DS");
         item(oln, MI_OUTLINE0 + 1, L"&Thin");
         item(oln, MI_OUTLINE0 + 2, L"&None");
-        HMENU wst = sub(gfx, L"&Window style (Enhanced)");
+        Menu wst = sub(gfx, L"&Window style (Enhanced)");
         item(wst, MI_WINSTYLE0, L"Like the &DS");
         item(wst, MI_WINSTYLE0 + 1, L"&Minimal: no frame, more see-through");
+        item(wst, MI_WINSTYLE0 + 2, L"M&odern: square, dark see-through, a thin grey line");
     }
     sep(gfx);
     item(gfx, MI_TEXPACK, L"&HD textures from the textures folder (Enhanced)");
@@ -81,26 +132,25 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     if (all) item(gfx, MI_TEXDUMP, L"&Dump textures to textures\\dump (for making a pack)");
     sep(gfx);
     item(gfx, MI_HDTEXT, L"HD te&xt (Enhanced)");
-    HMENU fnt = sub(gfx, L"Text &font");
-    item(fnt, MI_FONT0, L"The game's own letters, &smoothed");
+    Menu fnt = sub(gfx, L"Text &font");
     if (all) {
+        item(fnt, MI_FONT0, L"The game's own letters, &smoothed");
         item(fnt, MI_FONT0 + 1, L"&Georgia");
         item(fnt, MI_FONT0 + 2, L"&Palatino Linotype");
         item(fnt, MI_FONT0 + 3, L"&Constantia");
         item(fnt, MI_FONT0 + 4, L"&Times New Roman");
         item(fnt, MI_FONT0 + 5, L"Segoe &UI");
     }
-    sep(fnt);                                                   /* these come with the game (fonts/) */
+    item(fnt, MI_FONT0 + 15, L"&Source Sans 3");               /* these come with the game (fonts/) */
     if (all) {
+        sep(fnt);
         item(fnt, MI_FONT0 + 6, L"&Lora");
         item(fnt, MI_FONT0 + 7, L"C&rimson Pro");
         item(fnt, MI_FONT0 + 8, L"&Alegreya");
         item(fnt, MI_FONT0 + 9, L"Spectral");
         item(fnt, MI_FONT0 + 10, L"&EB Garamond");
         item(fnt, MI_FONT0 + 11, L"P&hilosopher");
-    }
-    item(fnt, MI_FONT0 + 12, L"&Marcellus");
-    if (all) {
+        item(fnt, MI_FONT0 + 12, L"&Marcellus");
         item(fnt, MI_FONT0 + 13, L"&Nunito (rounded)");
         item(fnt, MI_FONT0 + 14, L"&Fredoka (rounded, bold)");
     }
@@ -108,50 +158,52 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(gfx, MI_HDMOVIE, L"HD &movies from the movies folder (Enhanced)");
 
     if (all) {
-        HMENU scr = sub(g_bar, L"&Screen");
+        Menu scr = sub(0, L"&Screen");
         item(scr, MI_LCD, L"&DS Lite screen\tF6");
         sep(scr);
         item(scr, MI_LCDCOL, L"LCD &colours");
         item(scr, MI_GRID, L"&Pixel grid (at 3x and larger)");
         item(scr, MI_GHOST, L"&Motion blur");
-        HMENU bl = sub(scr, L"&Backlight");
+        Menu bl = sub(scr, L"&Backlight");
         item(bl, MI_BL1, L"&Low");
         item(bl, MI_BL2, L"&Medium");
         item(bl, MI_BL3, L"&High");
         item(bl, MI_BL4, L"Ma&x");
     }
 
-    HMENU view = sub(g_bar, L"&View");
+    Menu view = sub(0, L"&View");
     if (all) {
         item(view, MI_SHELL, L"Show the DS &Lite\tF7");
-        HMENU col = sub(view, L"Console &colour");
-        for (int i = 0; i < n_shells; i++) {
-            wchar_t w[64];
-            MultiByteToWideChar(CP_UTF8, 0, shell_names[i], -1, w, 64);
-            item(col, MI_SHELLC0 + i, w);
-        }
+        Menu col = sub(view, L"Console &colour");
+        for (int i = 0; i < n_shells; i++) item8(col, MI_SHELLC0 + i, shell_names[i]);
         item(view, MI_GAP, L"&Gap between the screens");
         item(view, MI_ACTUAL, L"&Actual size (as big as a real DS Lite)\tF8");
         sep(view);
     }
-    HMENU size = sub(view, L"&Window size\tF3");
+    Menu size = sub(view, L"&Window size\tF3");
     item(size, MI_SIZE1, L"1x");
     item(size, MI_SIZE2, L"2x");
     item(size, MI_SIZE3, L"3x");
     item(size, MI_SIZE4, L"4x");
     if (all) item(view, MI_INTEGER, L"&Integer scaling");
     item(view, MI_FULL, L"&Fullscreen\tF11");
+    Menu rd = sub(view, L"&Readability of the options menu (Esc)");
+    item(rd, MI_UICONTRAST, L"Stronger &contrast");
+    sep(rd);
+    item(rd, MI_UISIZE0, L"&Normal text");
+    item(rd, MI_UISIZE0 + 1, L"&Large text");
+    item(rd, MI_UISIZE0 + 2, L"La&rger text");
 
-    HMENU wl = sub(g_bar, L"&Wireless");
+    Menu wl = sub(0, L"&Wireless");
     item(wl, MI_NET, L"&Connect (Nintendo Wi-Fi Connection replacement)");
-    HMENU srv = sub(wl, L"&Server");
+    Menu srv = sub(wl, L"&Server");
     item(srv, MI_SRV_BUILTIN, L"&Built-in (offline: DQIX's preserved downloads)");
     sep(srv);
     item(srv, MI_SRV_ALTWFC, L"&AltWFC (172.104.88.237)");
     item(srv, MI_SRV_WIIMMFI, L"&Wiimmfi (164.132.44.106): not for DQIX");
     item(srv, MI_SRV_CUSTOM, L"&Custom (wfc_server in settings.ini)");
     sep(wl);
-    HMENU friends = sub(wl, L"&Play with friends far away (tag mode, visiting)");
+    Menu friends = sub(wl, L"&Play with friends far away (tag mode, visiting)");
     item(friends, MI_SES_HOST, L"&Host: your friends join you...");
     item(friends, MI_SES_JOIN, L"&Join a friend...");
     item(friends, MI_SES_START, L"&Start now (everyone is here)\tEnter");
@@ -164,14 +216,14 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     sep(wl);
     item(wl, MI_NET_HELP, L"&How does this work?");
 
-    HMENU modern = sub(g_bar, L"&Modern");
+    Menu modern = sub(0, L"&Modern");
     item(modern, MI_ANALOG, L"Walk in any &direction with the left stick");
     if (all) {
         item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
     }
     sep(modern);
     item(modern, MI_MINIMAP, L"Map in the top right co&rner (one window, gone during battles)\tM");
-    HMENU ms = sub(modern, L"Map si&ze");
+    Menu ms = sub(modern, L"Map si&ze");
     item(ms, MI_SSIZE0, L"Small");
     item(ms, MI_SSIZE0 + 1, L"Medium");
     item(ms, MI_SSIZE0 + 2, L"Large");
@@ -179,18 +231,27 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(modern, MI_MAPMARKS_OPENED, L"Map: also mark the ones already &emptied or done (greyed)");
     item(modern, MI_MAPMONSTERS, L"Map: show the m&onsters walking nearby (red dots)");
     item(modern, MI_INTERIOR_MAPS, L"Map: a plan of the &rooms inside buildings (drawn from their walls)");
+    item(modern, MI_MAP_LEGEND, L"Map: a &legend of the marks (under the place's name)");
     sep(modern);
-    HMENU st = sub(modern, L"&Start (takes effect next launch)");
+    item(modern, MI_JOURNAL, L"&Journal: quests, skills, vocations\tJ");
+    item(modern, MI_NAME_TYPING, L"Type the character's &name with the keyboard");
+    sep(modern);
+    Menu st = sub(modern, L"&Start (takes effect next launch)");
     item(st, MI_SKIP0, L"&Logos and opening movie, as on a DS");
     item(st, MI_SKIP0 + 1, L"Skip the &logos");
     item(st, MI_SKIP0 + 2, L"Skip the logos and the opening &movie");
     sep(modern);
-    HMENU bsp = sub(modern, L"&Battle speed");
+    Menu bsp = sub(modern, L"&Battle speed");
     item(bsp, MI_BSPEED1, L"&Normal");
     item(bsp, MI_BSPEED1 + 1, L"&2x");
     item(bsp, MI_BSPEED1 + 2, L"&3x");
+    item(bsp, MI_BSPEED4, L"&4x");
+    sep(bsp);
+    item(bsp, MI_BSPEED_TURN, L"Only while the &turn plays out (commands at the usual pace)");
+    item(bsp, MI_BVICTORY, L"&Victory messages go by themselves (not after a level up)");
+    item(modern, MI_AUTOSAVE, L"Sa&ve by itself every 10 minutes (on the field, as at a church)");
     sep(modern);
-    HMENU farm = sub(modern, L"Farm &gold by itself");
+    Menu farm = sub(modern, L"Farm &gold by itself");
     item(farm, MI_FARM, L"&Farm here now\tCtrl+G");
     item(farm, MI_FARM_TARGET, L"Gold &target...");
     item(farm, MI_FARM_FAST, L"Fast &forward while farming");
@@ -198,30 +259,78 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, in
     item(farm, MI_FARM_HELP, L"&How does it work?");
     sep(modern);
     item(modern, MI_MODERN_HELP, L"&What is this?");
-    HMENU cheat = sub(g_bar, L"&Cheats");                  /* Action Replay codes for this ROM's version (cheats.c) */
-    AppendMenuW(cheat, MF_STRING | MF_GRAYED, 0, cheats_european() ? L"Codes for the European version" : L"Codes for the USA version");
+    Menu cheat = sub(0, L"&Cheats");                  /* Action Replay codes for this ROM's version (cheats.c) */
+    label(cheat, cheats_european() ? L"Codes for the European version" : L"Codes for the USA version");
     sep(cheat);
-    for (int i = 0; i < cheats_count(); i++) {
-        wchar_t w[160];
-        if (MultiByteToWideChar(CP_UTF8, 0, cheats_name(i), -1, w, 160)) item(cheat, MI_CHEAT0 + i, w);
-    }
+    for (int i = 0; i < cheats_count(); i++) item8(cheat, MI_CHEAT0 + i, cheats_name(i));
     sep(cheat);
     item(cheat, MI_CHEATS_HELP, L"&About these cheats");
-    HMENU lang = sub(g_bar, L"&Language");
+    Menu lang = sub(0, L"&Language");
     item(lang, MI_LANG1, L"&English");
     item(lang, MI_LANG1 + 1, L"&Fran\u00e7ais");
     item(lang, MI_LANG1 + 2, L"&Deutsch");
     item(lang, MI_LANG1 + 3, L"&Italiano");
     item(lang, MI_LANG1 + 4, L"E&spa\u00f1ol");
-    HMENU help = sub(g_bar, L"&Help");
+    sep(lang);
+    Menu ul = sub(lang, L"&Menus and messages of this window");
+    item(ul, MI_UILANG0, L"The &game's language");
+    sep(ul);
+    item(ul, MI_UILANG0 + 1, L"&English");
+    item(ul, MI_UILANG0 + 2, L"&Fran\u00e7ais");
+    item(ul, MI_UILANG0 + 3, L"&Deutsch");
+    item(ul, MI_UILANG0 + 4, L"&Italiano");
+    item(ul, MI_UILANG0 + 5, L"E&spa\u00f1ol");
+    Menu help = sub(0, L"&Help");
     item(help, MI_CONTROLS, L"&Controls");
     item(help, MI_UPDATE, L"Check for &updates...");
     item(help, MI_UPDATE_AUTO, L"Check for updates at &start");
     sep(help);
     item(help, MI_SEND_REPORT, L"&Send a bug report...");
     item(help, MI_ABOUT, L"&About");
+}
+
+int menu_nodes(const MenuNode** nodes) { *nodes = g_node; return g_nnode; }
+int menu_checked(int id) { return id > 0 && id < MENU_MAX_ID && g_checked[id]; }
+int menu_enabled(int id) { return !(id > 0 && id < MENU_MAX_ID && g_disabled[id]); }
+static void note_check(int id, int on) { if (id > 0 && id < MENU_MAX_ID) g_checked[id] = (unsigned char)(on != 0); }
+static void note_enable(int id, int on) { if (id > 0 && id < MENU_MAX_ID) g_disabled[id] = (unsigned char)(on == 0); }
+static void note_text(int id, const char* text) {
+    for (int i = 1; i < g_nnode; i++) if (g_node[i].id == id && g_node[i].kind == MENU_ITEM) snprintf(g_node[i].text, sizeof g_node[i].text, "%s", text);
+}
+
+#ifdef _WIN32
+#include "SDL_syswm.h"
+#include <string.h>
+#include <wchar.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static HWND g_hwnd;
+/* a text in the player's language (uitext.h); valid until 15 more calls */
+static const wchar_t* TW(const wchar_t* en) {
+    static char u8[8192];
+    static wchar_t ring[16][4096];
+    static int next;
+    if (!WideCharToMultiByte(CP_UTF8, 0, en, -1, u8, sizeof u8, NULL, NULL)) return en;
+    const char* tr = ui_tr(u8);
+    if (tr == u8) return en;
+    wchar_t* w = ring[next++ & 15];
+    if (!MultiByteToWideChar(CP_UTF8, 0, tr, -1, w, 4096)) return en;
+    return w;
+}
+
+
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) {
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    HMENU old = g_bar;                                /* built again: the language changed */
+    g_bar = NULL;
+    if (SDL_GetWindowWMInfo(win, &info) && info.subsystem == SDL_SYSWM_WINDOWS) { g_hwnd = info.info.win.window; g_bar = CreateMenu(); }
+    build(all, shell_names, n_shells);                /* (the in-game menu needs it even without a bar) */
+    if (!g_bar) return;
 
     SetMenu(g_hwnd, g_bar);
+    if (old) DestroyMenu(old);
     SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
 }
 
@@ -238,7 +347,7 @@ void menu_init_second(SDL_Window* win) {
     g_hwnd2 = NULL;
     if (!win || !SDL_GetWindowWMInfo(win, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return;
     g_hwnd2 = info.info.win.window;
-    if (!g_bar2) { g_bar2 = CreateMenu(); item(g_bar2, MI_FULL2, L"&Fullscreen (F11)"); }
+    if (!g_bar2) { g_bar2 = CreateMenu(); AppendMenuW(g_bar2, MF_STRING, (UINT_PTR)MI_FULL2, TW(L"&Fullscreen (F11)")); }
     SetMenu(g_hwnd2, g_bar2);
     SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
 }
@@ -247,14 +356,17 @@ void menu_show_second(int on) {
 }
 
 void menu_check(int id, int on) {
+    note_check(id, on);
     if (g_bar) CheckMenuItem(g_bar, (UINT)id, MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED));
 }
 
 void menu_enable(int id, int on) {
+    note_enable(id, on);
     if (g_bar) EnableMenuItem(g_bar, (UINT)id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
 }
 
 void menu_set_text(int id, const char* text) {
+    note_text(id, text);
     wchar_t w[200];
     if (!g_bar || !MultiByteToWideChar(CP_UTF8, 0, text, -1, w, 200)) return;
     MENUITEMINFOW mi = { sizeof mi };
@@ -307,6 +419,36 @@ float display_mm_per_pixel(SDL_Window* win) {
     return 0;
 }
 
+/* Buttons sized to their words (a translation can be longer than the English):
+ * laid out from the first one's left edge, or (right) so that the last one
+ * keeps its right edge, with the gaps they had. */
+static void fit_buttons(HWND h, const int* ids, int n, int right) {
+    if (n < 1 || n > 8) return;
+    HDC dc = GetDC(h);
+    HGDIOBJ old = SelectObject(dc, (HFONT)SendMessageW(h, WM_GETFONT, 0, 0));
+    RECT pad = { 6, 0, 0, 0 }; MapDialogRect(h, &pad);
+    RECT r[8]; int w[8], total = 0;
+    for (int i = 0; i < n; i++) {
+        HWND b = GetDlgItem(h, ids[i]);
+        GetWindowRect(b, &r[i]); MapWindowPoints(NULL, h, (POINT*)&r[i], 2);
+        wchar_t t[200]; SIZE sz = { 0, 0 };
+        int len = GetWindowTextW(b, t, 200);
+        GetTextExtentPoint32W(dc, t, len, &sz);
+        w[i] = r[i].right - r[i].left;
+        if (w[i] < sz.cx + 2 * pad.left) w[i] = sz.cx + 2 * pad.left;
+        total += w[i];
+    }
+    SelectObject(dc, old);
+    ReleaseDC(h, dc);
+    int gap = n > 1 ? r[1].left - r[0].right : 0;
+    total += gap * (n - 1);
+    int x = right ? r[n - 1].right - total : r[0].left;
+    for (int i = 0; i < n; i++) {
+        SetWindowPos(GetDlgItem(h, ids[i]), NULL, x, r[i].top, w[i], r[i].bottom - r[i].top, SWP_NOZORDER);
+        x += w[i] + gap;
+    }
+}
+
 /* ---------------------------------------------------------------- text box (bug descriptions)
  * A dialog built in memory: a prompt, a large multi-line edit box, and
  * Save / Skip buttons. */
@@ -316,10 +458,13 @@ static wchar_t* g_text_out;
 static INT_PTR CALLBACK text_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     switch (msg) {
-    case WM_INITDIALOG:
+    case WM_INITDIALOG: {
+        static const int b[] = { IDOK, IDCANCEL };
+        fit_buttons(h, b, 2, 1);
         SendDlgItemMessageW(h, ID_TEXT, EM_SETLIMITTEXT, 1 << 20, 0);
         SetFocus(GetDlgItem(h, ID_TEXT));
         return FALSE;
+    }
     case WM_COMMAND:
         if (LOWORD(wp) == IDOK) {
             int n = GetWindowTextLengthW(GetDlgItem(h, ID_TEXT));
@@ -430,6 +575,7 @@ static INT_PTR CALLBACK choice_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 int choice_box(SDL_Window* win, const char* title, const char* text, const char* const* buttons, int n, int def, int cancel,
                const char* check, int* checked) {
     if (n < 1 || n > 8) return -1;
+    title = T(title); text = T(text); if (check) check = T(check);     /* in the player's language */
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
     HWND parent = NULL;
@@ -454,7 +600,7 @@ int choice_box(SDL_Window* win, const char* title, const char* text, const char*
     p = put_item(p, SS_NOPREFIX, 0, 0, 10, 10, CB_TEXT, 0x82, t);
     if (check) { MultiByteToWideChar(CP_UTF8, 0, check, -1, w, 8192); p = put_item(p, WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 10, 10, CB_CHECK, 0x80, w); }
     for (int i = 0; i < n; i++) {
-        MultiByteToWideChar(CP_UTF8, 0, buttons[i], -1, w, 8192);
+        MultiByteToWideChar(CP_UTF8, 0, T(buttons[i]), -1, w, 8192);
         p = put_item(p, WS_TABSTOP | (i == def ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON), 0, 0, 10, 10, (WORD)(CB_BUTTON + i), 0x80, w);
     }
     ChoiceInfo ci = { n, def, cancel, check != NULL, checked ? *checked : 0 };
@@ -469,8 +615,8 @@ char* ask_text(SDL_Window* win, const char* title, const char* prompt) {
     SDL_VERSION(&info.version);
     if (!SDL_GetWindowWMInfo(win, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return NULL;
     wchar_t wtitle[200], wprompt[1000];
-    MultiByteToWideChar(CP_UTF8, 0, title, -1, wtitle, 200);
-    MultiByteToWideChar(CP_UTF8, 0, prompt, -1, wprompt, 1000);
+    MultiByteToWideChar(CP_UTF8, 0, T(title), -1, wtitle, 200);
+    MultiByteToWideChar(CP_UTF8, 0, T(prompt), -1, wprompt, 1000);
     static WORD buf[4096];
     memset(buf, 0, sizeof buf);
     DLGTEMPLATE* d = (DLGTEMPLATE*)align4(buf);
@@ -482,8 +628,8 @@ char* ask_text(SDL_Window* win, const char* title, const char* prompt) {
     *p++ = 9; p = put_str(p, L"Segoe UI");                       /* font */
     p = put_item(p, 0, 7, 7, 326, 34, 0xFFFF, 0x82, wprompt);
     p = put_item(p, WS_BORDER | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN, 7, 44, 326, 158, ID_TEXT, 0x81, L"");
-    p = put_item(p, WS_TABSTOP | BS_DEFPUSHBUTTON, 213, 208, 60, 15, IDOK, 0x80, L"Save");
-    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 277, 208, 56, 15, IDCANCEL, 0x80, L"Skip");
+    p = put_item(p, WS_TABSTOP | BS_DEFPUSHBUTTON, 213, 208, 60, 15, IDOK, 0x80, TW(L"Save"));
+    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 277, 208, 56, 15, IDCANCEL, 0x80, TW(L"Skip"));
     g_text_out = NULL;
     INT_PTR r = DialogBoxIndirectParamW(GetModuleHandleW(NULL), d, info.info.win.window, text_proc, 0);
     if (r != 1 || !g_text_out) { free(g_text_out); g_text_out = NULL; return NULL; }
@@ -660,12 +806,12 @@ void volume_window_open(SDL_Window* win, int* volume, int* mute) {
     d->cdit = 4; d->cx = 220; d->cy = 70;
     WORD* p = (WORD*)(d + 1);
     *p++ = 0; *p++ = 0;
-    p = put_str(p, L"Volume");
+    p = put_str(p, TW(L"Volume"));
     *p++ = 10; p = put_str(p, L"Segoe UI");
     p = put_item(p, WS_TABSTOP | SBS_HORZ, 8, 10, 168, 12, ID_VOL_BAR, 0x84, L"");
     p = put_item(p, 0, 182, 11, 32, 10, ID_VOL_TEXT, 0x82, L"");
-    p = put_item(p, WS_TABSTOP | BS_AUTOCHECKBOX, 8, 30, 120, 12, ID_VOL_MUTE, 0x80, L"Mute");
-    p = put_item(p, WS_TABSTOP | BS_DEFPUSHBUTTON, 160, 48, 54, 15, IDOK, 0x80, L"Close");
+    p = put_item(p, WS_TABSTOP | BS_AUTOCHECKBOX, 8, 30, 120, 12, ID_VOL_MUTE, 0x80, TW(L"Mute"));
+    p = put_item(p, WS_TABSTOP | BS_DEFPUSHBUTTON, 160, 48, 54, 15, IDOK, 0x80, TW(L"Close"));
     g_vol = CreateDialogIndirectParamW(GetModuleHandleW(NULL), d, info.info.win.window, vol_proc, 0);
 }
 void volume_window_refresh(void) { if (g_vol) { SetScrollPos(GetDlgItem(g_vol, ID_VOL_BAR), SB_CTL, *g_vol_val, TRUE); vol_show(g_vol); } }
@@ -682,8 +828,8 @@ static HWND g_ctlw;
 static int g_ctl_req = -1, g_ctl_req_what;
 static void ctl_status(HWND h) {                            /* which controller is connected (checked every second) */
     char st[160]; wchar_t ws[160], cur[160];
-    if (g_ctl_pad_label[0]) snprintf(st, sizeof st, "Controller: %s", g_ctl_pad_label);
-    else snprintf(st, sizeof st, "No controller connected");
+    if (g_ctl_pad_label[0]) snprintf(st, sizeof st, T("Controller: %s"), g_ctl_pad_label);
+    else snprintf(st, sizeof st, "%s", T("No controller connected"));
     MultiByteToWideChar(CP_UTF8, 0, st, -1, ws, 160); ws[159] = 0;
     GetDlgItemTextW(h, ID_CTL_STATUS, cur, 160);
     if (wcscmp(cur, ws)) SetDlgItemTextW(h, ID_CTL_STATUS, ws);
@@ -698,7 +844,7 @@ static void ctl_fill(HWND h) {
         char k0[64], k1[64], pd[64], row[300];
         controls_key_name(g_ctl_key[a][0], k0, sizeof k0); controls_key_name(g_ctl_key[a][1], k1, sizeof k1);
         controls_pad_name(g_ctl_pad[a], pd, sizeof pd);
-        snprintf(row, sizeof row, "%s\t%s\t%s\t%s", g_ctl[a].name, k0, k1, pd);
+        snprintf(row, sizeof row, "%s\t%s\t%s\t%s", T(g_ctl[a].name), T(k0), T(k1), T(pd));
         wchar_t w[300]; MultiByteToWideChar(CP_UTF8, 0, row, -1, w, 300); w[299] = 0;
         SendMessageW(l, LB_ADDSTRING, 0, (LPARAM)w);
     }
@@ -712,6 +858,13 @@ static INT_PTR CALLBACK ctl_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_INITDIALOG: {
         int tabs[3] = { 172, 228, 284 };                          /* dialog units: action | key | key | controller */
         SendDlgItemMessageW(h, ID_CTL_LIST, LB_SETTABSTOPS, 3, (LPARAM)tabs);
+        static const int row1[] = { ID_CTL_K1, ID_CTL_K2, ID_CTL_PAD, ID_CTL_CLEAR }, row2[] = { ID_CTL_DEFAULTS };
+        fit_buttons(h, row1, 4, 0);
+        fit_buttons(h, row2, 1, 0);
+        { RECT d, s; GetWindowRect(GetDlgItem(h, ID_CTL_DEFAULTS), &d); GetWindowRect(GetDlgItem(h, ID_CTL_STATUS), &s);   /* the status after it */
+          MapWindowPoints(NULL, h, (POINT*)&d, 2); MapWindowPoints(NULL, h, (POINT*)&s, 2);
+          RECT g = { 6, 0, 0, 0 }; MapDialogRect(h, &g);
+          if (s.left < d.right + g.left) SetWindowPos(GetDlgItem(h, ID_CTL_STATUS), NULL, d.right + g.left, s.top, s.right - d.right - g.left, s.bottom - s.top, SWP_NOZORDER); }
         ctl_fill(h);
         SendDlgItemMessageW(h, ID_CTL_LIST, LB_SETCURSEL, 0, 0);
         SetTimer(h, 1, 1000, NULL);
@@ -736,7 +889,7 @@ static INT_PTR CALLBACK ctl_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return TRUE;
         case ID_CTL_DEFAULTS:
-            if (MessageBoxW(h, L"Put every key and button back to how the game came?", L"Controls", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            if (MessageBoxW(h, TW(L"Put every key and button back to how the game came?"), TW(L"Controls"), MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 controls_defaults(); controls_save(); ctl_fill(h);
             }
             return TRUE;
@@ -757,23 +910,25 @@ void controls_window_open(SDL_Window* win) {
     memset(buf, 0, sizeof buf);
     DLGTEMPLATE* d = (DLGTEMPLATE*)align4(buf);
     d->style = DS_MODALFRAME | DS_CENTER | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
-    d->cdit = 11; d->cx = 400; d->cy = 290;
+    d->cdit = 13; d->cx = 400; d->cy = 290;
     WORD* p = (WORD*)(d + 1);
     *p++ = 0; *p++ = 0;
-    p = put_str(p, L"Controls");
+    p = put_str(p, TW(L"Controls"));
     *p++ = 9; p = put_str(p, L"Segoe UI");
-    p = put_item(p, 0, 8, 6, 384, 18, 0xFFFF, 0x82, L"Pick an action, then change one of its keys or its controller button. A key or button that "
-                 "another action has moves over to it (they swap). Esc and Alt+Enter, and the sticks, stay as they are.");
-    p = put_item(p, 0, 8, 28, 170, 9, 0xFFFF, 0x82, L"Action");
-    p = put_item(p, 0, 180, 28, 210, 9, 0xFFFF, 0x82, L"Key          Second key    Controller");
+    p = put_item(p, 0, 8, 6, 384, 18, 0xFFFF, 0x82, TW(L"Pick an action, then change one of its keys or its controller button. A key or button that "
+                 "another action has moves over to it (they swap). Esc and Alt+Enter, and the sticks, stay as they are."));
+    p = put_item(p, 0, 8, 28, 170, 9, 0xFFFF, 0x82, TW(L"Action"));
+    p = put_item(p, 0, 180, 28, 56, 9, 0xFFFF, 0x82, TW(L"Key"));                 /* over the list's tab stops */
+    p = put_item(p, 0, 236, 28, 56, 9, 0xFFFF, 0x82, TW(L"Second key"));
+    p = put_item(p, 0, 292, 28, 100, 9, 0xFFFF, 0x82, TW(L"Controller"));
     p = put_item(p, WS_BORDER | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_USETABSTOPS | LBS_NOINTEGRALHEIGHT, 8, 39, 384, 196, ID_CTL_LIST, 0x83, L"");
-    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 8, 241, 72, 15, ID_CTL_K1, 0x80, L"Change key...");
-    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 84, 241, 82, 15, ID_CTL_K2, 0x80, L"Second key...");
-    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 170, 241, 92, 15, ID_CTL_PAD, 0x80, L"Controller button...");
-    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 266, 241, 54, 15, ID_CTL_CLEAR, 0x80, L"Clear");
-    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 8, 266, 100, 15, ID_CTL_DEFAULTS, 0x80, L"Restore defaults");
+    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 8, 241, 72, 15, ID_CTL_K1, 0x80, TW(L"Change key..."));
+    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 84, 241, 82, 15, ID_CTL_K2, 0x80, TW(L"Second key..."));
+    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 170, 241, 92, 15, ID_CTL_PAD, 0x80, TW(L"Controller button..."));
+    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 266, 241, 54, 15, ID_CTL_CLEAR, 0x80, TW(L"Clear"));
+    p = put_item(p, WS_TABSTOP | BS_PUSHBUTTON, 8, 266, 100, 15, ID_CTL_DEFAULTS, 0x80, TW(L"Restore defaults"));
     p = put_item(p, SS_LEFTNOWORDWRAP, 114, 269, 218, 9, ID_CTL_STATUS, 0x82, L"");
-    p = put_item(p, WS_TABSTOP | BS_DEFPUSHBUTTON, 338, 266, 54, 15, IDOK, 0x80, L"Close");
+    p = put_item(p, WS_TABSTOP | BS_DEFPUSHBUTTON, 338, 266, 54, 15, IDOK, 0x80, TW(L"Close"));
     g_ctlw = CreateDialogIndirectParamW(GetModuleHandleW(NULL), d, info.info.win.window, ctl_proc, 0);
 }
 int controls_window_request(int* action, int* what) {
@@ -795,13 +950,13 @@ int choice_box(SDL_Window* win, const char* title, const char* text, const char*
                const char* check, int* checked) { (void)win; (void)title; (void)text; (void)buttons; (void)n; (void)def; (void)cancel; (void)check; (void)checked; return -1; }
 char* ask_text(SDL_Window* win, const char* title, const char* prompt) { (void)win; (void)title; (void)prompt; return NULL; }
 float display_mm_per_pixel(SDL_Window* win) { (void)win; return 0; }
-void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) { (void)win; (void)shell_names; (void)n_shells; (void)all; }
+void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) { (void)win; build(all, shell_names, n_shells); }
 void menu_show(int on) { (void)on; }
 void menu_init_second(SDL_Window* win) { (void)win; }
 void menu_show_second(int on) { (void)on; }
-void menu_check(int id, int on) { (void)id; (void)on; }
-void menu_enable(int id, int on) { (void)id; (void)on; }
-void menu_set_text(int id, const char* text) { (void)id; (void)text; }
+void menu_check(int id, int on) { note_check(id, on); }
+void menu_enable(int id, int on) { note_enable(id, on); }
+void menu_set_text(int id, const char* text) { note_text(id, text); }
 int menu_command(const SDL_Event* e) { (void)e; return 0; }
 int session_window_open(SDL_Window* win) { (void)win; return 0; }
 void volume_window_open(SDL_Window* win, int* volume, int* mute) { (void)win; (void)volume; (void)mute; }

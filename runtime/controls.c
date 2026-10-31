@@ -33,6 +33,8 @@ const ControlAction g_ctl[CA_N] = {
     [CA_RESET] = { "reset", "Reset the game", -1 },
     [CA_SHOT] = { "screenshot", "Screenshot", -1 },
     [CA_REPORT] = { "bug_report", "Bug report", -1 },
+    [CA_MENU] = { "menu", "Options menu (in the game; Esc too)", -1 },
+    [CA_JOURNAL] = { "journal", "Journal (quests, skills, vocations)", -1 },
 };
 
 int g_ctl_key[CA_N][2];
@@ -51,6 +53,7 @@ void controls_defaults(void) {
     K(CA_LCD, SDL_SCANCODE_F6, 0); K(CA_SHELL, SDL_SCANCODE_F7, 0); K(CA_ACTUAL, SDL_SCANCODE_F8, 0);
     K(CA_VOLDOWN, SDL_SCANCODE_MINUS, 0); K(CA_VOLUP, SDL_SCANCODE_EQUALS, 0);
     K(CA_RESET, SDL_SCANCODE_R | CTL_MOD_CTRL, 0); K(CA_SHOT, SDL_SCANCODE_F12, 0); K(CA_REPORT, SDL_SCANCODE_F10, 0);
+    K(CA_JOURNAL, SDL_SCANCODE_J, 0);
 #undef K
     /* the controller by position (like a DS): right = A, bottom = B, top = X, left = Y */
     g_ctl_pad[CA_A] = SDL_CONTROLLER_BUTTON_B; g_ctl_pad[CA_B] = SDL_CONTROLLER_BUTTON_A;
@@ -60,6 +63,8 @@ void controls_defaults(void) {
     g_ctl_pad[CA_UP] = SDL_CONTROLLER_BUTTON_DPAD_UP; g_ctl_pad[CA_DOWN] = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
     g_ctl_pad[CA_LEFT] = SDL_CONTROLLER_BUTTON_DPAD_LEFT; g_ctl_pad[CA_RIGHT] = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
     g_ctl_pad[CA_MINIMAP] = SDL_CONTROLLER_BUTTON_RIGHTSTICK;     /* R3 */
+    g_ctl_pad[CA_MENU] = SDL_CONTROLLER_BUTTON_GUIDE;             /* the PS / Xbox / Home button */
+    g_ctl_pad[CA_JOURNAL] = SDL_CONTROLLER_BUTTON_LEFTSTICK;      /* L3 */
 }
 
 /* ---------------------------------------------------------------- names */

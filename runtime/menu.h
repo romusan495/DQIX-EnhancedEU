@@ -21,21 +21,31 @@ enum {
     MI_SSIZE0 = 254,                                                    /* + 0..2: small, medium, large */
     MI_SEND_REPORT = 210,
     MI_LANG1 = 270,                                                     /* English, French, German, Italian, Spanish (+0..4) */
+    MI_UILANG0 = 420,                                                   /* the menus' language: the game's, then English... Spanish (+0..5, uitext.h) */
+    MI_UICONTRAST = 426, MI_UISIZE0,                                    /* View > Readability of the options menu: stronger contrast; text normal, large, larger (+0..2) */
     MI_TEXPACK = 280, MI_TEXDUMP, MI_TEXRELOAD, MI_HDTEXT, MI_SMOOTH2D, MI_TEXUP,
     MI_FARM = 300, MI_FARM_TARGET, MI_FARM_FAST, MI_FARM_HELP,             /* Modern > Farm gold by itself (farm.c) */
     MI_OUTLINE0 = 296,                                                  /* outlines: the DS's, thin, none (+0..2) */
     MI_FONT0 = 600,                                                     /* HD text fonts (+0..N_FONTS-1, see g_fonts in frontend_sdl.c) */
     MI_HDMOVIE = 310,                                                   /* HD movies from the movies folder */
     MI_HUD = 320, MI_MINIMAP,                                           /* widescreen battles: the HUD over the 3D; the map in the corner (one window) */
-    MI_WINSTYLE0 = 330,                                                 /* windows: like the DS, minimal (+0..1) */
+    MI_WINSTYLE0 = 330,                                                 /* windows: like the DS, minimal, modern (+0..2) */
     MI_MAPMARKS = 340, MI_MAPMARKS_OPENED, MI_MAPMONSTERS, MI_INTERIOR_MAPS,   /* the map: chests, pots and barrels marked, the monsters nearby, houses' plans (mapmarks.c) */
+    MI_MAP_LEGEND = 345,                                                /* the map: a legend of its marks (mapmarks.c) */
+    MI_HINTS = 346, MI_CONFIRM_BOTTOM,                                  /* the game's DS buttons as the player's own (hints.c); the controller's A on its bottom button */
     MI_BSPEED1 = 350,                                                   /* battle speed: normal, 2x, 3x (+0..2) */
+    MI_BSPEED4 = 410, MI_BSPEED_TURN, MI_BVICTORY,                      /* ...4x; only while the turn plays out; the victory's messages by themselves */
     MI_SAVEBAK = 360,                                                   /* keep a copy of every save (card.c) */
+    MI_AUTOSAVE = 365,                                                  /* Modern > Save by itself every 10 minutes (autosave.c) */
     MI_CHEATS_HELP = 370,
+    MI_NAME_TYPING = 800,                                               /* Modern > Type the name with the keyboard (the character's creation) */
+    MI_JOURNAL = 400,                                                   /* Modern > Journal: quests, progress, vocations (journal.c) */
     MI_SKIP0 = 380,                                                     /* Modern > Start: as on a DS, skip the logos, skip the movie too (+0..2, bootskip.c) */                                               /* Cheats > About these cheats */
+    MI_SOFTSHADOW = 390,                                                /* Graphics > Soft shadows in corners (gl_render.c FS_POST) */
+    MI_INKLINES = 391,                                                  /* Graphics > Thin dark lines round things (FS_POST) */
     MI_CHEAT0 = 700,                                                    /* Cheats: one per code (+0..cheats_count()-1, cheats.c) */
 };
-#define N_FONTS 15                                                      /* MI_FONT0 + i */
+#define N_FONTS 16                                                      /* MI_FONT0 + i */
 
 /* shell_names: the console colours, in order (MI_SHELLC0 + i); all: every
  * option, else only the project's own setup (the rest from settings.ini) */
@@ -48,6 +58,16 @@ void menu_check(int id, int on);
 void menu_enable(int id, int on);
 void menu_set_text(int id, const char* text);   /* UTF-8 */
 int menu_command(const SDL_Event* e);         /* the chosen item, or 0 */
+
+/* The menus as menu_init built them, on every system (the in-game menu,
+ * gamemenu.c, shows the same tree as the bar): node 0 is the bar, every other
+ * node names its parent. Check marks and greyed items as the frontend set them. */
+enum { MENU_ITEM, MENU_SUB, MENU_SEP, MENU_LABEL };
+#define MENU_MAX_ID 1024
+typedef struct { short parent, kind; int id; char text[160], key[24]; } MenuNode;   /* text and key (shortcut) in UTF-8 */
+int menu_nodes(const MenuNode** nodes);
+int menu_checked(int id);
+int menu_enabled(int id);
 
 /* Size of one pixel of the monitor the window is on, in millimetres, from
  * the monitor's own description of itself (EDID). 0 if unknown. */

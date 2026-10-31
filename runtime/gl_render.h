@@ -4,6 +4,13 @@
 #include <stdint.h>
 #include "gpu3d.h"
 
+/* Pictures drawn over the screens besides the map's and the shop's (gl_set_layer):
+ * one per user, in drawing order. Each is placed every frame by GlPresent.layer. */
+enum { GL_LAYER_HINT,                                 /* a button's sign over the game's (hints.c) */
+       GL_LAYER_STAMP,                                /* a quest sheet's Complete! stamp, drawn again (frontend_sdl.c quest_stamp) */
+       GL_LAYER_HDBAR,                                /* how far textures-hd is, and its "done" message (frontend_sdl.c hdbar_update) */
+       GL_LAYERS };
+
 int gl_render_init(int scale);                        /* 0 on failure (use the software path) */
 void gl_render_set_scale(int scale);
 #define GL_MAX_SCALE 12                               /* the highest 3D resolution offered */
@@ -12,9 +19,12 @@ void gl_set_smooth(int on);                           /* smooth textures (filter
 void gl_set_texture_pack(int on);                     /* HD textures: textures/<name>.png drawn instead of the game's */
 void gl_set_texture_dump(int on);                     /* write every new texture to textures/dump/ (for making a pack) */
 void gl_set_outline(int mode);                         /* Enhanced: characters' outlines: 0 the DS's, 1 thin, 2 none */
+void gl_set_soft_shadows(int on);                     /* Enhanced: soft shadows in corners and under things */
+void gl_set_ink_lines(int on);                        /* Enhanced: thin dark lines round things */
 void gl_set_smooth2d(int on);                         /* Enhanced: the 2D screens smoothed (xBR) */
 void gl_set_tex_upscale(int on);                      /* Enhanced: the 3D textures upscaled (xBR, 4x) */
 int gl_reload_texture_pack(void);                     /* look in textures/ again; how many were found */
+void gl_textures_hd_start(void);                      /* Windows: textures-hd.exe at work in the background (it goes on with one cut short) */
 const Renderer3D* gl_renderer3d(void);
 void gl_compose(int a_on_top, int lcd_on);           /* at VBlank: 2D + 3D -> both screens */
 /* How to show the screens: canvas (DS pixels) placed in the window at
@@ -34,19 +44,32 @@ typedef struct {
     int skin;                                         /* draw the console photo (gl_set_skin) instead */
     float skin_k;                                     /* photo pixels per canvas unit */
     int npiece;                                       /* parts of a screen drawn over the canvas (widescreen battle HUD) */
-    float piece[8][9];                                /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom); x, y, w, h on it */
+    float piece[16][10];                               /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom; 2, 3: its 2D alone, gl_set_split()); x, y, w, h on it;
+                                                       * restyled (1 its dark letters alone, made light; 2 no picture: a window of the minimal style;
+                                                       * 3 its light letters alone; 4 no picture: a thin grey line; 5 its red ink alone, cleaned; 6 as 1, kept sharp when small, red ink left out;
+                                                       * 7 as 2, solid inside; 8 an item's rarity stars, off their plate; 9 its word's letters) */
     int held;                                         /* show the picture kept by gl_hold() instead of this frame's */
     float overlay[4];                                 /* where to draw gl_set_overlay()'s picture on the canvas (w 0: not) */
+    float icons[4];                                   /* ...and gl_set_icons()' */
+    float layer[GL_LAYERS][4];                        /* ...and each gl_set_layer()'s (w 0: not this frame) */
 } GlPresent;
-#define GL_MAX_PIECES 8
+#define GL_MAX_PIECES 16
 void gl_hold(void);                                   /* keep this frame's picture (the map window during battles) */
 void gl_set_skin(const uint8_t* rgba, int w, int h);
+void gl_set_menu(const uint8_t* rgba, int w, int h);      /* the in-game menu over the whole window (premultiplied RGBA, rows top-down; NULL: none) */
+void gl_set_menu_box(const float* b);                     /* ...its window drawn under it in the minimal style: x0 y0 x1 y1 (window pixels, y down), line width (NULL: none) */
 void gl_set_overlay(const uint8_t* rgba, int w, int h);   /* a picture over the screens (premultiplied RGBA, rows top-down; NULL: none) */
+void gl_set_icons(const uint8_t* rgba, int w, int h);     /* another (a shop's icons), drawn after it */
+void gl_set_layer(int id, const uint8_t* rgba, int w, int h);   /* more pictures (GL_LAYER_...), drawn after those in id order, under the in-game menu; NULL: none */
 void gl_present(const GlPresent* v);
 uint8_t* gl_read_window(int w, int h);
 int gl_wide_shown(int* side);                         /* widescreen: the screen composed wide (0 top, 1 bottom, -1 none) */
 int gl_3d_ready(void);                                /* this frame's 3D is there to compose */
 void gl_set_hud_cut(int on);                          /* the next gl_compose(): the commands screen's card backdrops see-through (battle HUD, minimal windows) */
+void gl_set_split(int on);                            /* the next gl_compose(): the 3D screen (widescreen) drawn without its 2D, which pieces 2/3 show apart */
+float gl_3d_centre_w(void);                          /* the last 3D frame: how far (w) its polygons in the middle of the picture are, by area (0: none) */
+void gl_set_top_cut(int on);                          /* the next gl_compose(): the top screen's pixels tagged 1 (top byte) see-through (its pop-up) */
+int gl_dialog_box(int r[4]);                          /* the dialogue window on the last 3D frame: x0, y0, x1, y1 on the DS's picture; 0 when none */
 uint8_t* gl_read_full(int* w, int* h);
 void gl_read_screens(uint32_t out[2][256 * 192]);
 int gl_read_3d(uint8_t* out, int* w, int* h);

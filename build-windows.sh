@@ -19,6 +19,8 @@ mkdir -p "$OUT/skins"
 cp skins/*.png skins/*.txt "$OUT/skins/" 2>/dev/null || true     # console photos (View > Console colour)
 mkdir -p "$OUT/fonts"
 cp fonts/*.ttf fonts/*.txt "$OUT/fonts/" 2>/dev/null || true     # the HD text's fonts (Graphics > Text font)
+mkdir -p "$OUT/lang"
+cp lang/*.txt "$OUT/lang/" 2>/dev/null || true           # the menus' and messages' translations (Language menu)
 for g in wfc/*/; do                                              # the built-in Wi-Fi server's files (Wireless menu)
     [ -f "$g/_list.txt" ] || continue
     mkdir -p "$OUT/$g" && cp "$g"* "$OUT/$g"

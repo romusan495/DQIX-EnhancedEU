@@ -51,11 +51,13 @@
 #include "nds.h"
 #include "text.h"
 #include "mapmarks.h"
+#include "romdata.h"
 
 int g_mapmarks = 1;
 int g_mapmarks_opened = 1;
 int g_mapmarks_monsters = 1;
 int g_interior_maps = 1;
+int g_map_legend = 1;
 
 /* ---------------------------------------------------------------- the game's memory */
 #define FIELD_PTR   0x0F33E0       /* 0 until an adventure is loaded (farm.c) */
@@ -290,9 +292,7 @@ static uint8_t* gpc_file(const uint8_t* d, uint32_t n, const char* name, uint32_
 }
 
 /* ---------------------------------------------------------------- the script format */
-#define REC_MAX 64
-typedef struct { int tag, n; uint8_t type[REC_MAX]; uint32_t v[REC_MAX]; } Rec;   /* n: the words kept (at most REC_MAX) */
-
+/* (Rec: romdata.h) */
 /* The next record from *p (stops at `end` or the 0xFFFF end mark). */
 static int rec_next(const uint8_t* b, uint32_t end, uint32_t* p, Rec* r) {
     if (*p + 4 > end) return 0;
@@ -538,7 +538,7 @@ static void load_quest_texts(int lang) {
 
 /* ---------------------------------------------------------------- what each place holds */
 enum { K_CHEST, K_GOLD, K_BLUE, K_POT, K_BARREL, K_UNKNOWN, K_SHELF, K_QUEST };
-typedef struct { float x, z; int kind, flag, idx; uint16_t what; } Spot;   /* flag: a container's; idx: a shelf's number, a quest */
+typedef struct { float x, z; int kind, flag, idx; uint16_t what; int rank; } Spot;   /* flag: a container's; idx: a shelf's number, a quest; rank: a chest's (1-10, 0: none) */
 typedef struct { int loaded, n; Spot* s; } Held;
 static Held* g_held;                                             /* per place (g_places' order), read when first needed */
 
@@ -567,6 +567,7 @@ static void load_treasure(Held* h, const Place* pl) {
         case 0x10: x.kind = K_POT; break;
         case 0x20: x.kind = K_BARREL; break;
         }
+        if (x.kind == K_BLUE && x.what >= 1 && x.what <= 10) x.rank = x.what;   /* a blue chest holds something of its rank */
         x.flag += x.kind == K_CHEST || x.kind == K_GOLD || x.kind == K_UNKNOWN ? FLAG_CHEST : FLAG_OTHER;
         add_spot(h, &x);
     }
@@ -643,6 +644,88 @@ static int spot_done(const Spot* b) { return b->kind == K_QUEST ? quest_state(b-
 /* Shown at all: a quest once the game offers it. */
 static int spot_shown(const Spot* b) { return b->kind != K_QUEST || quest_state(b->idx) > 0; }
 static int same_spot(const Spot* a, const Spot* b) { return fabsf(a->x - b->x) < 0.5f && fabsf(a->z - b->z) < 0.5f; }
+
+/* ---------------------------------------------------------------- the grottoes
+ * A treasure map's grotto (maps 40001...) is made anew on each floor: its
+ * chests are only in the game's memory.
+ *  - the map manager (0x020FB3F0): the floor's chests, how many (u8) at
+ *    +0x477, the records at [+0x47C], 0x24 bytes each: x, height, z (20.12),
+ *    +0x16 the state (8 once opened), +0x1C its number; what chest number
+ *    holds at [+0x2724] + 0x14 * number: u16 +2 the item (or the gold), +4
+ *    bits 2-3 what it is (2 an item, 1 gold; cleared once opened).
+ *  - the grotto's map picture is drawn like a town's (see above).
+ *  - the ranks (1 the lowest, I, to 10, S): while a floor's things are
+ *    placed (func_0201afd0), ActiveGrottoClass::RandomizeChestRank gives
+ *    one per chest, in their order (hooks.txt); the chest's contents are
+ *    drawn from data/scenario/treasure.nsarc's randTD.bin by that rank.
+ *  - the treasure map being followed (0x020F97BC): +0 set, +6 its monsters'
+ *    rank, +0xC the field it opens on, +0x10 the way in (x, height, z,
+ *    20.12), +0x6C bits 0-2 how far it is known (2 and 3: found). A floor's
+ *    monster rank is +6 + (floor - 1) / 4; its chests' ranks are drawn
+ *    between two that follow from it (rank_range), floors 1 and 2 have none. */
+#define GROTTO_FIRST 40001
+#define GROTTO_LAST  41505
+#define GR_COUNT     (MAP_NUM + 0x477)
+#define GR_CHESTS    (MAP_NUM + 0x47C)
+#define GR_HOLDS     (MAP_NUM + 0x2724)
+#define TMAP         0x0F97BC
+#define GR_MAX       16
+#define TMAP_X       4             /* top-screen pixels: the ranks' box on the treasure map, under its name */
+#define TMAP_Y       26
+static int g_rank[GR_MAX], g_nrank, g_gen;                         /* this floor's chests' ranks, and which floor */
+static Spot g_gspot[GR_MAX]; static int g_gopened[GR_MAX], g_ngspot, g_in_grotto;
+static int g_gold[GR_MAX], g_gold_gen = -1;                       /* which held gold (forgotten by the game once opened) */
+
+/* func_0201afd0: the floor's things placed. */
+void hook_GrottoFloorObjects(Cpu* c, void (*orig)(Cpu*)) { g_nrank = 0; g_gen++; orig(c); }
+
+/* ActiveGrottoClass::RandomizeChestRank: one chest's rank. */
+void hook_GrottoChestRank(Cpu* c, void (*orig)(Cpu*)) {
+    orig(c);
+    if (g_nrank < GR_MAX) g_rank[g_nrank++] = (int)c->r[0];
+}
+
+static int is_grotto(uint16_t map) { return map >= GROTTO_FIRST && map <= GROTTO_LAST; }
+static char rank_letter(int r) { return r >= 1 && r <= 10 ? "SABCDEFGHI"[10 - r] : '?'; }
+
+/* The ranks a floor's chests are drawn between, by its monsters' rank. */
+static void rank_range(int mrank, int* lo, int* hi) {
+    static const uint8_t t[13][2] = { { 0, 0 }, { 1, 2 }, { 1, 2 }, { 1, 3 }, { 1, 4 }, { 2, 5 }, { 2, 6 },
+                                      { 3, 7 }, { 3, 8 }, { 4, 9 }, { 5, 9 }, { 1, 10 }, { 4, 10 } };
+    if (mrank < 0) mrank = 0;
+    if (mrank > 12) mrank = 12;
+    *lo = t[mrank][0]; *hi = t[mrank][1];
+}
+
+static void load_grotto(void) {
+    g_ngspot = 0;
+    uint32_t a = rd32(GR_CHESTS), holds = rd32(GR_HOLDS);
+    int n = g_main_ram[GR_COUNT];
+    if (a < 0x02000000 || a >= 0x02400000) return;
+    if (holds < 0x02000000 || holds >= 0x02400000) holds = 0;
+    if (g_gold_gen != g_gen) {
+        g_gold_gen = g_gen; memset(g_gold, 0, sizeof g_gold);
+        char rk[GR_MAX + 1] = { 0 };
+        for (int i = 0; i < g_nrank; i++) rk[i] = rank_letter(g_rank[i]);
+        LOG_INFO("mapmarks: a grotto's floor, %d chests, ranks %s\n", n, rk);
+    }
+    for (int i = 0; i < n && i < GR_MAX; i++) {
+        uint32_t r = a + 0x24 * (uint32_t)i;
+        int num = g_main_ram[(r + 0x1C) & (MAIN_RAM_SIZE - 1)];
+        if (num >= GR_MAX) num = i;
+        Spot* b = &g_gspot[g_ngspot];
+        memset(b, 0, sizeof *b);
+        b->x = (float)(int32_t)rd32(r) / 4096.0f; b->z = (float)(int32_t)rd32(r + 8) / 4096.0f;
+        b->flag = -1; b->idx = num;
+        if (holds) {
+            b->what = rd16(holds + 0x14 * (uint32_t)num + 2);
+            if (((rd16(holds + 0x14 * (uint32_t)num + 4) >> 2) & 3) == 1) g_gold[num] = 1;
+        }
+        b->kind = g_gold[num] ? K_GOLD : K_CHEST;
+        b->rank = num < g_nrank ? g_rank[num] : 0;
+        g_gopened[g_ngspot++] = g_main_ram[(r + 0x16) & (MAIN_RAM_SIZE - 1)] == 8;
+    }
+}
 
 /* ---------------------------------------------------------------- the map pictures */
 typedef struct { float x, z; int n; int* rooms; } Door;          /* rooms: places (indices) behind it */
@@ -726,6 +809,8 @@ static float g_hx = -1, g_hy = -1; static int g_hover = -1;
 static int g_here = -1, g_own, g_plan_on; static const Pic* g_pic;   /* this frame's place, drawn in its own units, on its plan, and picture */
 
 void mapmarks_hover(float x, float y) { g_hx = x; g_hy = y; }
+
+static const Spot* mark_spot(int spot) { return g_in_grotto ? &g_gspot[spot] : &held(g_here)->s[spot]; }
 
 static int is_box(int kind) { return kind == K_CHEST || kind == K_GOLD || kind == K_BLUE || kind == K_UNKNOWN; }
 
@@ -850,6 +935,24 @@ static void glyph_quest(float cx, float cy, float R, int state, float a) {
 
 static uint32_t book_color(int recipes, int dull) { return dull ? 0x9A9A9A : recipes ? 0x8E55D8 : 0x2F9A5E; }
 
+/* A chest's rank: its letter on a small dark badge (S and A in gold). */
+static void draw_rank(float cx, float cy, float R, int rank, float a) {
+    static uint32_t t[64 * 64];
+    char s[2] = { rank_letter(rank), 0 };
+    float px = 4.8f * R;
+    int h = (int)(px * 1.3f);
+    if (h > 64) h = 64;
+    memset(t, 0, sizeof t);
+    int w = text_draw(t, 64, h, 0, 0, px, 0xFFFFFF, s);
+    if (w > 64) w = 64;
+    rbox(cx, cy, 2.3f * R, 2.6f * R, 0.9f * R, 0xFFF8E0, 0.9f * a);
+    rbox(cx, cy, 2.3f * R - 2, 2.6f * R - 2, 0.9f * R - 2, 0x101418, 0.95f * a);
+    int x0 = (int)lroundf(cx - w / 2.0f), y0 = (int)lroundf(cy - px * 0.62f);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (t[y * 64 + x]) blend(x0 + x, y0 + y, rank >= 9 ? 0xF2C94C : 0xFFFFFF, a * (float)((t[y * 64 + x] >> 16) & 255) / 255.0f);
+}
+
 static void draw_mark(const Mark* m, int hover) {
     float R = MAPMARKS_R * 1.4f, cx = m->sx * MAPMARKS_R, cy = m->sy * MAPMARKS_R;
     if (m->door == -3) {                                         /* the hero: a blue dot */
@@ -879,14 +982,14 @@ static void draw_mark(const Mark* m, int hover) {
         if (m->shelves) glyph_book(x, cy, R * k, book_color(m->recipes > 0, 0), 1);
         return;
     }
-    const Spot* b = &held(g_here)->s[m->spot];
+    const Spot* b = mark_spot(m->spot);
     float a = m->opened ? 0.6f : 1.0f;
     const Book* bk = b->kind == K_SHELF ? find_book(g_places[g_here].num, b->idx) : NULL;
     if (b->kind == K_SHELF && (!bk || bk->dull)) a = 0.75f;
     if (b->kind == K_QUEST) a = m->opened == 3 ? 0.6f : 1.0f;     /* opened: the quests' state there */
     /* a light halo: seen on the map's sand as on its grass */
     if (hover) rbox(cx, cy, 4.6f * R, 4.0f * R, 2.0f * R, 0xFFFFFF, 0.95f);
-    else rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);
+    else if (b->kind != K_POT) rbox(cx, cy, 3.9f * R, 3.3f * R, 1.6f * R, 0xFFF8E0, 0.55f * a);   /* (a pot: as the legend shows it, without, Romuald's choice) */
     switch (b->kind) {
     case K_POT:
         glyph_pot(cx, cy, R, m->opened, a);
@@ -902,6 +1005,7 @@ static void draw_mark(const Mark* m, int hover) {
         break;
     default:
         glyph_chest(cx, cy, R, m->opened ? 0x8A8A8A : b->kind == K_BLUE ? 0x3C78E0 : 0xD0402E, m->opened ? 0xB0B0B0 : 0xF2C94C, a);
+        if (b->rank) draw_rank(cx + 4.4f * R, cy, R, b->rank, a);
         break;
     }
 }
@@ -947,6 +1051,14 @@ static void quest_title(int q, char* out, size_t cap) {
 
 static uint32_t quest_color(int state) { return state == 1 ? C_TODO : state == 2 ? C_QUEST : C_DONE; }
 
+/* "Rank G", or "Ranks G to E" (from the lowest). */
+static void rank_line(char* out, size_t cap, int lo, int hi) {
+    static const char* const one[5] = { "Rank %c", "Rang %c", "Rang %c", "Rango %c", "Rango %c" };
+    static const char* const two[5] = { "Ranks %c to %c", "Rangs %c \xC3\xA0 %c", "R\xC3\xA4nge %c bis %c", "Ranghi da %c a %c", "Rangos %c a %c" };
+    if (lo == hi) snprintf(out, cap, one[lang_index()], rank_letter(lo));
+    else snprintf(out, cap, two[lang_index()], rank_letter(lo), rank_letter(hi));
+}
+
 /* One spot's line(s); short: one line, for a building's list. */
 static void spot_lines(int pi, const Spot* b, int opened, int is_short) {
     char what[100], line[140];
@@ -988,7 +1100,24 @@ static void spot_lines(int pi, const Spot* b, int opened, int is_short) {
     snprintf(line, sizeof line, "%s: %s", kind_name(b->kind), what);
     if (is_short) { add_line(opened ? C_DONE : C_TODO, line); return; }
     add_line(C_TEXT, line);
+    if (b->rank) { rank_line(line, sizeof line, b->rank, b->rank); add_line(C_HEAD, line); }
     add_line(opened ? C_DONE : C_TODO, status(b, opened));
+}
+
+/* The treasure map followed: the ranks its grotto's chests can have, floor
+ * by floor (floors 1 and 2 have none; 1 to 3 chests on the others). */
+static void grotto_lines(void) {
+    static const char* const head[5] = { "Chests by floor", "Coffres par \xC3\xA9tage", "Truhen je Stockwerk", "Forzieri per piano", "Cofres por piso" };
+    static const int from[4] = { 3, 5, 9, 13 }, to[4] = { 4, 8, 12, 16 };
+    int L = lang_index(), mrank = g_main_ram[TMAP + 6];
+    char line[60];
+    add_line(C_HEAD, head[L]);
+    for (int i = 0; i < 4; i++) {
+        int lo, hi;
+        rank_range(mrank + (from[i] - 1) / 4, &lo, &hi);
+        snprintf(line, sizeof line, L == 1 ? "%d-%d : %c-%c" : "%d-%d: %c-%c", from[i], to[i], rank_letter(lo), rank_letter(hi));
+        add_line(C_TODO, line);
+    }
 }
 
 /* A building: what its rooms hold, the best first (quests, chests, books,
@@ -1049,32 +1178,138 @@ static void door_lines(const Mark* m) {
     if (extra) { char s[40]; snprintf(s, sizeof s, more[lang_index()], extra); add_line(C_DONE, s); }
 }
 
+/* The lines (g_line) written out (g_txt): their box's size, and the height of a line. */
+#define LINES_PAD (2 * MAPMARKS_R)
+static int lines_size(int* tw, int* th, float px) {        /* px: the text's height */
+    int lh = (int)(px * 1.2f);
+    if (g_nline * lh > TXT_H) g_nline = TXT_H / lh;
+    memset(g_txt, 0, sizeof(uint32_t) * MAPMARKS_W * (size_t)(g_nline * lh));
+    *tw = 0;
+    for (int i = 0; i < g_nline; i++) {
+        int w = text_draw(g_txt, MAPMARKS_W, g_nline * lh, 0, i * lh, px, 0xFFFFFF, g_line[i].s);
+        if (w > *tw) *tw = w;
+    }
+    *tw += 2 * LINES_PAD; *th = g_nline * lh + 2 * LINES_PAD;
+    if (*tw > MAPMARKS_W - 4) *tw = MAPMARKS_W - 4;
+    return lh;
+}
+
+/* ...and in their dark box, its top left at x0, y0. */
+static void lines_draw(int x0, int y0, int tw, int th, int lh) {
+    rbox(x0 + tw / 2.0f, y0 + th / 2.0f, tw / 2.0f, th / 2.0f, 2.0f * MAPMARKS_R, 0x101418, 0.88f);
+    for (int y = 0; y < g_nline * lh; y++)
+        for (int x = 0; x < tw - 2 * LINES_PAD; x++) {
+            uint32_t t = g_txt[y * MAPMARKS_W + x];
+            if (t) blend(x0 + LINES_PAD + x, y0 + LINES_PAD + y, g_line[y / lh].c, (float)((t >> 16) & 255) / 255.0f);
+        }
+}
+
 static void draw_tooltip(const Mark* m) {
     g_nline = 0;
     if (m->door >= 0) door_lines(m);
-    else spot_lines(g_here, &held(g_here)->s[m->spot], m->opened, 0);
+    else spot_lines(g_here, mark_spot(m->spot), m->opened, 0);
     if (!g_nline) return;
-    float px = 7.5f * MAPMARKS_R;                                /* text height */
-    int lh = (int)(px * 1.2f), pad = 2 * MAPMARKS_R, tw = 0, th;
-    if (g_nline * lh > TXT_H) g_nline = TXT_H / lh;
-    memset(g_txt, 0, sizeof(uint32_t) * MAPMARKS_W * (size_t)(g_nline * lh));
-    for (int i = 0; i < g_nline; i++) {
-        int w = text_draw(g_txt, MAPMARKS_W, g_nline * lh, 0, i * lh, px, 0xFFFFFF, g_line[i].s);
-        if (w > tw) tw = w;
-    }
-    tw += 2 * pad; th = g_nline * lh + 2 * pad;
-    if (tw > MAPMARKS_W - 4) tw = MAPMARKS_W - 4;
+    int tw, th, lh = lines_size(&tw, &th, 7.5f * MAPMARKS_R);
     int x0 = (int)(m->sx * MAPMARKS_R) - tw / 2, y0 = (int)((m->sy - 8) * MAPMARKS_R) - th;
     if (y0 < 2) y0 = (int)((m->sy + 8) * MAPMARKS_R);           /* no room above: below */
     if (y0 + th > MAPMARKS_H - 2) y0 = MAPMARKS_H - 2 - th;      /* ...nor there: over it */
     if (y0 < 2) y0 = 2;
     if (x0 < 2) x0 = 2;
     if (x0 + tw > MAPMARKS_W - 2) x0 = MAPMARKS_W - 2 - tw;
-    rbox(x0 + tw / 2.0f, y0 + th / 2.0f, tw / 2.0f, th / 2.0f, 2.0f * MAPMARKS_R, 0x101418, 0.88f);
-    for (int y = 0; y < g_nline * lh; y++)
-        for (int x = 0; x < tw - 2 * pad; x++) {
+    lines_draw(x0, y0, tw, th, lh);
+}
+
+/* ---------------------------------------------------------------- the legend
+ * Under the place's name (top right): a sample of each kind of mark the map
+ * shows now, and its name. */
+enum { L_HERE, L_MONSTER, L_CHEST, L_BLUE, L_POT, L_BARREL, L_EMPTIED, L_SHELF, L_RECIPES, L_QUEST1, L_QUEST2, L_QUEST3, L_BUILDING, L_N };
+#define LEG_TOP 17                 /* top-screen pixels: under the place's name */
+#define LEG_RIGHT 254
+#define LEG_ROW 8
+
+static const char* legend_name(int l) {
+    static const char* const t[L_N][5] = {
+        { "You are here", "Vous \xC3\xAAtes ici", "Du bist hier", "Sei qui", "Est\xC3\xA1s aqu\xC3\xAD" },
+        { "Monster", "Monstre", "Monster", "Mostro", "Monstruo" },
+        { 0 }, { 0 }, { 0 }, { 0 },                              /* kind_name() */
+        { "Already emptied", "D\xC3\xA9j\xC3\xA0 vid\xC3\xA9", "Schon geleert", "Gi\xC3\xA0 svuotato", "Ya vaciado" },
+        { 0 },
+        { "Alchemy recipes", "Recettes d'alchimie", "Alchemie-Rezepte", "Ricette alchemiche", "Recetas de alquimia" },
+        { "Quest to take", "Qu\xC3\xAA" "te \xC3\xA0 prendre", "Neuer Auftrag", "Missione da accettare", "Misi\xC3\xB3n por aceptar" },
+        { "Quest in progress", "Qu\xC3\xAA" "te en cours", "Auftrag in Arbeit", "Missione in corso", "Misi\xC3\xB3n en curso" },
+        { "Quest completed", "Qu\xC3\xAA" "te termin\xC3\xA9" "e", "Auftrag erledigt", "Missione completata", "Misi\xC3\xB3n completada" },
+        { "In the building", "Dans le b\xC3\xA2timent", "Im Geb\xC3\xA4" "ude", "Nell'edificio", "En el edificio" },
+    };
+    static const int kind[L_N] = { 0, 0, K_CHEST, K_BLUE, K_POT, K_BARREL, 0, K_SHELF };
+    return t[l][0] ? t[l][lang_index()] : kind_name(kind[l]);
+}
+
+static void legend_sample(int l, float cx, float cy, float R) {
+    switch (l) {
+    case L_HERE:
+        rbox(cx, cy, 2.4f * R, 2.4f * R, 2.4f * R, 0xFFFFFF, 1);
+        rbox(cx, cy, 2.4f * R - 2, 2.4f * R - 2, 2.4f * R - 2, 0x2A6CE0, 1);
+        break;
+    case L_MONSTER:
+        rbox(cx, cy, 1.9f * R, 1.9f * R, 1.9f * R, 0xFFF8E0, 0.8f);
+        rbox(cx, cy, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 1.9f * R - 1.5f, 0xE0302A, 1);
+        break;
+    case L_CHEST: glyph_chest(cx, cy, R, 0xD0402E, 0xF2C94C, 1); break;
+    case L_BLUE: glyph_chest(cx, cy, R, 0x3C78E0, 0xF2C94C, 1); break;
+    case L_POT: glyph_pot(cx, cy, R, 0, 1); break;
+    case L_BARREL: glyph_barrel(cx, cy, R, 0, 1); break;
+    case L_EMPTIED: glyph_chest(cx, cy, R, 0x8A8A8A, 0xB0B0B0, 0.6f); break;
+    case L_SHELF: glyph_book(cx, cy, R, book_color(0, 0), 1); break;
+    case L_RECIPES: glyph_book(cx, cy, R, book_color(1, 0), 1); break;
+    case L_QUEST1: case L_QUEST2: case L_QUEST3: glyph_quest(cx, cy, R, l - L_QUEST1 + 1, 1); break;
+    default:                                                     /* a building's badge */
+        rbox(cx, cy, 3.6f * R, 3.0f * R, 1.2f * R, 0xFFF8E0, 0.9f);
+        rbox(cx, cy, 3.6f * R - 2, 3.0f * R - 2, 1.2f * R - 2, 0x3A2A1A, 0.92f);
+        glyph_chest(cx, cy, R * 0.7f, 0xD0402E, 0xF2C94C, 1);
+        break;
+    }
+}
+
+static void draw_legend(void) {
+    int has[L_N] = { 0 }, n = 0;
+    for (int i = 0; i < g_nmark; i++) {
+        const Mark* m = &g_mark[i];
+        if (m->door == -3) has[L_HERE] = 1;
+        else if (m->door == -2) has[L_MONSTER] = 1;
+        else if (m->door >= 0) {                                 /* a badge: what it holds too */
+            has[L_BUILDING] = 1;
+            if (m->closed) has[L_CHEST] = 1;
+            if (m->emptied || m->jars_done) has[L_EMPTIED] = 1;
+            if (m->jars) has[m->barrels * 2 >= m->jars + m->jars_done ? L_BARREL : L_POT] = 1;
+            if (m->shelves) has[m->recipes ? L_RECIPES : L_SHELF] = 1;
+            if (m->quests && m->opened >= 1 && m->opened <= 3) has[L_QUEST1 + m->opened - 1] = 1;
+        } else {
+            const Spot* b = mark_spot(m->spot);
+            if (b->kind == K_QUEST) { if (m->opened >= 1 && m->opened <= 3) has[L_QUEST1 + m->opened - 1] = 1; }
+            else if (b->kind == K_SHELF) { const Book* bk = find_book(g_places[g_here].num, b->idx); has[bk && bk->recipes ? L_RECIPES : L_SHELF] = 1; }
+            else if (m->opened) has[L_EMPTIED] = 1;
+            else has[b->kind == K_BLUE ? L_BLUE : b->kind == K_POT ? L_POT : b->kind == K_BARREL ? L_BARREL : L_CHEST] = 1;
+        }
+    }
+    for (int l = 0; l < L_N; l++) n += has[l];
+    if (!n) return;
+    float px = 5.6f * MAPMARKS_R, R = MAPMARKS_R * 0.95f;
+    int row = LEG_ROW * MAPMARKS_R, pad = 2 * MAPMARKS_R, icon = 10 * MAPMARKS_R, tw = 0, k = 0;
+    if (n * row > TXT_H) return;
+    memset(g_txt, 0, sizeof(uint32_t) * MAPMARKS_W * (size_t)(n * row));
+    for (int l = 0; l < L_N; l++) if (has[l]) {
+        int w = text_draw(g_txt, MAPMARKS_W, n * row, 0, k++ * row + (row - (int)(px * 1.2f)) / 2, px, 0xFFFFFF, legend_name(l));
+        if (w > tw) tw = w;
+    }
+    int w = icon + tw + 2 * pad, h = n * row + 2 * pad, x0 = LEG_RIGHT * MAPMARKS_R - w, y0 = LEG_TOP * MAPMARKS_R;
+    if (x0 < 2) x0 = 2;
+    rbox(x0 + w / 2.0f, y0 + h / 2.0f, w / 2.0f, h / 2.0f, 2.0f * MAPMARKS_R, 0x101418, 0.72f);
+    k = 0;
+    for (int l = 0; l < L_N; l++) if (has[l]) legend_sample(l, (float)(x0 + pad + icon / 2), (float)(y0 + pad + k++ * row + row / 2), R);
+    for (int y = 0; y < n * row; y++)
+        for (int x = 0; x < tw && x0 + pad + icon + x < MAPMARKS_W; x++) {
             uint32_t t = g_txt[y * MAPMARKS_W + x];
-            if (t) blend(x0 + pad + x, y0 + pad + y, g_line[y / lh].c, (float)((t >> 16) & 255) / 255.0f);
+            if (t) blend(x0 + pad + icon + x, y0 + pad + y, 0xF4F0E6, (float)((t >> 16) & 255) / 255.0f);
         }
 }
 
@@ -1346,23 +1581,58 @@ static int on_screen(float sx, float sy) { return sx >= -4 && sx <= 260 && sy >=
  * 0F01, 1002) leaves BG2CNT at 0; the cards set it (0F00, 0E03, 0002).
  * A battle leaves BG2CNT set (0704) once back on the map: the map's BG0 is
  * the one at priority 1, a card's at 0. */
+static int tmap_shown(void);
 int mapmarks_top_page(void) {
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000;
-    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0 && (IO16(top + 0x08) & 3) != 1;
+    return rd32(FIELD_PTR) != 0 && IO16(top + 0x0C) != 0 && (IO16(top + 0x08) & 3) != 1 && !tmap_shown();
+}
+
+/* The treasure map followed, open: the top screen shows it instead of the
+ * field's map (BG0CNT 0E02, BG1CNT 0F03). Not a page (mapmarks_top_page()):
+ * the map to walk by, where the field's map would be. */
+static int tmap_shown(void) {
+    uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000;
+    return rd32(FIELD_PTR) != 0 && g_main_ram[TMAP] && IO16(top + 0x08) == 0x0E02 && IO16(top + 0x0A) == 0x0F03;
+}
+
+/* Over it: the ranks its grotto's chests can have. */
+static int tmap_update(const uint8_t** rgba) {
+    static int shown = -1;
+    int key = g_mapmarks && tmap_shown() ? g_main_ram[TMAP + 6] << 4 | g_fw_language : -1;
+    if (key == shown) { *rgba = key >= 0 ? g_img : NULL; return 0; }
+    shown = key;
+    if (key < 0) { *rgba = NULL; return 1; }
+    memset(g_img, 0, sizeof g_img);
+    g_nline = 0;
+    grotto_lines();
+    int tw, th, lh = lines_size(&tw, &th, 7.0f * MAPMARKS_R);
+    lines_draw(TMAP_X * MAPMARKS_R, TMAP_Y * MAPMARKS_R, tw, th, lh);
+    *rgba = g_img;
+    return 1;
 }
 
 int mapmarks_update(const uint8_t** rgba) {
     static int loaded, had;
     static uint32_t last_key;
     *rgba = NULL;
-    g_nmark = 0; g_here = -1; g_own = 0; g_plan_on = 0; g_pic = NULL;
+    {
+        static int was;
+        int on = g_mapmarks && tmap_shown();
+        if (on || was) {
+            int changed = tmap_update(rgba);
+            if (on) { was = 1; had = 0; return changed; }
+            was = 0; had = 1; last_key = 0;                      /* (the map's marks drawn afresh) */
+        }
+    }
+    g_nmark = 0; g_here = -1; g_own = 0; g_plan_on = 0; g_pic = NULL; g_in_grotto = 0;
     int ok = (g_mapmarks || g_interior_maps) && rd32(FIELD_PTR) != 0;
     uint32_t mp = rd32(MINIMAP_PTR);
     if (ok && (mp < 0x02000000 || mp >= 0x02400000)) ok = 0;
     if (ok && mapmarks_top_page()) ok = 0;                       /* an item's card: nothing of the map over it */
     /* the map is the top screen's BG1: off when a page covers it (the quest log...) */
     uint32_t top = (IO16(0x304) & 0x8000) ? 0x0000 : 0x1000, bright = IO16(top + 0x6C);
-    int field = rd16(MAP_NUM) >= 20000;                          /* the fields (20001...) draw their map on BG0 */
+    int grotto = is_grotto(rd16(MAP_NUM));                       /* (drawn like a town's) */
+    int field = rd16(MAP_NUM) >= 20000 && !grotto;              /* the fields (20001...) draw their map on BG0 */
     if (ok && !(IO32(top) & (field ? 0x100 : 0x200))) ok = 0;
     if (ok && (bright >> 14) == 2 && (bright & 0x1F) >= 16) ok = 0;   /* faded to black */
     if (ok && !loaded) {
@@ -1450,6 +1720,20 @@ int mapmarks_update(const uint8_t** rgba) {
             }
         }
     }
+    /* a grotto's chests, with their ranks */
+    if (ok && grotto && g_mapmarks) {
+        float scale = (float)(int32_t)rd32(mp + 0x38) / 4096.0f;
+        float cx = (float)(int32_t)rd32(mp + 0x44), cy = (float)(int32_t)rd32(mp + 0x48);
+        if (scale > 0.1f && scale < 64) {
+            g_in_grotto = 1;
+            load_names(g_fw_language);
+            load_grotto();
+            for (int i = 0; i < g_ngspot; i++) {
+                Mark m = { g_gspot[i].x * scale - cx + 128, g_gspot[i].z * scale - cy + 96, -1, i, g_gopened[i], 0, 0, 0, 0, 0 };
+                if (on_screen(m.sx, m.sy) && (!m.opened || g_mapmarks_opened)) add_mark(&m);
+            }
+        }
+    }
     /* the monsters walking around: a town's picture scrolls (its centre at
      * +0x44/+0x48), a field's shows the whole field around its origin */
     if (ok && g_mapmarks && g_mapmarks_monsters && !g_plan_on) {
@@ -1481,7 +1765,9 @@ int mapmarks_update(const uint8_t** rgba) {
     key = (key ^ (uint32_t)(g_hover + 2)) * 16777619u;
     key = (key ^ (uint32_t)g_fw_language) * 16777619u;
     key = (key ^ (uint32_t)g_here) * 16777619u;
+    key = (key ^ (uint32_t)(g_in_grotto ? g_gen : -1)) * 16777619u;
     key = (key ^ (uint32_t)g_plan_on) * 16777619u;
+    key = (key ^ (uint32_t)g_map_legend) * 16777619u;
     if (!g_nmark && !g_plan_on) { int changed = had; had = 0; last_key = 0; return changed; }
     if (had && key == last_key) return 0;
     had = 1; last_key = key;
@@ -1489,7 +1775,169 @@ int mapmarks_update(const uint8_t** rgba) {
     else memset(g_img, 0, sizeof g_img);
     for (int pass = 0; pass < 2; pass++)                          /* the monsters first, under the rest */
         for (int i = 0; i < g_nmark; i++) if (i != g_hover && (g_mark[i].door == -2) == !pass) draw_mark(&g_mark[i], 0);
+    if (g_map_legend) draw_legend();
     if (g_hover >= 0) { draw_mark(&g_mark[g_hover], 1); draw_tooltip(&g_mark[g_hover]); }
     *rgba = g_img;
     return 1;
 }
+
+/* ---------------------------------------------------------------- a shop's list
+ * Widescreen (one screen): a shop's buy list shows each item's own colour
+ * icon before its name, instead of its kind's white sign.
+ *  - main RAM: the shop (0x021155CC points at it, USA and Europe alike): its
+ *    items (u16, the names' keys) at +0x70, how many at +0x5D, the page shown
+ *    at +0x83C (u16, 6 lines a page).
+ *  - data/prm/itemdt.gp2, itemdt_en.nat: 32 bytes an item from +0x0C, its key
+ *    at +0x18; at +0x10 its icon: the letter (bits 20..27) and the number
+ *    (bits 0..9; 999: bits 10..19) of data/ani/d_<letter><number>.spr.
+ *  - .spr: u16 1, 3, width, height, cells, 0; per cell u16 x, y, and its
+ *    width and height (8 << n), then its pixels (4 bits each, by rows); then
+ *    u32 colours and the palette (RGB555; colour 0 see-through).
+ *  - the list on the bottom screen: line i from y 22 + 14 i, 14 high; the
+ *    kind's sign in x 20..33. */
+#define SHOP_PTR    0x1155CC
+#define SHOP_LINES  6
+#define SHOP_Y0     22
+#define SHOP_DY     14
+#define SHOP_X0     20
+#define SHOP_X1     34
+
+static uint8_t* g_itemdt; static uint32_t g_itemdt_n;
+static uint8_t g_icons[MAPMARKS_W * MAPMARKS_H * 4];
+
+static int icon_of(uint16_t key, char* letter, int* num) {
+    if (!g_itemdt) {
+        uint32_t n = 0;
+        const uint8_t* pack = rom_file("data/prm/itemdt.gp2", &n);
+        g_itemdt = gpc_file(pack, n, "itemdt_en.nat", &g_itemdt_n);
+        if (!g_itemdt) g_itemdt = gpc_file(pack, n, "itemdt.nat", &g_itemdt_n);
+        if (!g_itemdt) { g_itemdt_n = 0; g_itemdt = malloc(1); }
+    }
+    for (uint32_t o = 12; o + 32 <= g_itemdt_n; o += 32) {
+        if (le16(g_itemdt + o + 0x18) != key) continue;
+        uint32_t w = le32(g_itemdt + o + 0x10);
+        int c = (int)((w >> 20) & 0xFF), k = (int)(w & 0x3FF);
+        if (!c || !strchr("bcgimprsw", c)) continue;
+        if (k == 999) k = (int)((w >> 10) & 0x3FF);
+        *letter = (char)c; *num = k;
+        return 1;
+    }
+    return 0;
+}
+
+/* An item's icon into g_icons, in the square (x, y, size) of overlay pixels. */
+static void draw_icon(uint16_t key, int x0, int y0, int size) {
+    char c, path[32]; int num;
+    if (!icon_of(key, &c, &num)) return;
+    snprintf(path, sizeof path, "data/ani/d_%c%03d.spr", c, num);
+    uint32_t n = 0;
+    const uint8_t* b = rom_file(path, &n);
+    if (!b || n < 12 || le16(b) != 1) return;
+    int W = le16(b + 4), H = le16(b + 6), cells = le16(b + 8);
+    if (W <= 0 || H <= 0 || W > 64 || H > 64) return;
+    uint8_t idx[64 * 64] = { 0 };
+    uint32_t p = 12;
+    for (int i = 0; i < cells; i++) {
+        if (p + 8 > n) return;
+        int cx = le16(b + p), cy = le16(b + p + 2), cw = 8 << (le16(b + p + 4) & 3), ch = 8 << (le16(b + p + 6) & 3);
+        p += 8;
+        if (p + (uint32_t)(cw * ch / 2) > n) return;
+        for (int j = 0; j < cw * ch; j++) {
+            int x = cx + j % cw, y = cy + j / cw, v = (b[p + j / 2] >> ((j & 1) * 4)) & 15;
+            if (x < W && y < H) idx[y * 64 + x] = (uint8_t)v;
+        }
+        p += (uint32_t)(cw * ch / 2);
+    }
+    if (p + 4 > n) return;
+    uint32_t ncol = le32(b + p); p += 4;
+    if (ncol > 16) ncol = 16;
+    if (p + ncol * 2 > n) return;
+    /* each overlay pixel: the average of the icon's pixels under it (premultiplied) */
+    for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++) {
+            float sx0 = (float)x * W / size, sx1 = (float)(x + 1) * W / size, sy0 = (float)y * H / size, sy1 = (float)(y + 1) * H / size;
+            float acc[4] = { 0 }, area = 0;
+            for (int v = (int)sy0; v < H && v < sy1; v++)
+                for (int u = (int)sx0; u < W && u < sx1; u++) {
+                    float a = (fminf(sx1, (float)u + 1) - fmaxf(sx0, (float)u)) * (fminf(sy1, (float)v + 1) - fmaxf(sy0, (float)v));
+                    int i = idx[v * 64 + u];
+                    area += a;
+                    if (!i || (uint32_t)i >= ncol) continue;
+                    uint16_t col = le16(b + p + 2 * i);
+                    acc[0] += a * (float)(col & 31) / 31; acc[1] += a * (float)((col >> 5) & 31) / 31; acc[2] += a * (float)((col >> 10) & 31) / 31; acc[3] += a;
+                }
+            int X = x0 + x, Y = y0 + y;
+            if (area <= 0 || acc[3] <= 0 || X < 0 || Y < 0 || X >= MAPMARKS_W || Y >= MAPMARKS_H) continue;
+            uint8_t* d = &g_icons[(Y * MAPMARKS_W + X) * 4];
+            for (int k = 0; k < 4; k++) d[k] = (uint8_t)(acc[k] / area * 255 + 0.5f);
+        }
+}
+
+int mapmarks_shop(uint32_t* px, uint8_t* info, int desc_y, const uint8_t** rgba, int* changed) {
+    static uint32_t last_key;
+    static int sel;                                               /* the line the hand points at (it blinks: kept while hidden) */
+    *rgba = g_icons; *changed = 0;
+    uint32_t shop = rd32(SHOP_PTR);
+    int n = 0, page = 0, lines = 0;
+    if (px && rd32(FIELD_PTR) != 0 && shop >= 0x02000000 && shop < 0x02400000) {   /* (its signs, checked below, say it's up: not waiting for the card) */
+        n = g_main_ram[(shop + 0x5D) & (MAIN_RAM_SIZE - 1)];
+        page = rd16(shop + 0x83C);
+        lines = n - page * SHOP_LINES;
+        if (lines > SHOP_LINES) lines = SHOP_LINES;
+        if (n > 64) lines = 0;
+    }
+    /* every line of the page shows its kind's sign (white) where it should */
+    for (int i = 0; i < lines; i++) {
+        int white = 0;
+        for (int y = SHOP_Y0 + SHOP_DY * i + 2; y < SHOP_Y0 + SHOP_DY * i + SHOP_DY - 1; y++)
+            for (int x = SHOP_X0 + 1; x < SHOP_X1 - 1; x++) {
+                uint32_t c = px[y * 256 + x];
+                white += ((c >> 16) & 255) > 200 && ((c >> 8) & 255) > 200 && (c & 255) > 200;
+            }
+        if (white < 6) { lines = 0; break; }
+    }
+    if (lines <= 0) { if (last_key) { last_key = 0; memset(g_icons, 0, sizeof g_icons); *changed = 1; } return 0; }
+    for (int i = 0; i < lines; i++) {
+        int yellow = 0;
+        for (int y = SHOP_Y0 + SHOP_DY * i; y < SHOP_Y0 + SHOP_DY * i + SHOP_DY; y++)
+            for (int x = 0; x < SHOP_X0; x++) {
+                uint32_t c = px[y * 256 + x];
+                yellow += ((c >> 16) & 255) > 180 && ((c >> 8) & 255) > 140 && (c & 255) < 100;
+            }
+        if (yellow >= 6) sel = i;
+    }
+    if (sel >= lines) sel = lines - 1;
+    uint32_t key = 2166136261u;
+    for (int i = 0; i < lines; i++) key = (key ^ rd16(shop + 0x70 + 2 * (page * SHOP_LINES + i))) * 16777619u;
+    key = (key ^ (uint32_t)lines) * 16777619u;
+    key = (key ^ (uint32_t)sel) * 16777619u;
+    key = (key ^ (uint32_t)(desc_y + 1)) * 16777619u;
+    if (!key) key = 1;
+    if (key != last_key) {
+        last_key = key; *changed = 1;
+        memset(g_icons, 0, sizeof g_icons);
+        for (int i = 0; i < lines; i++) {                         /* the sign's size, centred on it */
+            int s = (SHOP_DY - 2) * MAPMARKS_R, cx = (SHOP_X0 + SHOP_X1) * MAPMARKS_R / 2, cy = (SHOP_Y0 + SHOP_DY * i) * MAPMARKS_R + SHOP_DY * MAPMARKS_R / 2;
+            draw_icon(rd16(shop + 0x70 + 2 * (page * SHOP_LINES + i)), cx - s / 2, cy - s / 2, s);
+        }
+        if (desc_y >= 0)                                          /* the chosen one big, at the left of its description */
+            draw_icon(rd16(shop + 0x70 + 2 * (page * SHOP_LINES + sel)), SHOP_DESC_X * MAPMARKS_R, desc_y * MAPMARKS_R, SHOP_DESC_ICON * MAPMARKS_R);
+    }
+    /* the signs rubbed out: the window's own pixels from the line's first row */
+    for (int i = 0; i < lines; i++) {
+        int top = SHOP_Y0 + SHOP_DY * i;
+        for (int y = top + 1; y < top + SHOP_DY; y++)
+            for (int x = SHOP_X0; x < SHOP_X1; x++) {
+                px[y * 256 + x] = px[top * 256 + x];
+                if (info) memcpy(&info[(y * 256 + x) * 4], &info[(top * 256 + x) * 4], 4);
+            }
+    }
+    return 1;
+}
+
+/* ---------------------------------------------------------------- shared readers (romdata.h) */
+const uint8_t* romdata_file(const char* path, uint32_t* size) { return rom_file(path, size); }
+uint8_t* romdata_gpc_file(const uint8_t* d, uint32_t n, const char* name, uint32_t* size) { return gpc_file(d, n, name, size); }
+int romdata_rec_next(const uint8_t* b, uint32_t end, uint32_t* p, Rec* r) { return rec_next(b, end, p, r); }
+void romdata_clean_name(const char* s, char* out, size_t cap) { clean_name(s, out, cap); }
+const char* romdata_item_name(uint16_t key) { load_names(g_fw_language); return item_name(key); }

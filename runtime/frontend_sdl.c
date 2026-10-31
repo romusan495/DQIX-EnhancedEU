@@ -32,17 +32,22 @@
 #include "hdtext.h"
 #include "hdmovie.h"
 #include "bootskip.h"
+#include "gamemenu.h"
 #include "gl_render.h"
 #include "menu.h"
 #include "farm.h"
+#include "autosave.h"
 #include "cheats.h"
 #include "mapmarks.h"
+#include "journal.h"
 #include "version.h"
 #include "session.h"
 #include "air.h"
 #include "update.h"
 #include "text.h"
 #include "controls.h"
+#include "uitext.h"
+#include "hints.h"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -66,6 +71,8 @@ static int g_two;                                                 /* two windows
 static SDL_Window* g_win2;                                        /* ...the second one (the top screen, or the bottom one when swapped) */
 static int g_win2_full, g_win2_rect[4];                           /* ...fullscreen; where it was as a window (w = 0: not yet) */
 static int g_wide_pop = 0;                                        /* widescreen: the small screen in its own window (the field alone; no longer offered) */
+static int g_hints = 1;                                           /* the DS buttons the game shows ("X Menu"): the player's own (hints.c) */
+static int g_hint_pad = -1;                                       /* ...the last used: 1 the controller, 0 the keyboard, -1 not yet */
 static int g_minimap = 1;                                         /* widescreen: the map small in a corner of the one window (no second window), not in battles */
 static int g_map_shown = 1;                                       /* ...shown (Modern > Map in the top right corner) */
 static float g_mini_vis = 1.0f;                                   /* ...1 shown, 0 gone (the game's 2D under it: a menu) */
@@ -75,12 +82,13 @@ static int in_adventure(void) { uint32_t v; memcpy(&v, &g_main_ram[0x0F33E0], 4)
 #define MINIMAP_GAP 0                                             /* ...right in the corner (the field's "X Menu" sign moves to the bottom: g_sign_dy) */
 static int g_smooth = 1;                                          /* Enhanced: smooth (filtered) textures */
 static int g_smooth2d = 1, g_texup = 1, g_outline = 1;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
+static int g_softshadow, g_ink;                                                       /* Enhanced: soft shadows in corners and under things, thin dark lines round things */
 static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
 static int g_hdtext = 1;                                          /* Enhanced: the game's text drawn at full resolution (hdtext.h) */
 static int g_hdmovie = 1;                                         /* Enhanced: the movies from movies/ in HD (hdmovie.h) */
-static char g_hdfont[256] = "Marcellus.ttf";                      /* ...with this font ("original": the game's letters, smoothed) */
+static char g_hdfont[256] = "SourceSans3.ttf";                    /* ...with this font ("original": the game's letters, smoothed) */
 static const char* const g_fonts[N_FONTS] = { "original", "georgia.ttf", "pala.ttf", "constan.ttf", "times.ttf", "segoeui.ttf",   /* MI_FONT0 + i: Windows' */
-    "Lora.ttf", "CrimsonPro.ttf", "Alegreya.ttf", "Spectral.ttf", "EBGaramond.ttf", "Philosopher.ttf", "Marcellus.ttf", "Nunito.ttf", "Fredoka.ttf" };   /* ours (fonts/) */
+    "Lora.ttf", "CrimsonPro.ttf", "Alegreya.ttf", "Spectral.ttf", "EBGaramond.ttf", "Philosopher.ttf", "Marcellus.ttf", "Nunito.ttf", "Fredoka.ttf", "SourceSans3.ttf" };   /* ours (fonts/) */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
 static int g_small_opacity = 25;                                  /* widescreen: how solid the small screen over the field is (O), % */
 static int g_wide_dyn = 1;                                        /* widescreen: 0 basic (the corner stays), 1 dynamic (experimental: slides for menus) */
@@ -91,6 +99,20 @@ static int g_peek;                                                /* widescreen:
 static int g_single;                                              /* one screen only (the bottom one, or the top one swapped) */
 static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
+static int g_cc_n, g_cc_box[2][4];                               /* widescreen, the character's creation: its windows on the touch screen (creation_update): x, y, w, h */
+static int g_cc_at[2][2];                                         /* ...where each goes in the pop-up (DS pixels; as on the touch screen, but for Patty's last question) */
+static int g_name_typing = 0;                                     /* Modern > Type the name with the keyboard (the character's creation: name_typing_step()) */
+static uint32_t g_type_q[64]; static int g_type_n;                /* ...the letters typed, not yet pressed on the game's keyboard ('\b' erase, '\n' OK) */
+static int g_tap_x, g_tap_y, g_tap_frames, g_tap_wait, g_tap_tries;   /* ...the game's key being pressed, for how long; then the frames to wait */
+static int g_pop_win[4];                                          /* widescreen: a page on the top screen without its backdrop, popped up (pop_update): x, y, w, h (w 0: none) */
+static float g_pop_at[3];                                         /* ...where on the canvas: x, y, scale (pop_place) */
+static int g_quest_page;                                          /* ...it is a quest's sheet (quest_page()): redrawn as one modern window */
+static int g_card_page;                                           /* ...or an item's card (card_page()): the same */
+static int g_stamp[4];                                            /* ...its Complete! stamp (quest_stamp()): x, y, w, h on the page (w 0: none) */
+static int g_shop;                                                /* widescreen: a shop's buy list on the field, its item's description from the top screen under it (shop_update) */
+static int g_shop_cut = 118, g_shop_cut2 = 118;                   /* ...the list's rows end at the first, the panels under it start at the second */
+enum { SHOP_TX = 60, SHOP_TY = 33, SHOP_TW = 113, SHOP_TH = 58, SHOP_PAD = 3, SHOP_GAP = 3 };   /* the card's text, beside its icon; the description's window */
+static int g_hud_list;                                            /* ...a list open (spells, items, targets): modern, the chooser alone */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -114,11 +136,14 @@ static int g_classic = 0;       /* Classic: the DS's own 3D renderer, exact; Enh
  * the battle small in the corner). In Classic the layout waits, stacked. */
 #define WIDE_GL (g_gl && !g_classic)
 extern int g_comp_gl;
-extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
+extern int g_winstyle;          /* Enhanced: windows like the DS (0), minimal (1) or modern (2), gpu2d.c */
 extern int g_win_outline;       /* ...minimal: the commands screen's windows with their white line */
 extern int g_dlg_outline;       /* ...and the 3D screen's (the text box in battles) */
+void gpu_cards_hide(int eng, int y0, int y1);   /* gpu2d.c: the battle cards' boxes on those rows left out */
+extern int g_comp_win_px[2];    /* gpu2d.c: last frame, pixels of a window's panel per engine */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
-static int g_battle_speed = 1;  /* Modern > Battle speed: 1, 2 or 3 times as fast (not in a session) */
+static int g_battle_speed = 1;  /* Modern > Battle speed: 1 to 4 times as fast (not in a session) */
+static int g_battle_turn_only;  /* ...only while the turn plays out: choosing the commands at the usual pace */
 static int g_skip_intro = BOOTSKIP_LOGOS;   /* Modern > Start: skip the logos (1), and the opening movie (2) */
 static int g_all_options;       /* every option in the menus and on the keys (settings.ini all_options), else only the project's own setup */
 
@@ -240,16 +265,96 @@ static const char* BACKLIGHT_NAME[5] = { "", "low", "medium", "high", "max" };
 /* Canvas (in DS pixels) for the current layout, and where the screens sit on it.
  * The DS Lite: 0.24 mm per pixel; the lid and base are 133 mm wide; the
  * screens are 90 pixels (21.5 mm) apart. */
-/* Widescreen: DS pixels to add left and right of the 3D picture. 16:9 in a
- * window; in fullscreen, as wide as the monitor (up to 2:1 more). */
+/* Widescreen: DS pixels to add left and right of the 3D picture: as wide as
+ * the window (or the monitor in fullscreen), so it fills it whatever the
+ * screen's shape (16:9, 16:10, 21:9...), up to 2:1 more. g_side_aspect > 0:
+ * the shape to use instead (the window being sized for the monitor's). */
+static float g_side_aspect;
 static int wide_side_target(void) {
     if (!(WIDE_GL && g_wide && !g_side_by_side)) return 0;
     int side = 43;                                                /* (192 * 16 / 9 - 256) / 2 */
-    if (g_fullscreen && g_win) {
+    float aspect = g_side_aspect;
+    if (aspect <= 0 && g_win) {
         int w, h; SDL_GetWindowSize(g_win, &w, &h);
-        if (h > 0) side = (int)lroundf(((float)w / (float)h * 192.0f - 256.0f) / 2.0f);
+        if (h > 0 && w > 0) aspect = (float)w / (float)h;
     }
+    if (aspect > 0) side = (int)lroundf((aspect * 192.0f - 256.0f) / 2.0f);
     return side < 0 ? 0 : side > 128 ? 128 : side;
+}
+
+/* Widescreen with the minimap: a page on the top screen instead of the map.
+ * 1: an item's card, a title... (the field on the bottom screen, or no 3D):
+ * its windows pop up over the big screen; 2: a menu with its 3D model on the
+ * top screen (the monster list): both screens side by side; 0: none. (Not while the other screen is black: a cutscene.) */
+static int top_page_wide(void) {                                  /* (widescreen, one screen, the adventure) */
+    return WIDE_GL && g_wide && !g_side_by_side && !(g_gl && g_two && !g_single) && g_minimap && in_adventure();
+}
+static int top_page_mode(void) {
+    if (!top_page_wide() || (g_small_blank && !g_shop)) return 0;   /* (a shop's list: the top screen goes blank before its card shows) */
+    int side = 0, which = g_gl ? gl_wide_shown(&side) : -1;
+    if (g_cc_n) return 0;                                         /* (the character's creation: its own pop-ups, creation_update) */
+    if (which == 0) return g_top_menu && !g_hud_n && !g_hud_win[2] ? 2 : 0;
+    return mapmarks_top_page() || g_shop ? 1 : 0;                 /* (a shop's list: laid out before its card shows) */
+}
+
+/* A quest's sheet (the top screen while a quest is offered, accepted or
+ * handed in, or read in the quest list): the game's parchment page with its
+ * title bar and its start date bar. In the modern style it is drawn again as
+ * one window of the minimal style, where the page pops up (g_pop_at): the
+ * title and the date in light letters (they are light on the bars), a thin
+ * grey line under the title and over the date, the description's dark
+ * letters made light, and the red stamp (Complete!) drawn again in clean
+ * ink (quest_stamp()). The page's parts, in its pixels: */
+enum { QS_X = 12, QS_Y = 10, QS_W = 235, QS_H = 174,              /* the sheet */
+       QS_IN_X = 16, QS_IN_W = 224,                               /* inside its torn edges */
+       QS_BAR_X = 18, QS_BAR_W = 221,                             /* the bars, inside their gold line */
+       QS_TITLE_Y = 16, QS_TITLE_H = 19,
+       QS_DESC_Y = 38, QS_DESC_H = 128,                           /* the description (and the stamp) */
+       QS_DATE_Y = 167, QS_DATE_H = 12 };
+static void quest_pieces(GlPresent* v) {
+    float k = g_pop_at[2], X = g_pop_at[0] - QS_X * k, Y = g_pop_at[1] - QS_Y * k;   /* (page pixels -> canvas) */
+    static const float part[7][5] = {                             /* x, y, w, h on the page; restyled (FS_COPY's u_mode) */
+        { QS_X, QS_Y, QS_W, QS_H, 2 },                            /* the window */
+        { QS_BAR_X, QS_TITLE_Y + QS_TITLE_H + 1, QS_BAR_W, 1, 4 }, { QS_BAR_X, QS_DATE_Y - 1.5f, QS_BAR_W, 1, 4 },   /* the lines */
+        { QS_BAR_X, QS_TITLE_Y, QS_BAR_W, QS_TITLE_H, 3 }, { QS_BAR_X, QS_DATE_Y, QS_BAR_W, QS_DATE_H, 3 },
+        { QS_IN_X, QS_DESC_Y, QS_IN_W, QS_DESC_H, 6 } };
+    for (int i = 0; i < 6; i++) {
+        const float* p = part[i];
+        float* q = v->piece[v->npiece++];
+        q[4] = 0; q[5] = p[0]; q[6] = p[1]; q[7] = p[2]; q[8] = p[3]; q[9] = p[4];
+        q[0] = X + p[0] * k; q[1] = Y + p[1] * k; q[2] = p[2] * k; q[3] = fmaxf(p[3] * k, 0.75f);
+    }
+    if (g_stamp[2]) {                                             /* the stamp, over the description */
+        float* l = v->layer[GL_LAYER_STAMP];
+        l[0] = X + g_stamp[0] * k; l[1] = Y + g_stamp[1] * k; l[2] = g_stamp[2] * k; l[3] = g_stamp[3] * k;
+    }
+}
+
+/* An item's card (a shop asking whether to buy it, Items, Equipment): the
+ * game's parchment page, drawn again in the modern style as quest_pieces()
+ * does a quest's: one window, the name's and the stats' light letters, the
+ * description's and the jobs' dark ones made light, the rarity off its plate,
+ * the icons as they are, thin grey lines between the parts. Its parts, in its pixels: */
+enum { CS_X = 12, CS_Y = 5, CS_W = 238, CS_H = 176 };              /* the card */
+#define CARD_K 0.42f                                              /* its size where it pops up (card_page) */
+static void card_pieces(GlPresent* v) {
+    float k = g_pop_at[2], X = g_pop_at[0] - CS_X * k, Y = g_pop_at[1] - CS_Y * k;   /* (page pixels -> canvas) */
+    static const float part[][5] = {                              /* x, y, w, h on the page; restyled (FS_COPY's u_mode) */
+        { CS_X, CS_Y, CS_W, CS_H, 7 },                            /* the window (solid: it may lie over the field's menus) */
+        { 16, 27, 228, 1, 4 }, { 16, 101, 165, 1, 4 }, { 181, 30, 1, 146, 4 },   /* the lines: under the name, over the stats (up to the jobs' line), before the jobs */
+        { 16, 8, 17, 17, 0 },                                     /* the kind's sign */
+        { 37, 11, 102, 11, 3 },                                   /* the name (light on its bar, inside its edge: not its light top row) */
+        { 175, 9, 25, 15, 9 }, { 200, 9, 48, 15, 8 },             /* the rarity: its word, its stars (off their brown plates) */
+        { 24, 48, 32, 32, 0 },                                    /* the icon, big */
+        { 60, 30, 114, 66, 6 },                                   /* the description */
+        { 19, 105, 155, 70, 3 },                                  /* the stats (light on their panel) */
+        { 184, 33, 62, 15, 6 }, { 186, 50, 54, 124, 6 } };        /* "Equips:" and the jobs' signs (those who can't: faint) */
+    for (int i = 0; i < (int)(sizeof part / sizeof *part); i++) {
+        const float* p = part[i];
+        float* q = v->piece[v->npiece++];
+        q[4] = 0; q[5] = p[0]; q[6] = p[1]; q[7] = p[2]; q[8] = p[3]; q[9] = p[4];
+        q[0] = X + p[0] * k; q[1] = Y + p[1] * k; q[2] = fmaxf(p[2] * k, 0.75f); q[3] = fmaxf(p[3] * k, 0.75f);
+    }
 }
 
 /* second: the layout of the second window (two windows) */
@@ -299,6 +404,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         else { small[0] = small[1] = 2 * t; small[2] = 256.0f / 3; small[3] = 64; }
         if (g_small_blank && t > 0.99f) small[2] = small[3] = 0;   /* black (battle intros, fades): leave the field whole */
         if (g_minimap && !in_adventure()) small[2] = small[3] = 0;
+        /* battles: nothing to choose on the commands screen (what it shows while
+         * the battle ends, the cards between the orders and the turn): not shown */
+        if (g_minimap && which == 0 && g_hud && g_winstyle && !g_hud_n && !g_hud_win[2] && g_comp_win_px[1] < 64) small[2] = small[3] = 0;
         v->front = small == v->bot;                               /* the small one in front */
         v->alpha = 1.0f + (g_small_alpha - 1.0f) * t;            /* see-through (O) while it is over the field */
         if (g_minimap && which != 0) {                            /* the minimap: fades out while a menu is under it */
@@ -307,19 +415,78 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
         } else if (g_minimap) v->alpha = 1.0f;                   /* battles: solid */
         if (g_small_hide && !pop) small[2] = small[3] = 0;
         if (g_peek && !pop) { small[0] = (v->cw - 256) / 2; small[1] = 0; small[2] = 256; small[3] = 192; v->alpha = 1.0f; }   /* the other screen, whole */
-        int top_menu = g_minimap && which == 0 && !pop && g_top_menu && in_adventure() && !g_hud_n && !g_hud_win[2] && !g_small_blank;
-        int no3d_menu = g_minimap && which < 0 && !pop && in_adventure() && mapmarks_top_page() && !g_small_blank;
-        int card = g_minimap && which == 1 && !pop && mapmarks_top_page() && !g_small_blank;   /* (a cutscene: the other screen black) */
-        if (card || top_menu || no3d_menu) {
-            /* an item's card on the top screen (Items, Equipment...), a menu
-             * with its 3D model there (the monster list), or menus on both
-             * screens without 3D (skill points): both screens whole, side by
-             * side, the top one on the left, until it closes */
+        if (g_cc_n && !second && v->npiece + 2 * g_cc_n <= GL_MAX_PIECES) {
+            /* the character's creation: its windows on the touch screen (the
+             * choices, the name's keyboard and the name above it) pop up over
+             * the right of the big screen, each in a solid window of the
+             * minimal style; the character stays in view at the left */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            int ux0 = 256, uy0 = 192, ux1 = 0, uy1 = 0;
+            for (int i = 0; i < g_cc_n; i++) {
+                const int* b = g_cc_box[i], *a = g_cc_at[i];
+                if (a[0] < ux0) ux0 = a[0];
+                if (a[1] < uy0) uy0 = a[1];
+                if (a[0] + b[2] > ux1) ux1 = a[0] + b[2];
+                if (a[1] + b[3] > uy1) uy1 = a[1] + b[3];
+            }
+            const float P = 3;                                    /* the window's margin round the picture (DS pixels) */
+            float rx = v->cw * 0.42f, rw = v->cw - 6 - rx, ry = 30, rh = 156;   /* (under the banner "Create your character.") */
+            float k = fminf(1.0f, fminf(rw / ((float)(ux1 - ux0) + 2 * P), rh / ((float)(uy1 - uy0) + 2 * P)));
+            float x = rx + (rw - (float)(ux1 - ux0) * k) / 2, y = ry + (rh - (float)(uy1 - uy0) * k) / 2;
+            for (int i = 0; i < g_cc_n; i++) {
+                const int* b = g_cc_box[i];
+                float* w = v->piece[v->npiece++], *q = v->piece[v->npiece++];
+                q[4] = 1; q[5] = (float)b[0]; q[6] = (float)b[1]; q[7] = (float)b[2]; q[8] = (float)b[3]; q[9] = 0;
+                q[0] = x + (float)(g_cc_at[i][0] - ux0) * k; q[1] = y + (float)(g_cc_at[i][1] - uy0) * k; q[2] = (float)b[2] * k; q[3] = (float)b[3] * k;
+                w[4] = 1; w[5] = q[5] - P; w[6] = q[6] - P; w[7] = q[7] + 2 * P; w[8] = q[8] + 2 * P; w[9] = 7;   /* (a touch on its margin: the picture's edge) */
+                w[0] = q[0] - P * k; w[1] = q[1] - P * k; w[2] = q[2] + 2 * P * k; w[3] = q[3] + 2 * P * k;
+            }
+        }
+        int page = top_page_mode();
+        if (page == 2) {
+            /* a menu with its 3D model on the top screen (the monster list):
+             * both screens whole, side by side, the top one on the left, until it closes */
             v->cw = 512; v->ch = 192;
             v->top[0] = 0; v->top[1] = 0; v->top[2] = 256; v->top[3] = 192;
             v->bot[0] = 256; v->bot[1] = 0; v->bot[2] = 256; v->bot[3] = 192;
             v->topx[0] = v->botx[0] = (float)side; v->topx[1] = v->botx[1] = 256;
             v->alpha = 1.0f; v->front = 0;
+        } else if (page == 1 && g_shop && !second) {
+            /* a shop's buy list (the field's screen): one column in the middle,
+             * the list (each item's icon before its name, mapmarks_shop()),
+             * the item's description (the text of its card on the top screen,
+             * in a window of the minimal style as wide as the list's), then
+             * the panels under the list (who can equip it, how many held);
+             * over the field, which stays whole */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            float L = (float)g_shop_cut, L2 = (float)g_shop_cut2, dh = SHOP_TH + 2 * SHOP_PAD, gap = SHOP_GAP;   /* (the description's window from the start: its text once the card shows) */
+            float k = 192.0f / (192.0f - (L2 - L) + dh + 2 * gap), x = (v->cw - 256 * k) / 2;   /* (the rows between the list and the panels left out) */
+            float* q = v->piece[v->npiece++];
+            q[4] = 3; q[5] = 0; q[6] = 0; q[7] = 256; q[8] = L;
+            q[0] = x; q[1] = 0; q[2] = 256 * k; q[3] = L * k;
+            q = v->piece[v->npiece++];
+            q[4] = 3; q[5] = 0; q[6] = L2; q[7] = 256; q[8] = 192 - L2;
+            q[0] = x; q[1] = 192 - (192 - L2) * k; q[2] = 256 * k; q[3] = (192 - L2) * k;
+            q = v->piece[v->npiece++];                            /* the window */
+            q[9] = 2; q[0] = x + 8 * k; q[1] = (L + gap) * k; q[2] = 240 * k; q[3] = dh * k;
+            if (g_pop_win[2]) {
+                q = v->piece[v->npiece++];                        /* its text */
+                q[4] = 0; q[5] = SHOP_TX; q[6] = SHOP_TY; q[7] = SHOP_TW; q[8] = SHOP_TH; q[9] = 1;   /* (the item's icon at its left: mapmarks_shop()) */
+                q[0] = x + (SHOP_DESC_X + SHOP_DESC_ICON + 8) * k; q[1] = (L + gap + SHOP_PAD) * k; q[2] = SHOP_TW * k; q[3] = SHOP_TH * k;
+            }
+            v->icons[0] = x; v->icons[1] = 0; v->icons[2] = 256 * k; v->icons[3] = 192 * k;
+        } else if (page == 1) {
+            /* a page on the top screen (an item's card in Items, Equipment or a
+             * shop, a title): its windows alone, without the page's backdrop,
+             * popped up in the middle over the big screen (pop_update()) */
+            small[0] = small[1] = small[2] = small[3] = 0;
+            if (g_pop_win[2] && g_quest_page && v->npiece + 6 <= GL_MAX_PIECES) quest_pieces(v);
+            else if (g_pop_win[2] && g_card_page && v->npiece + 13 <= GL_MAX_PIECES) card_pieces(v);
+            else if (g_pop_win[2] && v->npiece < GL_MAX_PIECES) {
+                float* q = v->piece[v->npiece++], w = (float)g_pop_win[2], h = (float)g_pop_win[3];
+                q[4] = 0; q[5] = (float)g_pop_win[0]; q[6] = (float)g_pop_win[1]; q[7] = w; q[8] = h;
+                q[2] = w * g_pop_at[2]; q[3] = h * g_pop_at[2]; q[0] = g_pop_at[0]; q[1] = g_pop_at[1];
+            }
         }
         if (pop) {                                                /* first window: the field alone; second: the small screen, whole */
             v->alpha = 1.0f;
@@ -341,16 +508,18 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[2] = w * kw; q[3] = h * kw; q[0] = (v->cw - q[2]) / 2; q[1] = 6;
                 }
                 int nrow = 0;
-                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50;
+                for (int i = 0; i < g_hud_n; i++) nrow += g_hud_band[i][1] - g_hud_band[i][0] < 50 && !g_hud_list;
                 float slot = (v->cw - 4) / (float)(nrow > 4 ? nrow : 4), k = fminf((slot - 2) / 244.0f, 0.5f);
                 float x = (v->cw - slot * (float)nrow) / 2;               /* the row centred */
                 for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
+                    if (g_hud_list && g_hud_band[i][1] - g_hud_band[i][0] < 50) continue;   /* (the others' cards in the row: not while one chooses) */
                     float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]), *q = v->piece[v->npiece++];
                     q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
                     if (h < 50) { q[2] = 244 * k; q[3] = h * k; q[0] = x + (slot - q[2]) / 2; q[1] = 2; x += slot; }
                     else {                                                /* at most half the picture's height */
                         float kb = fminf(0.62f, 110.0f / h);
-                        q[2] = 244 * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
+                        q[7] = 249;                                   /* (to the line of a list's window at the screen's edge) */
+                        q[2] = q[7] * kb; q[3] = h * kb; q[0] = 2; q[1] = 190 - q[3];
                     }
                 }
             }
@@ -394,7 +563,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
     v->win_w = ww; v->win_h = wh;
     float sc = fminf((float)ww / v->cw, (float)wh / v->ch);
     if (g_opt.actual && g_actual_sc > 0) { if (g_actual_sc < sc) sc = g_actual_sc; }   /* real size (smaller if it doesn't fit) */
-    else if (g_opt.integer && sc >= 1.0f) sc = floorf(sc);
+    else if (g_opt.integer && sc >= 1.0f && !wide) sc = floorf(sc);   /* (widescreen fills the window: no bars) */
     v->sc = sc;
     v->ox = floorf(((float)ww - v->cw * sc) / 2); v->oy = floorf(((float)wh - v->ch * sc) / 2);
     v->shell = shell;
@@ -460,11 +629,15 @@ static void default_console_color(void) {
 /* settings.ini's names for g_fw_language (1-5), and the menu's */
 static const char* const LANGUAGE_KEY[6] = { "", "english", "french", "german", "italian", "spanish" };
 static const char* const LANGUAGE_NAME[6] = { "", "English", "Fran\xc3\xa7" "ais", "Deutsch", "Italiano", "Espa\xc3\xb1ol" };
+static int g_ui_language;        /* the menus' and messages' language (uitext.h): 0 the game's, else 1-5 like g_fw_language */
+static int g_ui_contrast, g_ui_text_size;   /* View > Readability (the in-game options menu): stronger contrast; text 0 normal, 1 large, 2 larger */
+static int ui_language_wanted(void) { return g_ui_language ? g_ui_language : rom_is_eur() ? g_fw_language : 1; }
 /* settings_version 2: a new install looks like the project's own setup (Enhanced,
  * widescreen with the map in the top right corner, the battle HUD, the map
  * markers...). An older settings.ini keeps the player's own things (volume,
- * language, wireless, controls, gold farm) but takes these looks once. */
-#define SETTINGS_VERSION 2
+ * language, wireless, controls, gold farm) but takes these looks once.
+ * settings_version 3: the modern windows, once (window_style 2). */
+#define SETTINGS_VERSION 3
 static const char* const LOOK_KEYS[] = {
     "mode", "render_scale", "resolution_3d", "window_scale", "layout", "single_screen", "swap_screens",
     "small_screen_corner", "small_screen_size", "small_screen_hidden", "small_screen_opacity", "small_screen_opacity_chosen",
@@ -487,7 +660,7 @@ static void settings_load(void) {
     while (fgets(line, sizeof line, f)) {
         char key[64]; char val[64];
         if (line[0] == '#' || sscanf(line, " %63[^= ] = %63s", key, val) != 2) continue;
-        if (version < SETTINGS_VERSION && look_key(key)) continue;
+        if (version < 2 && look_key(key)) continue;
         if (!strcmp(key, "player_name")) {                       /* the whole rest of the line (may have spaces) */
             const char* v = strchr(line, '=') + 1; while (*v == ' ') v++;
             snprintf(g_player_name, sizeof g_player_name, "%s", v);
@@ -515,8 +688,10 @@ static void settings_load(void) {
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
         else if (!strcmp(key, "smooth_2d")) g_smooth2d = atoi(val) != 0;
         else if (!strcmp(key, "outlines")) { int v = atoi(val); if (v >= 0 && v <= 2) g_outline = v; }
-        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 1) g_winstyle = v; }
+        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 2 && version >= 3) g_winstyle = v; }
         else if (!strcmp(key, "upscale_textures")) g_texup = atoi(val) != 0;
+        else if (!strcmp(key, "soft_shadows")) g_softshadow = atoi(val) != 0;
+        else if (!strcmp(key, "outline_lines")) g_ink = atoi(val) != 0;
         else if (!strcmp(key, "hd_textures")) g_texpack = atoi(val) != 0;
         else if (!strcmp(key, "dump_textures")) g_texdump = atoi(val) != 0;
         else if (!strcmp(key, "hd_text")) g_hdtext = atoi(val) != 0;
@@ -525,11 +700,17 @@ static void settings_load(void) {
         else if (!strcmp(key, "farm_gold_target")) { long v = atol(val); if (v > 0 && v <= 9999999) g_farm_target = (int)v; }
         else if (!strcmp(key, "farm_fast_forward")) g_farm_fast = atoi(val) != 0;
         else if (!strcmp(key, "skip_intro")) { int v = atoi(val); if (v >= 0 && v <= 2) g_skip_intro = v; }
-        else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 3) g_battle_speed = v; }
+        else if (!strcmp(key, "battle_speed")) { int v = atoi(val); if (v >= 1 && v <= 4) g_battle_speed = v; }
+        else if (!strcmp(key, "battle_speed_turn_only")) g_battle_turn_only = atoi(val) != 0;
+        else if (!strcmp(key, "battle_victory_auto")) g_battle_auto_victory = atoi(val) != 0;
         else if (!strcmp(key, "save_backups")) g_save_backups = atoi(val) != 0;
+        else if (!strcmp(key, "autosave")) g_autosave = atoi(val) != 0;
         else if (!strcmp(key, "cheats")) cheats_from_list(val);
         else if (!strcmp(key, "map_monsters")) g_mapmarks_monsters = atoi(val) != 0;
         else if (!strcmp(key, "interior_maps")) g_interior_maps = atoi(val) != 0;
+        else if (!strcmp(key, "map_legend")) g_map_legend = atoi(val) != 0;
+        else if (!strcmp(key, "name_typing")) g_name_typing = atoi(val) != 0;
+        else if (!strcmp(key, "button_hints")) g_hints = atoi(val) != 0;
         else if (!strcmp(key, "walk_any_direction")) g_analog_walk = atoi(val) != 0;   /* (the older analog_walk, off by default then, is ignored) */
         else if (!strcmp(key, "fullscreen")) g_fullscreen = atoi(val) != 0;
         else if (!strcmp(key, "dslite_filter")) g_opt.lcd = atoi(val) != 0;
@@ -546,6 +727,9 @@ static void settings_load(void) {
         else if (!strcmp(key, "monitor_width_mm")) g_opt.monitor_width_mm = (float)atof(val);
         else if (!strcmp(key, "downloadable_content")) g_opt.dlc = atoi(val) != 0;
         else if (!strcmp(key, "language")) { for (int i = 1; i <= 5; i++) if (!strcmp(val, LANGUAGE_KEY[i])) g_fw_language = i; }
+        else if (!strcmp(key, "menu_contrast")) g_ui_contrast = atoi(val) != 0;
+        else if (!strcmp(key, "menu_text_size")) { int v = atoi(val); if (v >= 0 && v <= 2) g_ui_text_size = v; }
+        else if (!strcmp(key, "menu_language")) { g_ui_language = 0; for (int i = 1; i <= 5; i++) if (!strcmp(val, LANGUAGE_KEY[i])) g_ui_language = i; }
         else if (!strcmp(key, "wireless")) g_net_want = atoi(val) != 0;
         else if (!strcmp(key, "wfc_server")) snprintf(g_wfc_server, sizeof g_wfc_server, "%s", val);
         else if (!strcmp(key, "wireless_mac")) {
@@ -557,6 +741,9 @@ static void settings_load(void) {
         }
     }
     fclose(f);
+    /* the fonts the menu showed before Source Sans 3 became the only one there (the others: all_options) */
+    if (!g_all_options && (!strcmp(g_hdfont, "Marcellus.ttf") || !strcmp(g_hdfont, "original")))
+        snprintf(g_hdfont, sizeof g_hdfont, "%s", "SourceSans3.ttf");
     /* the colour counts once the player picked one (before nightly5 it was saved either way) */
     if (g_color_chosen) {
         for (int i = 0; i < N_DRAWN; i++) if (!strcmp(color, SHELLS[i].key)) g_opt.shell_color = i;
@@ -582,9 +769,13 @@ static void settings_save(void) {
     fprintf(f, "upscale_textures = %d\n", g_texup);
     fprintf(f, "# enhanced: the 2D screens (menus, maps, sprites) smoothed with xBR: 0 or 1\n");
     fprintf(f, "smooth_2d = %d\n", g_smooth2d);
+    fprintf(f, "# enhanced: soft shadows in corners and under things (furniture, shelves, walls meeting the floor): 0 or 1\n");
+    fprintf(f, "soft_shadows = %d\n", g_softshadow);
+    fprintf(f, "# enhanced: thin dark lines round things, so they stand apart from what is behind: 0 or 1\n");
+    fprintf(f, "outline_lines = %d\n", g_ink);
     fprintf(f, "# enhanced: characters' outlines: 0 like the DS, 1 thin, 2 none\n");
     fprintf(f, "outlines = %d\n", g_outline);
-    fprintf(f, "# enhanced: menu and dialogue windows: 0 like the DS, 1 minimal (no frame, more see-through)\n");
+    fprintf(f, "# enhanced: menu and dialogue windows: 0 like the DS, 1 minimal (no frame, more see-through), 2 modern (square, dark see-through, a thin grey line)\n");
     fprintf(f, "window_style = %d\n", g_winstyle);
     fprintf(f, "# enhanced: HD textures from the textures folder (textures/<name>.png) instead of the game's: 0 or 1\n");
     fprintf(f, "hd_textures = %d\n", g_texpack);
@@ -617,8 +808,14 @@ static void settings_save(void) {
     fprintf(f, "farm_fast_forward = %d\n", g_farm_fast);
     fprintf(f, "# Modern > Start: 0 the logos and the opening movie as on a DS, 1 skip the logos, 2 skip the opening movie too\n");
     fprintf(f, "skip_intro = %d\n", g_skip_intro);
-    fprintf(f, "# Modern > Battle speed: battles go 1, 2 or 3 times as fast (not while playing with friends)\n");
+    fprintf(f, "# Modern > Battle speed: battles go 1, 2, 3 or 4 times as fast (not while playing with friends);\n");
+    fprintf(f, "# turn_only 1: only while the turn plays out (the commands are chosen at the usual pace);\n");
+    fprintf(f, "# victory_auto 1: after a win, the messages turn their page by themselves (not after a level up): 0 or 1\n");
     fprintf(f, "battle_speed = %d\n", g_battle_speed);
+    fprintf(f, "battle_speed_turn_only = %d\n", g_battle_turn_only);
+    fprintf(f, "battle_victory_auto = %d\n", g_battle_auto_victory);
+    fprintf(f, "# Modern > Save by itself every 10 minutes (on the field, while free to walk; not while playing with friends): 0 or 1\n");
+    fprintf(f, "autosave = %d\n", g_autosave);
     fprintf(f, "# Game > Keep a copy of every save: the save as it was before each new one, in save-backups (the last 20): 0 or 1\n");
     fprintf(f, "save_backups = %d\n", g_save_backups);
     {   char on[400]; cheats_to_list(on, sizeof on);
@@ -628,6 +825,12 @@ static void settings_save(void) {
     fprintf(f, "map_monsters = %d\n", g_mapmarks_monsters);
     fprintf(f, "# Modern > Map: inside buildings, a plan of the room drawn from its walls (the game shows the town): 0 or 1\n");
     fprintf(f, "interior_maps = %d\n", g_interior_maps);
+    fprintf(f, "# the map: a legend of its marks, under the place's name: 0 or 1\n");
+    fprintf(f, "map_legend = %d\n", g_map_legend);
+    fprintf(f, "# Modern: the character's name typed with the keyboard (it presses the game's own keys): 0 or 1\n");
+    fprintf(f, "name_typing = %d\n", g_name_typing);
+    fprintf(f, "# the game's DS buttons (the field's \"X Menu\") as on your controller or keyboard, whichever you used last: 0 or 1\n");
+    fprintf(f, "button_hints = %d\n", g_hints);
     fprintf(f, "# 0 or 1 (F11)\n");
     fprintf(f, "fullscreen = %d\n", g_fullscreen);
     fprintf(f, "# DS Lite screen filter (F6) and its parts: 0 or 1; backlight: low, medium, high, max\n");
@@ -652,6 +855,12 @@ static void settings_save(void) {
     fprintf(f, "downloadable_content = %d\n", g_opt.dlc);
     fprintf(f, "# the game's language (European version; the USA version is in English): english, french, german, italian or spanish\n");
     fprintf(f, "language = %s\n", LANGUAGE_KEY[g_fw_language]);
+    fprintf(f, "# the menu bar's, windows' and messages' language: game (the game's own: English with the USA version),\n");
+    fprintf(f, "# english, french, german, italian or spanish (their texts: lang folder)\n");
+    fprintf(f, "menu_language = %s\n", g_ui_language ? LANGUAGE_KEY[g_ui_language] : "game");
+    fprintf(f, "# View > Readability, the options menu in the game (Esc): stronger contrast 0 or 1; text size 0 normal, 1 large, 2 larger\n");
+    fprintf(f, "menu_contrast = %d\n", g_ui_contrast);
+    fprintf(f, "menu_text_size = %d\n", g_ui_text_size);
     fprintf(f, "# Wireless menu: connect to a community Nintendo Wi-Fi Connection server: 0 or 1\n");
     fprintf(f, "wireless = %d\n", g_net_want);
     fprintf(f, "# which server: builtin (offline, the files in the wfc folder), altwfc, wiimmfi, or another's DNS address\n");
@@ -716,13 +925,18 @@ static void audio_cb(void* u, Uint8* stream, int len) {
 
 /* Window size = canvas x scale, made smaller if it would not fit on the screen. */
 static void menu_sync(void);
+static void menu_build(void);
 /* keep: the layout changed (swap, single screen, another layout): keep the
  * size the player gave the window - the same if the picture keeps its shape,
  * else the new shape at the same zoom. Otherwise (window size, actual size,
  * the start) the chosen size. */
 static float g_last_cw, g_last_ch;                              /* the canvas the window was last sized for */
 static void layout_window_keep(int keep) {
+    SDL_Rect r;
+    int usable = SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(g_win), &r) == 0;
+    if (usable && !g_fullscreen && r.h > 64) g_side_aspect = (float)(r.w - 16) / (float)(r.h - 64);   /* widescreen: the monitor's shape */
     GlPresent v; canvas_layout(&v, 1, 1);
+    g_side_aspect = 0;
     int w = (int)v.cw, h = (int)v.ch;
     if (!g_gl) SDL_RenderSetLogicalSize(g_ren, w, h);
     float lw = g_last_cw, lh = g_last_ch;
@@ -735,8 +949,7 @@ static void layout_window_keep(int keep) {
         float cur = fminf((float)ww / lw, (float)wh / lh);       /* the zoom the window has now */
         if (cur > 0.25f) s = cur;
     }
-    SDL_Rect r;
-    if (SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(g_win), &r) == 0) {
+    if (usable) {
         float fit = fminf((float)(r.w - 16) / (float)w, (float)(r.h - 64) / (float)h);   /* room for the title and menu bars */
         if (s > fit) s = fit;
     }
@@ -764,11 +977,14 @@ static int try_gl(void) {
     if (getenv("DQIX_SMOOTH2D")) g_smooth2d = atoi(getenv("DQIX_SMOOTH2D")) != 0;   /* tests */
     if (getenv("DQIX_TEXUP")) g_texup = atoi(getenv("DQIX_TEXUP")) != 0;
     if (getenv("DQIX_OUTLINES")) g_outline = atoi(getenv("DQIX_OUTLINES"));   /* tests */
-    if (getenv("DQIX_WINDOW_STYLE")) g_winstyle = atoi(getenv("DQIX_WINDOW_STYLE")) == 1;
-    gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup); gl_set_outline(g_outline);
+    if (getenv("DQIX_WINDOW_STYLE")) { int v = atoi(getenv("DQIX_WINDOW_STYLE")); g_winstyle = v >= 0 && v <= 2 ? v : 0; }
+    if (getenv("DQIX_SOFT_SHADOWS")) g_softshadow = atoi(getenv("DQIX_SOFT_SHADOWS")) != 0;   /* tests */
+    if (getenv("DQIX_OUTLINE_LINES")) g_ink = atoi(getenv("DQIX_OUTLINE_LINES")) != 0;
+    gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup); gl_set_outline(g_outline); gl_set_soft_shadows(g_softshadow); gl_set_ink_lines(g_ink);
     if (getenv("DQIX_HD_TEXTURES")) g_texpack = atoi(getenv("DQIX_HD_TEXTURES")) != 0;   /* tests */
     if (getenv("DQIX_DUMP_TEXTURES")) g_texdump = atoi(getenv("DQIX_DUMP_TEXTURES")) != 0;
     gl_set_texture_pack(g_texpack); gl_set_texture_dump(g_texdump);
+    gl_textures_hd_start();                                       /* HD textures still to make (a PC turned off before the end): on with them */
     if (getenv("DQIX_HD_TEXT")) g_hdtext = atoi(getenv("DQIX_HD_TEXT")) != 0;
     if (getenv("DQIX_HD_MOVIES")) g_hdmovie = atoi(getenv("DQIX_HD_MOVIES")) != 0;   /* tests */
     if (getenv("DQIX_HD_FONT")) snprintf(g_hdfont, sizeof g_hdfont, "%s", getenv("DQIX_HD_FONT"));
@@ -931,10 +1147,8 @@ void frontend_init(int argc, char** argv) {
             if (wp && sscanf(wp, "%d,%d", &x, &y) == 2) SDL_SetWindowPosition(g_win, x, y);
         }
         apply_mode();
-        const char* names[N_DRAWN + MAX_SKINS];
-        for (int i = 0; i < N_DRAWN; i++) names[i] = SHELLS[i].name;
-        for (int i = 0; i < g_nskins; i++) names[N_DRAWN + i] = g_skins[i].name;
-        menu_init(g_win, names, N_SHELLS, g_all_options);
+        ui_lang_load(ui_language_wanted());
+        menu_build();
         if (g_update_auto && !session_requested() && update_project_dir()) update_check_async();
         update_actual();
         menu_sync();
@@ -985,12 +1199,14 @@ static int to_touch_in(SDL_Window* win, int wx, int wy, int* tx, int* ty, int cl
         canvas_layout_for(&v, ww, wh, win == g_win2);
         lx = ((float)wx + 0.5f - v.ox) / v.sc; ly = ((float)wy + 0.5f - v.oy) / v.sc;
     } else { canvas_layout(&v, 1, 1); SDL_RenderWindowToLogical(g_ren, wx, wy, &lx, &ly); }
-    if (v.npiece) {                                               /* the battle HUD's panels: back to where they are on the touch screen */
+    int bottom_pieces = 0;
+    for (int i = 0; i < v.npiece; i++) bottom_pieces |= v.piece[i][4] > 0.5f;
+    if (bottom_pieces) {                                          /* the battle HUD's panels, the character's creation: back to where they are on the touch screen */
         static int last;                                          /* the panel last touched: a drag off it stays on its edge */
         int hit = -1;
         for (int i = v.npiece - 1; i >= 0 && hit < 0; i--) {
             const float* q = v.piece[i];
-            if (lx >= q[0] && lx < q[0] + q[2] && ly >= q[1] && ly < q[1] + q[3]) hit = i;
+            if (q[4] > 0.5f && lx >= q[0] && lx < q[0] + q[2] && ly >= q[1] && ly < q[1] + q[3]) hit = i;   /* (not a piece of the top screen) */
         }
         if (hit < 0 && !(clamp && last < v.npiece)) return 0;   /* the rest of the commands screen isn't shown */
         if (hit >= 0) last = hit;
@@ -1073,6 +1289,7 @@ static void memfind_hook(void) {
     }
 }
 
+static void journal_ui_toggle(void);
 static void do_action(int id);
 /* tests: DQIX_TEST_ACTIONS="frame:menu id;frame:resize:w:h;...": menu actions and window resizes at given frames */
 static void test_actions_hook(void) {
@@ -1161,7 +1378,15 @@ static void perf_write(FILE* f) {
 }
 
 /* DQIX_WINSHOT_AT=frame[,frame...]: save the whole window as shown (tests) */
+static char g_shot_next[32];                                    /* tests: save the next frame drawn there (DQIX_MENU_TEST) */
 static void window_shot_hook(int w, int h, int second) {
+    if (g_shot_next[0] && !second) {
+        uint8_t* rgb = gl_read_window(w, h);
+        FILE* f = fopen(g_shot_next, "wb");
+        if (f) { fprintf(f, "P6\n%d %d\n255\n", w, h); fwrite(rgb, 1, (size_t)w * h * 3, f); fclose(f); }
+        free(rgb);
+        g_shot_next[0] = 0;
+    }
     static char list[20000]; static int init;
     if (!init) { init = 1; const char* e = getenv("DQIX_WINSHOT_AT"); if (e) snprintf(list, sizeof list, ",%s,", e); }
     if (!list[0]) return;
@@ -1260,7 +1485,7 @@ static void wide_update(int a_on_top) {
  * holds the commands. Anything else there (no such lines) keeps the usual
  * small screen. In the field, keep the map for the map window. */
 static void hud_update(int a_on_top) {
-    g_hud_n = 0; g_hud_win[2] = 0;
+    g_hud_n = 0; g_hud_win[2] = 0; g_hud_list = 0;
     if (!WIDE_GL || !g_hud || !g_wide || g_side_by_side || (g_two && !g_single)) return;
     int side = 0, which = gl_wide_shown(&side);
     if (which == 1 && g_wide_pop && !g_minimap) {                 /* the field: the map the window keeps during battles */
@@ -1279,6 +1504,7 @@ static void hud_update(int a_on_top) {
         sep[y] = n > 100; cut[y] = sep[y] && nr < 50; nsep += sep[y] && !cut[y];
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
+        if (g_comp_3d_on2d * 4 > 256 * 192) return;              /* (not a menu with a 3D model on top: Attributes, Equip, whose list is that grey too) */
         int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles (one line of experience: 33 rows) */
         for (int y = 0; y < 192; y++)
             for (int x = 0; x < 256; x++)
@@ -1298,11 +1524,11 @@ static void hud_update(int a_on_top) {
         int h = y - y0, mid = (y0 + y) / 2, framed = 0;
         for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) framed = 1;
         if (!framed && n == 0) continue;                          /* above the panels (while the turn plays out): the backdrop */
-        if (!framed && n >= 2) break;                             /* below them: nothing more */
+        if (!framed && n >= 1) break;                             /* below them: nothing more (alone: the empty page) */
         if (n == 8 || h < 30 || h > 80 || !framed || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
-    if (n < 2) return;
+    if (n < 1) return;                                            /* (one member alone: a party of one, early on) */
     /* a list open (Spells, Items...): its description box covers the right of
      * the panels under the one whose turn it is. Those and the tall one in
      * one piece, as on the DS; the others in the row. */
@@ -1312,11 +1538,36 @@ static void hud_update(int a_on_top) {
         for (int y = g_hud_band[i][1]; y < g_hud_band[i + 1][0]; y++)
             if (cut[y]) { if (i < a) a = i; if (i + 1 > b) b = i + 1; break; }
     if (a >= 0 && b > a) {
+        /* (modern: only the chooser's boxes with the list, not the others' in the piece) */
+        int t = -1;
+        for (int i = a; i <= b; i++) if (g_hud_band[i][1] - g_hud_band[i][0] >= 50) t = i;
+        g_hud_list = t >= 0 && g_winstyle == 2;
+        if (t >= 0) { gpu_cards_hide(a_on_top ? 1 : 0, g_hud_band[a][0], g_hud_band[t][0]); gpu_cards_hide(a_on_top ? 1 : 0, g_hud_band[t][1], g_hud_band[b][1]); }
         g_hud_band[a][1] = g_hud_band[b][1];
         for (int i = b + 1; i < n; i++) { g_hud_band[i - (b - a)][0] = g_hud_band[i][0]; g_hud_band[i - (b - a)][1] = g_hud_band[i][1]; }
         n -= b - a;
     }
     if (n >= 1) g_hud_n = n;
+}
+
+/* Battles: someone's commands are on the commands screen, the game waits for
+ * the player (their panel is the tall one between the grey lines, as
+ * hud_update finds it; while the turn plays out every panel is short). Read
+ * from the commands screen's engine itself, so in every layout. */
+static int battle_commands_shown(void) {
+    const uint32_t* px = g_engine_out[1];                         /* in battles the 3D is on the top screen: engine B is the bottom one */
+    int y0 = -1;
+    for (int y = 0; y <= 192; y++) {
+        int n = 0;
+        if (y < 192) for (int x = 10; x < 120; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
+        if (y < 192 && n <= 100) { if (y0 < 0) y0 = y; continue; }
+        if (y0 >= 0 && y - y0 >= 50 && y - y0 <= 80) {             /* a band this tall: framed in white? */
+            int mid = (y0 + y) / 2;
+            for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) return 1;
+        }
+        y0 = -1;
+    }
+    return 0;
 }
 
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at
@@ -1347,6 +1598,436 @@ static void auto_scale(void) {
     if (++frames >= 30) { gl_render_set_scale(want); pending = frames = 0; }
 }
 
+/* Where the pop-up goes (g_pop_at): in the middle at 80%, unless that hides
+ * the game's menus or text on the field (2D in front of the 3D: g_comp_info,
+ * and the dialogue window, 3D: gl_dialog_box());
+ * then the place, as near the middle and as big (down to 55%) as hides least
+ * of them. It stays put until a place clearly better shows up. */
+static int g_pop_sum[193][257];                                   /* menu pixels above and left of each point of the DS's picture */
+static int g_pop_held;                                            /* g_pop_at is where the page was last frame */
+static float pop_cost(float x, float y, float k, float S, float w, float h, float k0) {
+    int a0 = (int)fmaxf(0, x - S), a1 = (int)fminf(256, x + w * k - S), b0 = (int)fmaxf(0, y), b1 = (int)fminf(192, y + h * k);   /* (canvas -> the DS's picture: S less) */
+    int n = a1 > a0 && b1 > b0 ? g_pop_sum[b1][a1] - g_pop_sum[b0][a1] - g_pop_sum[b1][a0] + g_pop_sum[b0][a0] : 0;
+    /* each step away from the middle, and each 5% smaller, counts as a few hidden pixels */
+    return (float)n + 2.0f * (fabsf(x + w * k / 2 - (128 + S)) + fabsf(y + h * k / 2 - 96)) + 400.0f * (k0 - k) / 0.05f;
+}
+static void pop_place(void) {
+    float S = (float)wide_side_target(), cw = 256 + 2 * S, w = (float)g_pop_win[2], h = (float)g_pop_win[3];
+    int side = 0, field = gl_wide_shown(&side) == 1 && g_comp_has3d, d[4], dlg = field && gl_dialog_box(d);
+    for (int y = 0; y < 192; y++)
+        for (int x = 0, row = 0; x < 256; x++) {
+            row += field && ((g_comp_info[(y * 256 + x) * 4] & 3) != 1 || (dlg && x >= d[0] && x < d[2] && y >= d[1] && y < d[3]));   /* (the dialogue window is 3D) */
+            g_pop_sum[y + 1][x + 1] = g_pop_sum[y][x + 1] + row;
+        }
+    float k0 = fminf(1.0f, fminf(0.8f * cw / w, 0.8f * 192.0f / h));
+    float bx = (cw - w * k0) / 2, by = (192 - h * k0) / 2, bk = k0, best = pop_cost(bx, by, bk, S, w, h, k0);
+    if (best > 0)
+        for (float k = k0; k >= 0.55f - 1e-3f; k -= 0.05f)
+            for (float y = 0; y + h * k <= 192.001f; y += 4)
+                for (float x = 0; x + w * k <= cw + 0.001f; x += 4) {
+                    float c = pop_cost(x, y, k, S, w, h, k0);
+                    if (c < best) { best = c; bx = x; by = y; bk = k; }
+                }
+    if (g_pop_held) {                                             /* where it was: still good enough? */
+        float px = g_pop_at[0], py = g_pop_at[1], pk = g_pop_at[2];
+        if (py + h * pk <= 192.5f && px + w * pk <= cw + 0.5f && pop_cost(px, py, pk, S, w, h, k0) <= best + 300.0f) return;
+    }
+    g_pop_at[0] = bx; g_pop_at[1] = by; g_pop_at[2] = bk;
+    g_pop_held = 1;
+}
+
+/* The stamp a quest's sheet gets when the quest is done (a red box, double
+ * edged, round its word: Complete!, Réussie !...), drawn again at a higher
+ * resolution (STAMP_S pixels per page pixel, GL_LAYER_STAMP) in clean ink:
+ * the box's two lines straight, rounded at the corners, and its letters
+ * from the page's red pixels, their specks filled and edges smoothed. The
+ * box: the outermost columns and rows full of red (its outer line 4 pixels
+ * wide, its inner one 2, 6 in, once it has come down: 62 rows high). */
+enum { STAMP_S = 6, STAMP_MAXW = 240, STAMP_MAXH = 128 };
+static int stamp_red(uint32_t c) { int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255; return r > 120 && r - g > 80 && r - b > 60; }   /* (not the bars' gold line) */
+static float stamp_box(float x, float y, float w, float h, float in, float rad) {   /* inside the rounded box "in" pixels in: > 0 */
+    float hx = w / 2 - in, hy = h / 2 - in, dx = fabsf(x - w / 2) - (hx - rad), dy = fabsf(y - h / 2) - (hy - rad);
+    float out = sqrtf(fmaxf(dx, 0) * fmaxf(dx, 0) + fmaxf(dy, 0) * fmaxf(dy, 0)) + fminf(fmaxf(dx, dy), 0);
+    return rad - out;
+}
+static void quest_stamp(const uint32_t* px) {
+    static uint8_t mask[STAMP_MAXH][STAMP_MAXW], *img;
+    static uint32_t shown;
+    int col[256] = { 0 }, row[192] = { 0 }, x0 = -1, x1 = -1, y0 = -1, y1 = -1;
+    for (int y = QS_DESC_Y; y < QS_DESC_Y + QS_DESC_H; y++)
+        for (int x = QS_IN_X; x < QS_IN_X + QS_IN_W; x++) if (stamp_red(px[y * 256 + x])) { col[x]++; row[y]++; }
+    for (int x = 0; x < 256; x++) if (col[x] > 30) { if (x0 < 0) x0 = x; x1 = x; }
+    for (int y = 0; y < 192; y++) if (row[y] > 100) { if (y0 < 0) y0 = y; y1 = y; }
+    int w = x1 - x0 + 1, h = y1 - y0 + 1;
+    g_stamp[2] = 0;
+    if (x0 < 0 || y0 < 0 || w < 40 || h < 24 || w > STAMP_MAXW || h > STAMP_MAXH) return;
+    uint32_t key = 2166136261u;                                   /* (drawn again only when it changes) */
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) { mask[y][x] = stamp_red(px[(y0 + y) * 256 + x0 + x]); key = (key ^ mask[y][x]) * 16777619u; }
+    key = (key ^ (uint32_t)(w << 8 | h)) * 16777619u;
+    g_stamp[0] = x0; g_stamp[1] = y0; g_stamp[2] = w; g_stamp[3] = h;
+    if (key == shown) return;
+    shown = key;
+    int W = w * STAMP_S, H = h * STAMP_S;
+    float sc = h / 62.0f;                                         /* (62 rows high once down) */
+    uint8_t* n = realloc(img, (size_t)W * H * 4);
+    if (!n) { g_stamp[2] = 0; return; }
+    img = n;
+    for (int j = 0; j < H; j++)
+        for (int i = 0; i < W; i++) {
+            float x = (i + 0.5f) / STAMP_S, y = (j + 0.5f) / STAMP_S, aa = 1.0f / STAMP_S;
+            /* the lines: outer 0..4 in, inner 6..8 in (more while it comes down, bigger: sc) */
+            float b0 = stamp_box(x, y, w, h, 0, 5 * sc), b1 = stamp_box(x, y, w, h, 4 * sc, 3 * sc), b2 = stamp_box(x, y, w, h, 6 * sc, 2 * sc), b3 = stamp_box(x, y, w, h, 8 * sc, sc);
+            float cov = fminf(fmaxf(b0 / aa + 0.5f, 0), 1) * (1 - fminf(fmaxf(b1 / aa + 0.5f, 0), 1))
+                      + fminf(fmaxf(b2 / aa + 0.5f, 0), 1) * (1 - fminf(fmaxf(b3 / aa + 0.5f, 0), 1));
+            if (b3 > sc) {                                         /* the letters: the red pixels, blurred over 3x3 and cut at half */
+                float m = 0, wsum = 0;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        float sx = x - 0.5f + dx * 0.75f, sy = y - 0.5f + dy * 0.75f;
+                        int ix = (int)floorf(sx), iy = (int)floorf(sy);
+                        float fx = sx - ix, fy = sy - iy, v = 0;
+                        for (int k = 0; k < 4; k++) {             /* (bilinear) */
+                            int xx = ix + (k & 1), yy = iy + (k >> 1);
+                            float wk = ((k & 1) ? fx : 1 - fx) * ((k >> 1) ? fy : 1 - fy);
+                            if (xx >= 0 && xx < w && yy >= 0 && yy < h) v += wk * mask[yy][xx];
+                        }
+                        float wt = dx || dy ? (dx && dy ? 0.5f : 0.75f) : 1.0f;
+                        m += v * wt; wsum += wt;
+                    }
+                m /= wsum;
+                cov += fminf(fmaxf((m - 0.38f) / 0.16f, 0), 1);
+            }
+            float a = fminf(cov, 1) * 0.92f;
+            uint8_t* o = img + ((size_t)j * W + i) * 4;               /* premultiplied */
+            o[0] = (uint8_t)(206 * a + 0.5f); o[1] = (uint8_t)(28 * a + 0.5f); o[2] = (uint8_t)(34 * a + 0.5f); o[3] = (uint8_t)(255 * a + 0.5f);
+        }
+    gl_set_layer(GL_LAYER_STAMP, img, W, H);
+}
+
+/* Is the top screen a quest's sheet (quest_pieces())? Its two dark brown
+ * bars and the light parchment between them, at their places (most of the
+ * points: letters or the stamp may lie over some). */
+static int quest_page(const uint32_t* px) {
+    int bars = 0, page = 0, n = 0;
+    for (int x = QS_IN_X + 8; x < QS_IN_X + QS_IN_W - 8; x += 8) {
+        uint32_t t = px[(QS_TITLE_Y + 1) * 256 + x], d = px[(QS_DATE_Y + 1) * 256 + x], m = px[156 * 256 + x];
+        int tr = (t >> 16) & 255, tg = (t >> 8) & 255, tb = t & 255, dr = (d >> 16) & 255, dg = (d >> 8) & 255, db = d & 255;
+        int mr = (m >> 16) & 255, mg = (m >> 8) & 255, mb = m & 255;
+        bars += tr > 75 && tr < 125 && tg > 45 && tg < 95 && tb > 20 && tb < 70 && tr > tb + 30;   /* the title bar (97, 65, 40) */
+        bars += dr > 95 && dr < 150 && dg > 50 && dg < 105 && db > 20 && db < 70 && dr > db + 50;  /* the date bar (121, 73, 40) */
+        page += mr > 210 && mg > 180 && mb > 110 && mr > mb + 50;                                  /* the parchment (251, 227, 162) */
+        n++;
+    }
+    return bars * 5 > n * 2 * 4 && page * 2 > n;                  /* (the stamp, coming down big, can hide much of the parchment) */
+}
+
+/* Is the top screen an item's card (card_pieces())? Its name's dark bar and
+ * the description's parchment under the text, at their places. */
+static int card_page(const uint32_t* px) {
+    int bar = 0, page = 0, n = 0;
+    for (int x = 40; x < 140; x += 8) {
+        uint32_t t = px[16 * 256 + x], d = px[96 * 256 + x + 30];
+        int tr = (t >> 16) & 255, tg = (t >> 8) & 255, tb = t & 255, dr = (d >> 16) & 255, dg = (d >> 8) & 255, db = d & 255;
+        bar += tr > 45 && tr < 90 && tg > 30 && tg < 70 && tb > 15 && tb < 50 && tr > tb + 20;      /* the name's bar (65, 48, 32) */
+        page += dr > 170 && dg > 140 && db > 60 && db < 130 && dr > db + 70;                       /* the parchment (203, 170, 89) */
+        n++;
+    }
+    return bar * 4 > n * 3 && page * 4 > n * 3;
+}
+
+/* The character's creation (the character's 3D on the top screen: before the
+ * adventure, or a companion at Patty's): its windows on the touch screen, found by what isn't parchment
+ * in them (g_cc_box: the choices or the name's keyboard, and the
+ * name above it), popped up over the big screen (canvas_layout_for()). None
+ * once the name is done (OK) or outside the creation. */
+static void creation_update(int a_on_top) {
+    g_cc_n = 0;
+    int side = 0;
+    if (!g_gl || !(WIDE_GL && g_wide && !g_side_by_side && !(g_two && !g_single)) || !g_minimap || g_small_blank) return;
+    if (gl_wide_shown(&side) != 0) return;
+    const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the touch screen */
+    /* Fading in or out the screen is darker: every test is against the parchment's
+     * own brightness at its left edge (never under a window), so
+     * the pop-ups are there from the first frames (not both screens side by side) */
+#define CC_SUM(x, y) ((int)((px[(y) * 256 + (x)] >> 16) & 255) + (int)((px[(y) * 256 + (x)] >> 8) & 255) + (int)(px[(y) * 256 + (x)] & 255))
+    int lp = CC_SUM(6, 100);                                      /* the parchment: about 520 when bright (260 greyed under Patty's last question) */
+    {   uint32_t c = px[100 * 256 + 6];
+        int r = (c >> 16) & 255, b = c & 255;
+        if (lp < 90 || !(r * 100 > b * 140)) return;              /* (too dark to tell, or not the parchment) */
+    }
+    int dark_below = lp * 35 / 100, light_above = lp * 115 / 100;   /* (180 and 600 when bright) */
+    {   /* its tabs 1-8 at the top right (dark, 12 pixels wide, every 16; the step's own is gold):
+         * only the creation has them (at the start, and Patty's companions in the adventure) */
+        int tabs = 0, run = 0;
+        for (int x = 112; x < 254; x++) {
+            int dark = CC_SUM(x, 12) < dark_below;
+            if (dark) run++;
+            else { if (run >= 10 && run <= 14 && ((x - run - 122) % 16 + 16) % 16 <= 1) tabs++; run = 0; }
+        }
+        if (tabs < 6) return;
+    }
+    int parchment = 1;
+    static const int probe[3][2] = { { 6, 100 }, { 249, 100 }, { 128, 164 } };   /* the parchment around its windows */
+    for (int i = 0; i < 3; i++) {
+        uint32_t c = px[probe[i][1] * 256 + probe[i][0]];
+        int r = (c >> 16) & 255, b = c & 255;
+        if (!(r * 100 > b * 140 && CC_SUM(probe[i][0], probe[i][1]) * 100 > lp * 70)) parchment = 0;   /* (warm, as bright as the rim) */
+    }
+    if (!parchment) {
+        /* Patty's last question ("Add this character...?"): the game's text box
+         * along the bottom and Yes / No at the right over the keyboard, greyed: those
+         * two pop up alone (on No the keyboard comes back, and with it its pop-up) */
+#define CC_D(x, y) (CC_SUM(x, y) < dark_below)
+#define CC_L(x, y) (CC_SUM(x, y) > light_above)
+        int box = 0;
+        for (int x = 8; x < 248; x++) box += CC_D(x, 150) && CC_D(x, 180);
+        if (box < 230 || !CC_L(252, 90) || !CC_L(252, 100) || !CC_D(230, 80) || !CC_D(230, 108)) return;
+#undef CC_D
+#undef CC_L
+        /* the text box as wide as its text (its longest line, in any language), Yes / No
+         * just over its right end (their right edges in line), as close as their windows allow */
+        int tx = 120, ty = 140;                                   /* the text's right end and bottom */
+        for (int yy = 121; yy < 186; yy++)
+            for (int x = 248; x > 8; x--) {
+                if (CC_SUM(x, yy) * 100 > lp * 87) { if (x > tx) tx = x; if (yy > ty) ty = yy; break; }   /* (the text's light letters: 450 when bright) */
+            }
+        int w = tx + 10 - 7, h = ty + 9 - 121;
+        if (w > 242) w = 242;
+        if (h > 65) h = 65;
+        static const int yn[4] = { 216, 76, 34, 36 };             /* Yes / No's inside (its light edge left out) */
+        int tb[4] = { 7, 121, w, h };                             /* the text box's inside, cut after the text */
+        memcpy(g_cc_box[0], yn, sizeof yn); memcpy(g_cc_box[1], tb, sizeof tb);
+        g_cc_at[0][0] = w - yn[2]; g_cc_at[0][1] = 0;
+        g_cc_at[1][0] = 0; g_cc_at[1][1] = yn[3] + 8;              /* (8: the two windows' margins, and a gap) */
+        g_cc_n = 2;
+        return;
+    }
+#define CC_WIN(c) (!((int)(((c) >> 16) & 255) * 100 > (int)((c) & 255) * 130 && (int)(((c) >> 16) & 255) * 520 > 100 * lp))   /* not the parchment's warm colours: a window (dark, or grey when chosen: Male / Female) */
+    int y = 24;
+    while (y < 168 && g_cc_n < 2) {                               /* bands of rows mostly window, under the tabs, over the buttons' hints */
+        int n = 0;
+        for (int x = 8; x < 248; x++) n += CC_WIN(px[y * 256 + x]);
+        if (n < 40) { y++; continue; }
+        int y0 = y;
+        while (y < 168) {                                         /* (the keyboard's last row: its keys apart, fewer dark pixels) */
+            int m = 0;
+            for (int x = 8; x < 248; x++) m += CC_WIN(px[y * 256 + x]);
+            if (m < 16) break;
+            y++;
+        }
+        int h = y - y0;
+        if (h < 8) continue;
+        int x0 = -1, x1 = -1;                                     /* columns of window in most of the band's rows */
+        for (int x = 8; x < 248; x++) {
+            int m = 0;
+            for (int yy = y0; yy < y; yy++) m += CC_WIN(px[yy * 256 + x]);
+            if (m * 5 >= h * 3) { if (x0 < 0) x0 = x; x1 = x; }
+        }
+        if (x0 < 0) continue;
+        int* b = g_cc_box[g_cc_n];                                /* its inside, without the rounded corners (a window of the minimal style goes round it) */
+        b[0] = x0 + 4; b[1] = y0 + 4; b[2] = x1 - x0 - 7; b[3] = h - 8;   /* (4: past its light corner pixels) */
+        g_cc_at[g_cc_n][0] = b[0]; g_cc_at[g_cc_n][1] = b[1];      /* (in the pop-up as on the touch screen) */
+        g_cc_n++;
+    }
+#undef CC_WIN
+#undef CC_SUM
+}
+
+/* Modern > Type the name with the keyboard: while the name's keyboard pops
+ * up (creation_update: the name, then the keyboard), each letter typed on
+ * the PC's keyboard presses the game's own key for it (as the stylus would),
+ * so the game does the rest (8 letters at most, its own checks). Its pages,
+ * in touch screen pixels: the letters (a..z, or A..Z after Shift (one letter)
+ * or Caps (until pressed again)), the accents (A with an accent) and the signs
+ * (@). Which one shows is read from the picture before each press. */
+static int name_typing_active(void) { return g_name_typing && g_cc_n == 2 && g_cc_box[1][3] > 80; }
+typedef struct { int page, upper, x, y; } TypeKey;               /* page 0 the letters, 1 the accents, 2 the signs; upper: 1 needs A..Z, 0 a..z, -1 either */
+static int type_key_for(uint32_t c, TypeKey* k) {
+    static const uint32_t row0[] = { '1','2','3','4','5','6','7','8','9','0','-','=' };
+    static const uint32_t r1l[] = { 'q','w','e','r','t','y','u','i','o','p','[',']' }, r2l[] = { 'a','s','d','f','g','h','j','k','l',';','\'' }, r3l[] = { 'z','x','c','v','b','n','m',',','.','/' };
+    static const uint32_t acc[5][13] = {
+        { 0xE0,0xE1,0xE2,0xE4,0xE6,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF },          /* a\u0300 ... */
+        { 0xF2,0xF3,0xF4,0xF5,0xF6,0x153,0xF9,0xFA,0xFB,0xFC,0xE7,0xF1,0xDF },
+        { 0xC0,0xC1,0xC2,0xC4,0xC6,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF },
+        { 0xD2,0xD3,0xD4,0xD5,0xD6,0x152,0xD9,0xDA,0xDB,0xDC,0xC7,0xD1,0xA1 },
+        { 0xBF,0xAA,0xBA,0x20AC,0xA2,0xA3 } };
+    static const int acc_n[5] = { 13, 13, 13, 13, 6 };
+    static const uint32_t sign[3][13] = {
+        { '!','?','&','"','\'','~',';','@','_','+','-','*','/' },
+        { '=',0x2190,0x2192,0x2191,0x2193,'(',')','{','}','%','#','$',0xA2 },
+        { 0xA3,0xB0,'|',0xAB,0xBB,0x201E,0x263A } };
+    static const int sign_n[3] = { 13, 13, 7 };
+    if (c == 0x2019 || c == 0xB4 || c == '`') c = '\'';                /* (the PC's other apostrophes) */
+    for (int i = 0; i < 12; i++) if (row0[i] == c) { k->page = 0; k->upper = -1; k->x = 39 + 16 * i; k->y = 71; return 1; }
+    uint32_t lc = c >= 'A' && c <= 'Z' ? c + 32 : c;
+    int up = c >= 'A' && c <= 'Z' ? 1 : c >= 'a' && c <= 'z' ? 0 : -1;
+    for (int i = 0; i < 12; i++) if (r1l[i] == lc) { k->page = 0; k->upper = up; k->x = 47 + 16 * i; k->y = 88; return 1; }
+    for (int i = 0; i < 11; i++) if (r2l[i] == lc) { k->page = 0; k->upper = up; k->x = 55 + 16 * i; k->y = 104; return 1; }
+    for (int i = 0; i < 10; i++) if (r3l[i] == lc) { k->page = 0; k->upper = up; k->x = 63 + 16 * i; k->y = 120; return 1; }
+    for (int r = 0; r < 5; r++) for (int i = 0; i < acc_n[r]; i++) if (acc[r][i] == c) { k->page = 1; k->upper = -1; k->x = 31 + 16 * i; k->y = 64 + 16 * r; return 1; }
+    for (int r = 0; r < 3; r++) for (int i = 0; i < sign_n[r]; i++) if (sign[r][i] == c) { k->page = 2; k->upper = -1; k->x = 31 + 16 * i; k->y = 80 + 16 * r; return 1; }
+    return 0;
+}
+static void type_tap(int x, int y) { g_tap_x = x; g_tap_y = y; g_tap_frames = 4; }
+static void name_typing_step(int a_on_top) {
+    if (!name_typing_active()) { g_type_n = 0; g_tap_tries = 0; return; }
+    if (!g_type_n || g_tap_frames || g_tap_wait) return;
+    const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];
+#define KEY_AT(x, y) ((px[(y) * 256 + (x)] & 0xFFFFFF) == 0x383838 || (px[(y) * 256 + (x)] & 0xFFFFFF) == 0x515151)   /* a key (56) or the one under the cursor (81) */
+    int page = KEY_AT(30, 58) ? 1 : KEY_AT(30, 75) ? 2 : 0;       /* the accents' first row is higher, the signs' is lower, than the letters' second one */
+    int ink = 0;                                                  /* A..Z: their tops in the row Q..P, where a..z have none */
+    for (int x = 40; x < 200; x++) ink += ((px[85 * 256 + x] >> 16) & 255) > 150;
+    int upper = ink > 35;
+#undef KEY_AT
+    uint32_t c = g_type_q[0];
+    int done = 1;
+    TypeKey k;
+    if (c == '\b') type_tap(196, 144);                             /* the arrow back */
+    else if (c == '\n') type_tap(219, 144);                        /* OK */
+    else if (c == ' ') type_tap(139, 144);
+    else if (!type_key_for(c, &k)) ;                              /* not on the game's keyboard */
+    else if (k.page != page) { type_tap(k.page == 0 ? 35 : k.page == 1 ? 60 : 83, 144); done = 0; }   /* A/1, the accents, @ */
+    else if (k.upper >= 0 && k.upper != upper) { if (k.upper) type_tap(39, 120); else type_tap(35, 104); done = 0; }   /* Shift; Caps (off) */
+    else type_tap(k.x, k.y);
+    if (!done && ++g_tap_tries > 6) done = 1;                     /* (the page didn't come: this one is left out) */
+    if (done) { g_tap_tries = 0; memmove(g_type_q, g_type_q + 1, (size_t)--g_type_n * sizeof g_type_q[0]); }
+}
+static void name_typed(uint32_t c) { if (g_type_n < 64) g_type_q[g_type_n++] = c; }
+static int text_key(SDL_Scancode k) {                             /* a key that types: the name's keyboard has it then, not the game's buttons */
+    return (k >= SDL_SCANCODE_A && k <= SDL_SCANCODE_0) || (k >= SDL_SCANCODE_SPACE && k <= SDL_SCANCODE_SLASH) || k == SDL_SCANCODE_RETURN ||
+           k == SDL_SCANCODE_BACKSPACE || k == SDL_SCANCODE_NONUSBACKSLASH || k == SDL_SCANCODE_KP_ENTER || (k >= SDL_SCANCODE_KP_DIVIDE && k <= SDL_SCANCODE_KP_PERIOD);
+}
+
+/* The top screen's page (top_page_mode() 1): which of its pixels are its
+ * backdrop, left out of the pop-up (tagged 1 in the top byte, gl_set_top_cut()),
+ * and the rest's bounds (g_pop_win). A backdrop of its own (the curtain behind
+ * a title: one layer under the windows' layers) goes whole; a page drawn as one
+ * picture (an item's card) is cut into its parts by colour: the parchment
+ * around them, and what touches the edge (the sky, the torn border), go. */
+static void pop_update(int a_on_top) {
+    if (!g_pop_win[2]) g_pop_held = 0;                            /* (not up last frame: placed afresh) */
+    g_pop_win[2] = 0; g_quest_page = g_card_page = 0;
+    static float sheet_far;                                       /* a quest's sheet: how far the 3D was since it is up (at most) */
+    static int gone = 1 << 20;                                    /* ...frames since it was last seen */
+    if (top_page_mode() != 1 || !mapmarks_top_page()) { sheet_far = 0; gone = 1 << 20; return; }   /* (a shop's list up before its card) */
+    enum { N = 256 * 192 };
+    int quest = g_winstyle == 2 && !g_shop && quest_page(g_engine_out[a_on_top ? 0 : 1]);
+    gone = quest ? 0 : gone + 1;
+    if (!quest && gone < 30) return;                              /* (fading out: not its parts cut by colour for a moment) */
+    if (quest) {                                                  /* a quest's sheet: redrawn whole (quest_pieces()) */
+        /* not while the camera comes close (the hero showing the party trick
+         * the quest gave): the sheet would hide him */
+        float w = gl_3d_centre_w();
+        if (w > sheet_far) sheet_far = w;
+        if (w > 0 && w < sheet_far * 0.8f) return;
+        g_quest_page = 1;
+        quest_stamp(g_engine_out[a_on_top ? 0 : 1]);
+        g_pop_win[0] = QS_X; g_pop_win[1] = QS_Y; g_pop_win[2] = QS_W; g_pop_win[3] = QS_H;
+        pop_place();
+        return;
+    }
+    sheet_far = 0;
+    if (g_winstyle == 2 && !g_shop && card_page(g_engine_out[a_on_top ? 0 : 1])) {   /* an item's card: redrawn whole (card_pieces()) */
+        g_card_page = 1;
+        g_pop_win[0] = CS_X; g_pop_win[1] = CS_Y; g_pop_win[2] = CS_W; g_pop_win[3] = CS_H;
+        g_pop_at[0] = 4; g_pop_at[1] = 4; g_pop_at[2] = CARD_K;   /* small, in the top left corner: off the lists (Equip, a shop's) */
+        return;
+    }
+    static uint8_t bg[N];
+    static int lab[N], q[N], size[N], ring[N];
+    static uint8_t flags[N];                                      /* 1 touches the edge, 2 reaches inside */
+    int eng = a_on_top ? 0 : 1;
+    uint32_t* px = g_engine_out[eng];
+    const uint8_t* ly = g_engine_layer[eng];
+    int n[8] = { 0 }, big = 0;
+    for (int i = 0; i < N; i++) n[ly[i] & 7]++;
+    for (int L = 1; L < 4; L++) if (n[L] > n[big]) big = L;
+    if (n[big] < N * 9 / 10) {
+        for (int i = 0; i < N; i++) bg[i] = ly[i] == big || ly[i] == LAYER_BACKDROP;
+    } else {
+        /* parts: neighbours within 24 levels of each other; the parchment is
+         * the part with most pixels in a ring a little inside the edge */
+        int ncomp = 0, best = -1;
+        for (int i = 0; i < N; i++) lab[i] = -1;
+        for (int i = 0; i < N; i++) {
+            if (lab[i] >= 0) continue;
+            int c = ncomp++, head = 0, tail = 0;
+            size[c] = ring[c] = 0; flags[c] = 0;
+            lab[i] = c; q[tail++] = i;
+            while (head < tail) {
+                int j = q[head++], x = j % 256, y = j / 256, d = x < y ? x : y;
+                if (255 - x < d) d = 255 - x;
+                if (191 - y < d) d = 191 - y;
+                size[c]++;
+                if (d == 0) flags[c] |= 1;
+                if (d > 8) flags[c] |= 2;
+                if (d >= 4 && d <= 14) ring[c]++;
+                uint32_t a = px[j];
+                int nb[4] = { x > 0 ? j - 1 : -1, x < 255 ? j + 1 : -1, y > 0 ? j - 256 : -1, y < 191 ? j + 256 : -1 };
+                for (int k = 0; k < 4; k++) {
+                    int m = nb[k];
+                    if (m < 0 || lab[m] >= 0) continue;
+                    uint32_t b = px[m];
+                    int dr = abs((int)((a >> 16) & 255) - (int)((b >> 16) & 255)), dg = abs((int)((a >> 8) & 255) - (int)((b >> 8) & 255)), db = abs((int)(a & 255) - (int)(b & 255));
+                    if (dr <= 24 && dg <= 24 && db <= 24) { lab[m] = c; q[tail++] = m; }
+                }
+            }
+            if (!(flags[c] & 1) && (best < 0 || ring[c] > ring[best])) best = c;
+        }
+        for (int i = 0; i < N; i++) { int c = lab[i]; bg[i] = c == best || (flags[c] & 1) || !(flags[c] & 2); }
+    }
+    if (g_shop)                                                   /* a shop: the card's description alone (its parchment box) */
+        for (int i = 0; i < N; i++) { int x = i % 256, y = i / 256; if (x < 8 || x > 184 || y < 25 || y > 101) bg[i] = 1; }
+    int x0 = 256, y0 = 192, x1 = -1, y1 = -1, kept = 0;
+    for (int i = 0; i < N; i++)
+        if (!bg[i]) { int x = i % 256, y = i / 256; kept++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (kept * (g_shop ? 400 : 50) < N) return;                   /* (nothing much left: not a page with windows) */
+    for (int i = 0; i < N; i++) px[i] = (px[i] & 0xFFFFFF) | (bg[i] ? 1u << 24 : 0);
+    g_pop_win[0] = x0; g_pop_win[1] = y0; g_pop_win[2] = x1 - x0 + 1; g_pop_win[3] = y1 - y0 + 1;
+    if (!g_shop) pop_place();
+}
+
+/* A shop's buy list on the field's screen (mapmarks_shop()): its signs
+ * become the items' icons, and the screen is laid out as one column
+ * (canvas_layout_for()); the row under the list: the first one below
+ * y 100 with nothing of the 2D across it (the page number is just above). */
+static void shop_update(int a_on_top) {
+    int side = 0, ok = top_page_wide() && g_gl && !a_on_top && g_comp_has3d && gl_wide_shown(&side) == 1;   /* (not waiting for the item's card: the list shows first) */
+    const uint8_t* rgba; int changed;
+    g_shop_cut = g_shop_cut2 = 118;
+    for (int y = 100; ok && y < 140; y++) {
+        int n = 0, line = 0;
+        for (int x = 8; x < 248; x++) { int m = g_comp_info[(y * 256 + x) * 4] & 3; n += m == 1; line += m == 0; }
+        if (n == 240) { g_shop_cut = g_shop_cut2 = y; break; }
+        if (line >= 200) {                                        /* the list's bottom line, the panels' top one a few rows under it */
+            g_shop_cut = g_shop_cut2 = y + 1;
+            for (int y2 = y + 2; y2 < y + 10 && y2 < 192; y2++) {
+                int l2 = 0;
+                for (int x = 8; x < 248; x++) l2 += (g_comp_info[(y2 * 256 + x) * 4] & 3) == 0;
+                if (l2 >= 200) { g_shop_cut2 = y2; break; }
+            }
+            break;
+        }
+    }
+    /* (the description's window, canvas_layout_for(), in the list's pixels) */
+    int desc_y = g_shop_cut + SHOP_GAP + SHOP_PAD + (SHOP_TH - SHOP_DESC_ICON) / 2;
+    g_shop = mapmarks_shop(ok ? g_engine_out[0] : NULL, g_comp_info, desc_y, &rgba, &changed);
+    if (changed) gl_set_icons(g_shop ? rgba : NULL, MAPMARKS_W, MAPMARKS_H);
+    /* the panels' lines (under "Attack", "Number held") stop at their windows'
+     * edges: a pixel of them where the field or a window's grey edge is above
+     * and under it becomes that */
+    uint32_t* px = g_engine_out[0];
+    for (int y = g_shop_cut2 + 1; g_shop && y < 191; y++)
+        for (int x = 0; x < 256; x++) {
+            int i = y * 256 + x, u = i - 256, d = i + 256, mu = g_comp_info[u * 4] & 3;
+            if (mu != (g_comp_info[d * 4] & 3) || (px[u] & 0xFFFFFF) != (px[d] & 0xFFFFFF) || (px[i] & 0xFFFFFF) == (px[u] & 0xFFFFFF)) continue;
+            uint32_t c = px[u];
+            int grey = mu == 0 && abs((int)((c >> 16) & 255) - 130) < 20 && abs((int)((c >> 8) & 255) - 130) < 20 && abs((int)(c & 255) - 130) < 20;
+            if (mu == 1 || grey) { px[i] = px[u]; memcpy(&g_comp_info[i * 4], &g_comp_info[u * 4], 4); }
+        }
+}
+
 /* The map's markers (mapmarks.c) over the top screen, in whichever window
  * shows it whole, while it shows the map (the 3D on the bottom screen, or the
  * map kept during a battle); the mouse over that window points at them. */
@@ -1365,6 +2046,113 @@ static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
     if (lx >= t[0] && lx < t[0] + t[2] && ly >= t[1] && ly < t[1] + t[3]) mapmarks_hover((lx - t[0]) * 256 / t[2], (ly - t[1]) * 192 / t[3]);
 }
 
+/* The field's "X Menu" sign (moved to the bottom right, gpu3d.c): its X
+ * button drawn as the one the DS's X is on (Game > Controls), on the
+ * controller or the keyboard, whichever was used last (hints.c). Where the
+ * button is on the sign: in the sign's own pixels, from its top left. */
+#define HINT_PX 128
+#define SIGN_BTN_X 6.4f
+#define SIGN_BTN_Y 23.8f
+#define SIGN_BTN_R 4.8f
+static void hint_update(GlPresent* v) {
+    static uint8_t img[HINT_PX * HINT_PX * 4];
+    static char shown[96];
+    int side = 0, pad = g_hint_pad < 0 ? g_pad != NULL : g_hint_pad && g_pad;
+    if (!g_hints || !g_sign_move || g_frame - g_sign_frame >= 4 || gl_wide_shown(&side) != 1 || v->bot[2] <= 0 || v->botx[1] <= 0) return;
+    int style = HINT_KEYBOARD, face = HINT_OTHER, b = pad ? g_ctl_pad[CA_X] : CTL_NONE;
+    char lab[64] = "", key[96];
+    if (b != CTL_NONE) {
+        style = g_ctl_pad_style == CTL_STYLE_PLAYSTATION ? HINT_PLAYSTATION : g_ctl_pad_style == CTL_STYLE_XBOX ? HINT_XBOX :
+                g_ctl_pad_style == CTL_STYLE_NINTENDO ? HINT_NINTENDO : HINT_GENERIC;
+        face = b == SDL_CONTROLLER_BUTTON_B ? HINT_RIGHT : b == SDL_CONTROLLER_BUTTON_A ? HINT_BOTTOM : b == SDL_CONTROLLER_BUTTON_Y ? HINT_TOP :
+               b == SDL_CONTROLLER_BUTTON_X ? HINT_LEFT : HINT_OTHER;
+        if (face == HINT_OTHER) controls_pad_name(b, lab, sizeof lab);
+    } else controls_key_name(g_ctl_key[CA_X][g_ctl_key[CA_X][0] ? 0 : 1], lab, sizeof lab);
+    {   /* tests: DQIX_HINT_STYLE=keyboard|generic|playstation|xbox|nintendo */
+        static const char* t = (const char*)-1; if (t == (const char*)-1) t = getenv("DQIX_HINT_STYLE");
+        static const char* const names[5] = { "keyboard", "generic", "playstation", "xbox", "nintendo" };
+        for (int i = 0; t && i < 5; i++) if (!strcmp(t, names[i])) { style = i; face = i ? HINT_TOP : HINT_OTHER; if (!i) controls_key_name(g_ctl_key[CA_X][0], lab, sizeof lab); }
+    }
+    snprintf(key, sizeof key, "%d %d %s", style, face, lab);
+    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hint_draw(img, HINT_PX, HINT_PX, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, HINT_PX, HINT_PX); }
+    float kx = v->bot[2] / v->botx[1], ky = v->bot[3] / 192.0f, r = SIGN_BTN_R + 0.5f;
+    float cx = (float)g_sign_rect[0] + SIGN_BTN_X, cy = (float)g_sign_rect[1] + SIGN_BTN_Y;
+    float* q = v->layer[GL_LAYER_HINT];
+    q[0] = v->bot[0] + (cx - r - v->botx[0] + (float)side) * kx; q[1] = v->bot[1] + (cy - r) * ky;
+    q[2] = 2 * r * kx; q[3] = 2 * r * ky;
+}
+
+/* textures-hd at work (textures-hd-progress.txt, next to the game): a bar at
+ * the big screen's bottom left; when it's done, "HD textures ready" for a few
+ * seconds and the new ones are loaded. */
+#define HDBAR_W 76.0f                                            /* (DS pixels) */
+#define HDBAR_H 12.0f
+static void hdbar_draw(int W, int H, const char* text, float part) {
+    static uint8_t* img; static uint32_t* t; static int cap;
+    if (W * H > cap) { cap = W * H; img = realloc(img, (size_t)cap * 4); t = realloc(t, (size_t)cap * 4); }
+    float r = H * 0.22f;                                         /* the panel: rounded, dark, see-through */
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float dx = fmaxf(fmaxf(r - x - 0.5f, x + 0.5f - (W - r)), 0), dy = fmaxf(fmaxf(r - y - 0.5f, y + 0.5f - (H - r)), 0);
+            float a = fminf(fmaxf(r - hypotf(dx, dy) + 0.5f, 0), 1) * 0.78f;
+            uint8_t* p = img + ((size_t)y * W + x) * 4;
+            p[0] = (uint8_t)(16 * a); p[1] = (uint8_t)(18 * a); p[2] = (uint8_t)(28 * a); p[3] = (uint8_t)(255 * a);
+        }
+    if (part >= 0) {                                             /* the bar */
+        int bx = (int)(H * 0.3f), by = (int)(H * 0.70f), bw = W - 2 * bx, bh = (int)fmaxf(H * 0.12f, 2), fill = (int)(bw * fminf(part, 1));
+        for (int y = by; y < by + bh && y < H; y++)
+            for (int x = bx; x < bx + bw; x++) {
+                uint8_t* p = img + ((size_t)y * W + x) * 4;
+                if (x < bx + fill) { p[0] = 120; p[1] = 200; p[2] = 255; } else { p[0] = 70; p[1] = 74; p[2] = 90; }
+                p[3] = 255;
+            }
+    }
+    memset(t, 0, (size_t)W * H * 4);                             /* the text: white, its coverage from the grey drawn */
+    float px = H * (part >= 0 ? 0.36f : 0.5f);
+    int tw = text_draw(t, W, H, 0, 0, px, 0xFFFFFF, text);
+    if (tw > W - H * 0.6f && tw > 0) { px *= (W - H * 0.6f) / (float)tw; memset(t, 0, (size_t)W * H * 4); tw = text_draw(t, W, H, 0, 0, px, 0xFFFFFF, text); }
+    int ox = part >= 0 ? (int)(H * 0.3f) : (W - tw) / 2, oy = (int)(part >= 0 ? H * 0.14f : (H - px * 1.25f) / 2);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            int sx = x - ox, sy = y - oy;
+            if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+            float a = (float)(t[(size_t)sy * W + sx] & 255) / 255.0f;
+            if (a <= 0) continue;
+            uint8_t* p = img + ((size_t)y * W + x) * 4;
+            for (int c = 0; c < 3; c++) p[c] = (uint8_t)(255 * a + p[c] * (1 - a));
+            p[3] = (uint8_t)(255 * a + p[3] * (1 - a));
+        }
+    gl_set_layer(GL_LAYER_HDBAR, img, W, H);
+}
+static void hdbar_update(GlPresent* v) {
+    static int state, done, total, made; static uint64_t until; static char shown[128];
+    if (g_frame % 30 == 0) {                                     /* (twice a second) */
+        FILE* f = fopen("textures-hd-progress.txt", "rb");
+        char st[16] = ""; int a = 0, b = 0;
+        state = 0;
+        if (f) { if (fscanf(f, "%15s %d %d", st, &a, &b) != 3) st[0] = 0; fclose(f); }
+        if (!strcmp(st, "working") && b > 0 && a < b) { state = 1; done = a; total = b; }
+        else if (!strcmp(st, "done")) {                          /* once: the message, the new textures */
+            remove("textures-hd-progress.txt");
+            made = a; until = SDL_GetPerformanceCounter() + g_perf_freq * 8;
+            if (g_texpack) gl_reload_texture_pack();
+        }
+    }
+    int msg = until && SDL_GetPerformanceCounter() < until;
+    if (!state && !msg) { if (shown[0]) { gl_set_layer(GL_LAYER_HDBAR, NULL, 0, 0); shown[0] = 0; } return; }
+    const float* s = v->top[2] * v->top[3] >= v->bot[2] * v->bot[3] ? v->top : v->bot;   /* the big screen */
+    float k = s[2] / 256.0f, w = HDBAR_W * k, h = HDBAR_H * k * (msg && !state ? 1.1f : 1);
+    int W = (int)(w * v->sc + 0.5f), H = (int)(h * v->sc + 0.5f);
+    if (W < 8 || H < 4) return;
+    char text[96], key[128];
+    if (state) snprintf(text, sizeof text, T("HD textures: %d%%"), (int)(100.0 * done / total));
+    else snprintf(text, sizeof text, made > 0 ? T("HD textures ready (%d new)") : T("HD textures ready"), made);
+    snprintf(key, sizeof key, "%s %d %d %d", text, W, H, state ? done : -1);
+    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hdbar_draw(W, H, text, state ? (float)done / total : -1); }
+    float* q = v->layer[GL_LAYER_HDBAR];
+    q[0] = s[0] + 6 * k; q[1] = s[1] + s[3] - h - 6 * k; q[2] = w; q[3] = h;
+}
+
 static void present_gl(void) {
     auto_scale();
     g_wide_side = g_classic ? 0 : wide_side_target();            /* the next 3D frames (only the picture changes) */
@@ -1380,6 +2168,12 @@ static void present_gl(void) {
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
     hud_update((pow >> 15) & 1);                                 /* (before composing: the minimal style cuts the cards out for it) */
     gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
+    shop_update((pow >> 15) & 1);
+    pop_update((pow >> 15) & 1);
+    creation_update((pow >> 15) & 1);
+    name_typing_step((pow >> 15) & 1);
+    gl_set_top_cut(g_pop_win[2] && !g_quest_page && !g_card_page);
+    gl_set_split(g_shop);
     g_win_outline = g_hud_win[2] != 0;                           /* (the next frames: the experience and level-up windows outlined) */
     g_dlg_outline = (pow >> 15) & 1;                             /* battles (the 3D on the top screen): the text box too */
     {   /* the 3D gone for a single frame in widescreen (a shop's menu after an item's
@@ -1410,7 +2204,15 @@ static void present_gl(void) {
         if (mapmarks_update(&rgba)) gl_set_overlay(rgba, MAPMARKS_W, MAPMARKS_H);
     }
     int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
+    {   /* the in-game menu (Esc) or the journal (J), over everything */
+        static int shown;                                        /* 1 the menu, 2 the journal */
+        if (gamemenu_is_open()) { int ch; const uint8_t* p = gamemenu_picture(w, h, &ch); if (ch || shown != 1) { gl_set_menu(p, w, h); gl_set_menu_box(gamemenu_box()); } shown = 1; }
+        else if (journal_open()) { int ch; const uint8_t* p = journal_picture(w, h, &ch); if (ch || shown != 2) { gl_set_menu(p, w, h); gl_set_menu_box(NULL); } shown = 2; }
+        else if (shown) { gl_set_menu(NULL, 0, 0); gl_set_menu_box(NULL); shown = 0; }
+    }
     GlPresent v; canvas_layout(&v, w, h);
+    hint_update(&v);
+    hdbar_update(&v);
     mapmarks_hover(-1, -1);
     map_overlay(&v, g_win, (pow >> 15) & 1);
     gl_present(&v);
@@ -1456,9 +2258,9 @@ static void present(void) {
 static void update_offer(const UpdateInfo* u);
 static double g_last_fps;
 static void update_title(double fps);
-/* a short message in the title bar for two seconds ("Volume 70%") */
+/* a short message in the title bar for two seconds ("Volume 70%"), in the player's language */
 static void notice(const char* fmt, ...) {
-    va_list ap; va_start(ap, fmt); vsnprintf(g_notice, sizeof g_notice, fmt, ap); va_end(ap);
+    va_list ap; va_start(ap, fmt); vsnprintf(g_notice, sizeof g_notice, T(fmt), ap); va_end(ap);
     g_notice_until = SDL_GetPerformanceCounter() + g_perf_freq * 2;
     if (g_win) update_title(g_last_fps);
 }
@@ -1470,23 +2272,32 @@ static void update_title(double fps) {
     if (session_running()) {
         SessionInfo si; session_info(&si);
         int here = 0; for (int k = 0; k < si.n; k++) here += !si.gone[k];
-        if (si.desync) snprintf(ses, sizeof ses, " - OUT OF SYNC: leave the session (Wireless menu)");
-        else if (si.state == 4) snprintf(ses, sizeof ses, " - session over: %s", si.message);
-        else snprintf(ses, sizeof ses, " - together: %d of %d players, delay %d", here, si.n, si.delay);
+        if (si.desync) snprintf(ses, sizeof ses, " - %s", T("OUT OF SYNC: leave the session (Wireless menu)"));
+        else if (si.state == 4) snprintf(ses, sizeof ses, T(" - session over: %s"), si.message);
+        else snprintf(ses, sizeof ses, T(" - together: %d of %d players, delay %d"), here, si.n, si.delay);
         static char last[256]; static uint64_t shown;
         if (strcmp(last, si.message)) { snprintf(last, sizeof last, "%s", si.message); shown = SDL_GetPerformanceCounter(); }
         if (!si.desync && si.state == 3 && SDL_GetPerformanceCounter() - shown < g_perf_freq * 8) snprintf(ses + strlen(ses), sizeof ses - strlen(ses), " - %s", si.message);
     }
-    if (g_notice[0] && SDL_GetPerformanceCounter() < g_notice_until) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s", g_notice);
-    else if (g_paused) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - paused (P to continue)%s", ses);
+    char what[300];                                             /* after "Dragon Quest IX <version> - ", in the player's language */
+    if (g_notice[0] && SDL_GetPerformanceCounter() < g_notice_until) snprintf(what, sizeof what, "%s", g_notice);
+    else if (g_paused) snprintf(what, sizeof what, T("paused (P to continue)%s"), ses);
     else if (g_farm_on) { int g = farm_gold();
-        if (g >= 0) snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - farming gold: %d of %d (Ctrl+G stops)%s", g, g_farm_target, ses);
-        else snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - farming gold (Ctrl+G stops)%s", ses); }
-    else snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s%s - %.1f fps%s%s", g_classic ? "Classic" : "Enhanced",
-                  g_gl && g_opt.lcd ? " - DS Lite screen" : "", fps, g_fast ? " (fast)" : "", ses);
+        if (g >= 0) snprintf(what, sizeof what, T("farming gold: %d of %d (Ctrl+G stops)%s"), g, g_farm_target, ses);
+        else snprintf(what, sizeof what, T("farming gold (Ctrl+G stops)%s"), ses); }
+    else snprintf(what, sizeof what, "%s%s - %.1f fps%s%s", T(g_classic ? "Classic" : "Enhanced"),
+                  g_gl && g_opt.lcd ? T(" - DS Lite screen") : "", fps, g_fast ? T(" (fast)") : "", ses);
+    snprintf(title, sizeof title, "Dragon Quest IX " DQIX_VERSION " - %s", what);
     SDL_SetWindowTitle(g_win, title);
 }
 
+/* the menu bar, in the language loaded (built again when it changes) */
+static void menu_build(void) {
+    const char* names[N_DRAWN + MAX_SKINS];
+    for (int i = 0; i < N_DRAWN; i++) names[i] = SHELLS[i].name;
+    for (int i = 0; i < g_nskins; i++) names[N_DRAWN + i] = g_skins[i].name;
+    menu_init(g_win, names, N_SHELLS, g_all_options);
+}
 static void menu_sync(void) {
     {
         SessionInfo si; session_info(&si);
@@ -1519,9 +2330,16 @@ static void menu_sync(void) {
     menu_check(MI_MAPMARKS_OPENED, g_mapmarks_opened); menu_enable(MI_MAPMARKS_OPENED, g_gl && g_mapmarks);
     menu_check(MI_MAPMONSTERS, g_mapmarks_monsters); menu_enable(MI_MAPMONSTERS, g_gl && g_mapmarks);
     menu_check(MI_INTERIOR_MAPS, g_interior_maps); menu_enable(MI_INTERIOR_MAPS, g_gl);
+    menu_check(MI_MAP_LEGEND, g_map_legend); menu_enable(MI_MAP_LEGEND, g_gl && g_mapmarks);
+    menu_check(MI_NAME_TYPING, g_name_typing); menu_enable(MI_NAME_TYPING, g_gl);
+    menu_check(MI_HINTS, g_hints); menu_enable(MI_HINTS, g_gl);
+    menu_check(MI_CONFIRM_BOTTOM, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A);
     for (int i = 0; i < 3; i++) menu_check(MI_SKIP0 + i, g_skip_intro == i);
-    for (int i = 0; i < 3; i++) { menu_check(MI_BSPEED1 + i, g_battle_speed == i + 1); menu_enable(MI_BSPEED1 + i, !session_requested()); }
+    for (int i = 0; i < 4; i++) { int id = i < 3 ? MI_BSPEED1 + i : MI_BSPEED4; menu_check(id, g_battle_speed == i + 1); menu_enable(id, !session_requested()); }
+    menu_check(MI_BSPEED_TURN, g_battle_turn_only); menu_enable(MI_BSPEED_TURN, !session_requested() && g_battle_speed > 1);
+    menu_check(MI_BVICTORY, g_battle_auto_victory); menu_enable(MI_BVICTORY, !session_requested());
     menu_check(MI_SAVEBAK, g_save_backups);
+    menu_check(MI_AUTOSAVE, g_autosave); menu_enable(MI_AUTOSAVE, !session_requested());
     for (int i = 0; i < cheats_count(); i++) {
         menu_check(MI_CHEAT0 + i, cheats_on(i)); menu_enable(MI_CHEAT0 + i, !session_requested());
         if (cheats_max(i)) menu_set_text(MI_CHEAT0 + i, cheats_name(i));       /* with the chosen number */
@@ -1529,8 +2347,10 @@ static void menu_sync(void) {
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_outline == i); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
-    for (int i = 0; i < 2; i++) { menu_check(MI_WINSTYLE0 + i, g_winstyle == i); menu_enable(MI_WINSTYLE0 + i, g_gl && !g_classic); }
+    for (int i = 0; i < 3; i++) { menu_check(MI_WINSTYLE0 + i, g_winstyle == i); menu_enable(MI_WINSTYLE0 + i, g_gl && !g_classic); }
     menu_check(MI_TEXUP, g_texup); menu_enable(MI_TEXUP, g_gl && !g_classic);
+    menu_check(MI_SOFTSHADOW, g_softshadow); menu_enable(MI_SOFTSHADOW, g_gl && !g_classic);
+    menu_check(MI_INKLINES, g_ink); menu_enable(MI_INKLINES, g_gl && !g_classic);
     menu_check(MI_TEXPACK, g_texpack); menu_enable(MI_TEXPACK, g_gl && !g_classic);
     menu_enable(MI_TEXRELOAD, g_gl && !g_classic && g_texpack);
     menu_check(MI_TEXDUMP, g_texdump); menu_enable(MI_TEXDUMP, g_gl && !g_classic);
@@ -1561,6 +2381,9 @@ static void menu_sync(void) {
     menu_check(MI_ANALOG, g_analog_walk);
     menu_check(MI_FARM, g_farm_on); menu_check(MI_FARM_FAST, g_farm_fast); menu_enable(MI_FARM, !session_requested());
     for (int i = 0; i < 5; i++) { menu_check(MI_LANG1 + i, g_fw_language == i + 1); menu_enable(MI_LANG1 + i, rom_is_eur()); }
+    for (int i = 0; i <= 5; i++) menu_check(MI_UILANG0 + i, g_ui_language == i);
+    menu_check(MI_UICONTRAST, g_ui_contrast);
+    for (int i = 0; i < 3; i++) menu_check(MI_UISIZE0 + i, g_ui_text_size == i);
     for (int i = 0; i < 4; i++) { menu_check(MI_SIZE1 + i, g_scale == i + 1); menu_enable(MI_SIZE1 + i, !g_opt.actual); }
     menu_check(MI_INTEGER, g_opt.integer); menu_enable(MI_INTEGER, !g_opt.actual);
     menu_check(MI_ACTUAL, g_opt.actual); menu_enable(MI_ACTUAL, g_gl);
@@ -1588,6 +2411,7 @@ static const char* CONTROLS_TEXT =
 /* A message box whose long lines are wrapped (the system boxes size themselves
  * to the longest line, which made the help as wide as the screen). */
 static int info_box(Uint32 flags, const char* title, const char* text, SDL_Window* win) {
+    title = T(title); text = T(text);                           /* in the player's language */
     size_t n = strlen(text);
     char* out = malloc(n * 2 + 1);
     if (!out) return SDL_ShowSimpleMessageBox(flags, title, text, win);
@@ -1609,6 +2433,15 @@ static int info_box(Uint32 flags, const char* title, const char* text, SDL_Windo
 }
 
 static int g_menu_peek;          /* fullscreen: the menu bar is showing because the mouse is at the top */
+/* Language > Menus and messages, or the game's language when the menus follow it */
+static void ui_language_changed(void) {
+    if (ui_language_wanted() == ui_lang()) return;
+    ui_lang_load(ui_language_wanted());
+    menu_build();
+    menu_sync();
+    if (g_fullscreen && !g_menu_peek) menu_show(0);
+}
+
 static void settings_save(void);
 
 /* ---------------------------------------------------------------- playing with friends far away */
@@ -1650,7 +2483,7 @@ static void restart_with(const char* session) {
         CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
         exit(0);
     }
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dragon Quest IX", "The game couldn't start again by itself. Close it and start it again.", g_win);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dragon Quest IX", T("The game couldn't start again by itself. Close it and start it again."), g_win);
 #else
     if (pos[0]) setenv("DQIX_WINPOS", pos, 1); else unsetenv("DQIX_WINPOS");
     if (session) setenv("DQIX_SESSION", session, 1); else unsetenv("DQIX_SESSION");
@@ -1694,7 +2527,7 @@ static void session_action(int id) {
     switch (id) {
     case MI_SES_HOST: {
         if (!g_player_name[0] && !ask_name()) return;
-        char text[400]; snprintf(text, sizeof text, "Host a session: your friends join you (up to 3 of them).%s", RESTART);
+        char text[400]; snprintf(text, sizeof text, T("Host a session: your friends join you (up to 3 of them).%s"), T(RESTART));
         if (!ask_yes("Host a session", text, "Host")) return;
         char ses[64]; snprintf(ses, sizeof ses, "host:%d", g_session_port);
         restart_with(ses);
@@ -1785,7 +2618,7 @@ static void report_send(const char* dir, const char* description) {
     char zip[400];
     if (!report_zip(dir, with_saves, zip, sizeof zip)) { info_box(SDL_MESSAGEBOX_ERROR, "Send the bug report", "The report couldn't be packed. It is still in the reports folder.", g_win); return; }
     const char* zname = strrchr(zip, '/'); zname = zname ? zname + 1 : zip;
-    char title[160] = "Bug report (" DQIX_VERSION ")";
+    char title[160] = "Bug report (" DQIX_VERSION ")";             /* on GitHub: stays in English */
     if (description && description[0]) {
         char first[90]; snprintf(first, sizeof first, "%s", description);
         first[strcspn(first, "\r\n")] = 0;
@@ -1812,7 +2645,7 @@ static void report_send(const char* dir, const char* description) {
     url_add(url, sizeof url, body);
     show_in_folder(zip);
     if (SDL_OpenURL(url) != 0) {
-        char m[600]; snprintf(m, sizeof m, "The browser didn't open. Go to https://github.com/%s/issues/new and attach %s.", UPDATE_REPO, zip);
+        char m[600]; snprintf(m, sizeof m, T("The browser didn't open. Go to https://github.com/%s/issues/new and attach %s."), UPDATE_REPO, zip);
         info_box(SDL_MESSAGEBOX_INFORMATION, "Send the bug report", m, g_win);
     }
 }
@@ -1820,14 +2653,15 @@ static void report_send(const char* dir, const char* description) {
 /* A message with buttons: Windows' own dialog (buttons sized to their words),
  * SDL's elsewhere. Returns the chosen button's index, or `cancel`. */
 static int choose(const char* title, const char* text, const char* const* buttons, int n, int def, int cancel) {
-    int r = choice_box(g_win, title, text, buttons, n, def, cancel, NULL, NULL);
+    int r = choice_box(g_win, title, text, buttons, n, def, cancel, NULL, NULL);   /* (translates them itself) */
     if (r >= 0) return r;
     SDL_MessageBoxButtonData b[8];
     if (n > 8) n = 8;
     for (int i = 0; i < n; i++) {
         b[i].flags = (i == def ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0) | (i == cancel ? SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT : 0);
-        b[i].buttonid = i; b[i].text = buttons[i];
+        b[i].buttonid = i; b[i].text = T(buttons[i]);
     }
+    title = T(title); text = T(text);
     const SDL_MessageBoxData d = { SDL_MESSAGEBOX_INFORMATION, g_win, title, text, n, b, NULL };
     int out = cancel;
     if (SDL_ShowMessageBox(&d, &out) != 0 || out < 0) return cancel;
@@ -1837,22 +2671,24 @@ static int choose(const char* title, const char* text, const char* const* button
 static void update_go(const char* branch, const char* version) {
     if (session_requested()) { info_box(SDL_MESSAGEBOX_INFORMATION, "Update", "Leave the session first (Wireless menu), then update.", g_win); return; }
     if (!update_project_dir()) {
-        info_box(SDL_MESSAGEBOX_INFORMATION, "Update", "This copy of the game wasn't made with BUILD.bat, so it can't update itself. "
-                 "Download the new version from https://github.com/" UPDATE_REPO " instead.", g_win);
+        char m[400];
+        snprintf(m, sizeof m, T("This copy of the game wasn't made with BUILD.bat, so it can't update itself. "
+                 "Download the new version from https://github.com/%s instead."), UPDATE_REPO);
+        info_box(SDL_MESSAGEBOX_INFORMATION, "Update", m, g_win);
         return;
     }
     char text[700];
-    snprintf(text, sizeof text, "Update to %s?\n\nThe game closes, downloads %s, builds it from your ROM again (a few minutes; "
+    snprintf(text, sizeof text, T("Update to %s?\n\nThe game closes, downloads %s, builds it from your ROM again (a few minutes; "
              "a window shows how far it is) and starts again. Your saves, settings and extras are kept, and the current "
-             "version is kept in the update folder in case you want to go back (update\\rollback.bat).", version, version);
+             "version is kept in the update folder in case you want to go back (update\\rollback.bat)."), version, version);
     { const char* b[2] = { "Update", "Cancel" }; if (choose("Update", text, b, 2, 0, 1) != 0) return; }
     backup_flush();
     settings_save();
-    if (g_win) SDL_SetWindowTitle(g_win, "Dragon Quest IX - downloading the update...");
+    if (g_win) { char t[200]; snprintf(t, sizeof t, "Dragon Quest IX - %s", T("downloading the update...")); SDL_SetWindowTitle(g_win, t); }
     char err[200] = "";
     if (update_install(branch, version, err, sizeof err)) exit(0);
-    char m[400]; snprintf(m, sizeof m, "The update couldn't be downloaded: %s.", err);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Update", m, g_win);
+    char m[400]; snprintf(m, sizeof m, T("The update couldn't be downloaded: %s."), err);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, T("Update"), m, g_win);
 }
 
 /* at start: a newer stable version */
@@ -1861,11 +2697,11 @@ static void update_offer(const UpdateInfo* u) {
     /* the nightly too, when it's newer still: an optional second choice */
     int nightly = u->nightly[0] && strcmp(u->nightly, u->stable) && update_newer(u->nightly, u->stable);
     char text[500];
-    snprintf(text, sizeof text, "Dragon Quest IX %s is available (you have %s).\n\nUpdate now?%s", u->stable, DQIX_VERSION,
-             nightly ? "\n\nOr try the nightly version: the newest work, but less tested." : "");
+    snprintf(text, sizeof text, T("Dragon Quest IX %s is available (you have %s).\n\nUpdate now?%s"), u->stable, DQIX_VERSION,
+             nightly ? T("\n\nOr try the nightly version: the newest work, but less tested.") : "");
     char upd[64], ngt[64];
-    snprintf(upd, sizeof upd, "Update to %s", u->stable);
-    snprintf(ngt, sizeof ngt, "Install nightly %s", u->nightly);
+    snprintf(upd, sizeof upd, T("Update to %s"), u->stable);
+    snprintf(ngt, sizeof ngt, T("Install nightly %s"), u->nightly);
     const char* b[4]; int id[4], nb = 0;
     id[nb] = 1; b[nb++] = upd;
     if (nightly) { id[nb] = 2; b[nb++] = ngt; }
@@ -1880,26 +2716,26 @@ static void update_offer(const UpdateInfo* u) {
 
 /* Help > Check for updates */
 static void update_menu(void) {
-    if (g_win) SDL_SetWindowTitle(g_win, "Dragon Quest IX - checking for updates...");
+    if (g_win) { char t[200]; snprintf(t, sizeof t, "Dragon Quest IX - %s", T("checking for updates...")); SDL_SetWindowTitle(g_win, t); }
     UpdateInfo u; update_check_now(&u);
     if (!u.ok) {
-        char m[300]; snprintf(m, sizeof m, "Couldn't check for updates: %s.", u.error[0] ? u.error : "no answer");
+        char m[300]; snprintf(m, sizeof m, T("Couldn't check for updates: %s."), u.error[0] ? u.error : T("no answer"));
         info_box(SDL_MESSAGEBOX_INFORMATION, "Updates", m, g_win);
         return;
     }
-    const char* tag_s = update_newer(u.stable, DQIX_VERSION) ? " (newer)" : !strcmp(u.stable, DQIX_VERSION) ? " (this one)" : " (older)";
-    const char* tag_n = update_newer(u.nightly, DQIX_VERSION) ? " (newer)" : !strcmp(u.nightly, DQIX_VERSION) ? " (this one)" : " (older)";
+    const char* tag_s = T(update_newer(u.stable, DQIX_VERSION) ? " (newer)" : !strcmp(u.stable, DQIX_VERSION) ? " (this one)" : " (older)");
+    const char* tag_n = T(update_newer(u.nightly, DQIX_VERSION) ? " (newer)" : !strcmp(u.nightly, DQIX_VERSION) ? " (this one)" : " (older)");
     char back[200] = "";
     if (update_newer(DQIX_VERSION, u.stable))
-        snprintf(back, sizeof back, "\n\nInstalling stable goes back to %s, an older version than this one. Your saves and settings are kept.", u.stable);
+        snprintf(back, sizeof back, T("\n\nInstalling stable goes back to %s, an older version than this one. Your saves and settings are kept."), u.stable);
     char text[900];
     snprintf(text, sizeof text,
-             "This copy: %s\n\nStable: %s%s\nTested; recommended for everyone.\n\nNightly: %s%s\nThe newest work: new features "
-             "and fixes first, but less tested.%s\n\nFriends playing together need the same version.",
+             T("This copy: %s\n\nStable: %s%s\nTested; recommended for everyone.\n\nNightly: %s%s\nThe newest work: new features "
+               "and fixes first, but less tested.%s\n\nFriends playing together need the same version."),
              DQIX_VERSION, u.stable, tag_s, u.nightly, tag_n, back);
     char bs[64], bn[64];
-    snprintf(bs, sizeof bs, "Install stable %s", u.stable);
-    snprintf(bn, sizeof bn, "Install nightly %s", u.nightly);
+    snprintf(bs, sizeof bs, T("Install stable %s"), u.stable);
+    snprintf(bn, sizeof bn, T("Install nightly %s"), u.nightly);
     const char* b[3]; int id[3], nb = 0;
     if (strcmp(u.stable, DQIX_VERSION)) { id[nb] = 1; b[nb++] = bs; }
     if (strcmp(u.nightly, DQIX_VERSION) && strcmp(u.nightly, u.stable)) { id[nb] = 2; b[nb++] = bn; }
@@ -2082,7 +2918,8 @@ static void do_action(int id) {
     case MI_REPORT: {
         extern char g_report_last_dir[300];
         report_write("F10 pressed");                               /* captured first: the moment you pressed it */
-        char* text = g_win ? ask_text(g_win, "Bug report " DQIX_VERSION,
+        char rt[100]; snprintf(rt, sizeof rt, "%s " DQIX_VERSION, T("Bug report"));
+        char* text = g_win ? ask_text(g_win, rt,
             "The report is saved. Describe what went wrong (what you did, what you expected, what happened) - "
             "as much as you like. Save adds it to the report; Skip keeps the report without a description.") : NULL;
         if (text && g_report_last_dir[0]) {
@@ -2092,7 +2929,7 @@ static void do_action(int id) {
         }
         if (g_win && g_report_last_dir[0]) report_send(g_report_last_dir, text);   /* send it? (asks first) */
         free(text);
-        if (g_win) SDL_SetWindowTitle(g_win, "Dragon Quest IX - report saved (see the reports folder)");
+        if (g_win) { char t[200]; snprintf(t, sizeof t, "Dragon Quest IX - %s", T("report saved (see the reports folder)")); SDL_SetWindowTitle(g_win, t); }
         g_fps_t0 = SDL_GetPerformanceCounter();                    /* keep that title up for a second */
         g_next_frame = SDL_GetPerformanceCounter();                /* the game waited while you typed */
         break;
@@ -2112,22 +2949,38 @@ static void do_action(int id) {
     case MI_SMOOTH: if (g_gl) { g_smooth = !g_smooth; gl_set_smooth(g_smooth); } break;
     case MI_SMOOTH2D: if (g_gl) { g_smooth2d = !g_smooth2d; gl_set_smooth2d(g_smooth2d); } break;
     case MI_OUTLINE0: case MI_OUTLINE0 + 1: case MI_OUTLINE0 + 2: if (g_gl) { g_outline = id - MI_OUTLINE0; gl_set_outline(g_outline); } break;
-    case MI_WINSTYLE0: case MI_WINSTYLE0 + 1: if (g_gl) g_winstyle = id - MI_WINSTYLE0; break;
+    case MI_WINSTYLE0: case MI_WINSTYLE0 + 1: case MI_WINSTYLE0 + 2: if (g_gl) g_winstyle = id - MI_WINSTYLE0; break;
     case MI_TEXUP: if (g_gl) { g_texup = !g_texup; gl_set_tex_upscale(g_texup); } break;
+    case MI_SOFTSHADOW: if (g_gl) { g_softshadow = !g_softshadow; gl_set_soft_shadows(g_softshadow); } break;
+    case MI_INKLINES: if (g_gl) { g_ink = !g_ink; gl_set_ink_lines(g_ink); } break;
     case MI_TEXPACK: if (g_gl) { g_texpack = !g_texpack; gl_set_texture_pack(g_texpack); } break;
     case MI_TEXRELOAD: if (g_gl && g_texpack) gl_reload_texture_pack(); break;
     case MI_TEXDUMP: if (g_gl) { g_texdump = !g_texdump; gl_set_texture_dump(g_texdump); } break;
     case MI_HDTEXT: if (g_gl) { g_hdtext = !g_hdtext; apply_mode(); } break;
     case MI_HDMOVIE: if (g_gl) { g_hdmovie = !g_hdmovie; if (g_hdmovie) hdmovie_init(); apply_mode(); } break;   /* on: look in movies/ again */
     case MI_MINIMAP: g_map_shown = !g_map_shown; break;
+    case MI_JOURNAL: journal_ui_toggle(); return;
     case MI_HUD: g_hud = !g_hud; break;
     case MI_MAPMARKS: g_mapmarks = !g_mapmarks; break;
     case MI_MAPMARKS_OPENED: g_mapmarks_opened = !g_mapmarks_opened; break;
     case MI_MAPMONSTERS: g_mapmarks_monsters = !g_mapmarks_monsters; break;
     case MI_INTERIOR_MAPS: g_interior_maps = !g_interior_maps; break;
+    case MI_MAP_LEGEND: g_map_legend = !g_map_legend; break;
+    case MI_NAME_TYPING: g_name_typing = !g_name_typing; break;
+    case MI_HINTS: g_hints = !g_hints; break;
+    case MI_CONFIRM_BOTTOM:                                       /* the controller's A and B (confirm, cancel) trade buttons */
+        controls_set_pad(CA_A, g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A ? SDL_CONTROLLER_BUTTON_B : SDL_CONTROLLER_BUTTON_A);
+        if (g_ctl_pad[CA_B] == g_ctl_pad[CA_A] || g_ctl_pad[CA_B] == CTL_NONE)
+            g_ctl_pad[CA_B] = g_ctl_pad[CA_A] == SDL_CONTROLLER_BUTTON_A ? SDL_CONTROLLER_BUTTON_B : SDL_CONTROLLER_BUTTON_A;
+        controls_save();
+        break;
     case MI_SKIP0: case MI_SKIP0 + 1: case MI_SKIP0 + 2: g_skip_intro = id - MI_SKIP0; break;
     case MI_BSPEED1: case MI_BSPEED1 + 1: case MI_BSPEED1 + 2: g_battle_speed = id - MI_BSPEED1 + 1; break;
+    case MI_BSPEED4: g_battle_speed = 4; break;
+    case MI_BSPEED_TURN: g_battle_turn_only = !g_battle_turn_only; break;
+    case MI_BVICTORY: g_battle_auto_victory = !g_battle_auto_victory; break;
     case MI_SAVEBAK: g_save_backups = !g_save_backups; break;
+    case MI_AUTOSAVE: g_autosave = !g_autosave; break;
     case MI_FULL2: second_window_fullscreen(); break;
     case MI_LCD: if (g_gl) g_opt.lcd = !g_opt.lcd; g_fps_t0 = 0; break;
     case MI_LCDCOL: g_opt.lcd_color = !g_opt.lcd_color; break;
@@ -2147,18 +3000,18 @@ static void do_action(int id) {
     case MI_TWO: if (g_gl) { g_two = !(g_two && !g_side_by_side && !g_single); g_corner = g_wide = g_side_by_side = g_single = 0; relayout = 1; } break;
     case MI_SINGLE:                                               /* U / left trigger: one screen; in widescreen the small one hides */
         if (g_wide && WIDE_GL && !g_side_by_side) { g_small_hide = !g_small_hide; notice(g_small_hide ? "Small screen hidden" : "Small screen shown"); }
-        else { g_single = !g_single; relayout = 1; notice(g_single ? "Single screen (%s)" : "Both screens", g_swap ? "top" : "bottom"); }
+        else { g_single = !g_single; relayout = 1; notice(g_single ? "Single screen (%s)" : "Both screens", T(g_swap ? "top" : "bottom")); }
         break;
     case MI_SWAP: if (!(g_wide && WIDE_GL && !g_side_by_side)) { g_swap = !g_swap; relayout = 1; } break;
     case MI_OPACITY1: case MI_OPACITY1 + 1: case MI_OPACITY1 + 2: case MI_OPACITY1 + 3:
         g_small_opacity = 100 - 25 * (id - MI_OPACITY1); notice("Small screen: %d%%", g_small_opacity); break;
     case MI_CORNER0: case MI_CORNER0 + 1: case MI_CORNER0 + 2: case MI_CORNER0 + 3: {
         static const char* const N[4] = { "top left", "top right", "bottom right", "bottom left" };
-        g_small_corner = id - MI_CORNER0; notice("Small screen: %s", N[g_small_corner]); break;
+        g_small_corner = id - MI_CORNER0; notice("Small screen: %s", T(N[g_small_corner])); break;
     }
     case MI_SSIZE0: case MI_SSIZE0 + 1: case MI_SSIZE0 + 2: {
         static const char* const N[3] = { "small", "medium", "large" };
-        g_small_size = id - MI_SSIZE0; notice("Small screen: %s", N[g_small_size]); break;
+        g_small_size = id - MI_SSIZE0; notice("Small screen: %s", T(N[g_small_size])); break;
     }
     case MI_RESET:
         if (session_requested()) { info_box(SDL_MESSAGEBOX_INFORMATION, "Reset", "Not while playing with friends: it would leave them out of step. Leave the session first (Wireless menu).", g_win); break; }
@@ -2188,7 +3041,7 @@ static void do_action(int id) {
         break;
     case MI_FARM_TARGET: {
         char prompt[200];
-        snprintf(prompt, sizeof prompt, "Stop farming once the party has this much gold (now %d):", g_farm_target);
+        snprintf(prompt, sizeof prompt, T("Stop farming once the party has this much gold (now %d):"), g_farm_target);
         char* t = g_win ? ask_text(g_win, "Gold target", prompt) : NULL;
         if (!t) break;
         long v = 0; for (char* c = t; *c; c++) if (*c >= '0' && *c <= '9' && v < 100000000) v = v * 10 + (*c - '0');   /* "10 000", "10.000 G" */
@@ -2224,12 +3077,19 @@ static void do_action(int id) {
         int lang = id - MI_LANG1 + 1;
         if (lang == g_fw_language) break;
         g_fw_language = lang;
+        ui_language_changed();                                  /* the menus follow at once, when they follow the game */
         char text[300];
-        snprintf(text, sizeof text, "The game will be in %s the next time it starts: close it and start it again.\n\n"
-                 "Your adventure log is the same in every language.", LANGUAGE_NAME[lang]);
-        info_box(SDL_MESSAGEBOX_INFORMATION, "Language", text, g_win);
+        snprintf(text, sizeof text, T("The game will be in %s the next time it starts: close it and start it again.\n\n"
+                 "Your adventure log is the same in every language."), LANGUAGE_NAME[lang]);
+        info_box(SDL_MESSAGEBOX_INFORMATION, T("Language"), text, g_win);
         break;
     }
+    case MI_UICONTRAST: g_ui_contrast = !g_ui_contrast; gamemenu_set_readability(g_ui_contrast, g_ui_text_size); break;
+    case MI_UISIZE0: case MI_UISIZE0 + 1: case MI_UISIZE0 + 2: g_ui_text_size = id - MI_UISIZE0; gamemenu_set_readability(g_ui_contrast, g_ui_text_size); break;
+    case MI_UILANG0: case MI_UILANG0 + 1: case MI_UILANG0 + 2: case MI_UILANG0 + 3: case MI_UILANG0 + 4: case MI_UILANG0 + 5:
+        g_ui_language = id - MI_UILANG0;
+        ui_language_changed();
+        break;
     case MI_MODERN_HELP:
         info_box(SDL_MESSAGEBOX_INFORMATION, "Modern",
             "Optional ways to play that the DS didn't have. Walking with the stick is on at first; the others are off. With them all off the game is exactly the original.\n\n"
@@ -2247,9 +3107,16 @@ static void do_action(int id) {
             "Top screen in the corner: the field as on the DS (4:3), the top screen beside it.\n\n"
             "Two windows: one screen in each, to put them on two monitors (each can be fullscreen).\n\n"
             "Single screen (U or the left trigger): only one screen, as big as it gets; F9 or the right trigger shows the other one.\n\n"
-            "Battle speed: battles (and their victory messages) go 2 or 3 times as fast; the music keeps its pitch and skips ahead. "
-            "The rest of the game stays at its own speed. Off while playing with friends far away.\n\n"
+            "Battle speed: battles (and their victory messages) go 2, 3 or 4 times as fast; the music keeps its pitch and skips ahead. "
+            "The rest of the game stays at its own speed. Off while playing with friends far away. Only while the turn plays out: "
+            "the attacks, spells and messages go faster, the commands are chosen at the usual pace. Victory messages go by themselves: "
+            "after a win, the messages turn their page by themselves (one every 0.8 s) without pressing A, except after a level up (yours to read). "
+            "Nothing else changes: the same battles, the same rewards.\n\n"
             "Map: show the monsters walking nearby: red dots on the map, to go for them or around them.\n\n"
+            "Save by itself every 10 minutes: the game saves as the priest would, wherever the party is, once the hero is free to walk "
+            "(never during a battle, a dialogue, a menu or a cut scene); Continue takes you back there. The 10 minutes count from the last "
+            "save, the church's too. It needs a save made once at a church first, and is off while playing with friends. "
+            "Game > Keep a copy of every save keeps the earlier ones in save-backups.\n\n"
             "All are also under View; F2 goes through the layouts.", g_win);
         break;
     case MI_SIZE1: case MI_SIZE2: case MI_SIZE3: case MI_SIZE4: g_scale = id - MI_SIZE1 + 1; relayout = 1; break;
@@ -2274,13 +3141,15 @@ static void do_action(int id) {
     case MI_CONTROLS: info_box(SDL_MESSAGEBOX_INFORMATION, "Controls", CONTROLS_TEXT, g_win); break;
     case MI_UPDATE: update_menu(); break;
     case MI_UPDATE_AUTO: g_update_auto = !g_update_auto; settings_save(); break;
-    case MI_ABOUT:
-        info_box(SDL_MESSAGEBOX_INFORMATION, "About",
-            "Dragon Quest IX for PC, " DQIX_VERSION " (" DQIX_VERSION_DATE "), built " __DATE__ "\n\n"
+    case MI_ABOUT: {
+        char text[600];
+        snprintf(text, sizeof text, T("Dragon Quest IX for PC, %s (%s), built %s\n\n"
             "Classic draws the game exactly like the DS; Enhanced draws its 3D\n"
             "on the graphics card at up to 4x.\n\n"
-            "DS Lite screen colours: Pokefan531's measured DS Lite profile.", g_win);
+            "DS Lite screen colours: Pokefan531's measured DS Lite profile."), DQIX_VERSION, DQIX_VERSION_DATE, __DATE__);
+        info_box(SDL_MESSAGEBOX_INFORMATION, "About", text, g_win);
         break;
+    }
     default:
         if (id >= MI_FONT0 && id < MI_FONT0 + N_FONTS) { snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont); }
         else if (id >= MI_SHELLC0 && id < MI_SHELLC0 + N_SHELLS) { g_opt.shell_color = id - MI_SHELLC0; g_color_chosen = 1; relayout = 1; }
@@ -2290,7 +3159,7 @@ static void do_action(int id) {
                 char prompt[200], name[120];
                 snprintf(name, sizeof name, "%s", cheats_name(i));
                 size_t n = strlen(name); if (n > 3 && !strcmp(name + n - 3, "...")) name[n - 3] = 0;
-                snprintf(prompt, sizeof prompt, "%s\n\nType the number you want, from 0 to %d:", name, cheats_max(i));
+                snprintf(prompt, sizeof prompt, T("%s\n\nType the number you want, from 0 to %d:"), name, cheats_max(i));
                 char* t = g_win ? ask_text(g_win, "Cheats", prompt) : NULL;
                 if (!t) return;                              /* Skip: stays off */
                 long v = -1; for (char* c = t; *c; c++) if (*c >= '0' && *c <= '9' && v < 100000000) v = (v < 0 ? 0 : v * 10) + (*c - '0');   /* "50 000", "50.000 G" */
@@ -2311,6 +3180,203 @@ static void do_action(int id) {
     if (id != MI_SHOT && id != MI_REPORT && id != MI_SEND_REPORT && id != MI_PAUSE && id != MI_TURBO) settings_save();
 }
 
+/* ---------------------------------------------------------------- the in-game menu (gamemenu.h) */
+static int g_pad_resync;                                     /* (below: a button just given out) */
+static void game_menu_toggle(void) {
+    if (!g_gl) { quit_ask(); return; }                       /* (it needs OpenGL; without it Esc asks to quit, as before) */
+    if (gamemenu_is_open()) { gamemenu_close(); return; }
+    menu_sync();
+    gamemenu_set_font(g_hdfont);
+    gamemenu_set_readability(g_ui_contrast, g_ui_text_size);
+    gamemenu_open();
+}
+
+static void game_menu_chose(int id) {
+    if (id <= 0) return;                                     /* Resume: closed already */
+    do_action(id);
+    gamemenu_changed();                                      /* new check marks */
+}
+
+static void hotkey(int a);
+/* An event while the menu is open: 1 if the menu took it. */
+static int game_menu_event(const SDL_Event* e) {
+    int id = 0;
+    switch (e->type) {
+    case SDL_KEYDOWN: {
+        if (g_cap_action >= 0) return 0;                     /* Controls is waiting for a key */
+        SDL_Scancode k = e->key.keysym.scancode;
+        int a = controls_key_action(k, e->key.keysym.mod);
+        if (k == SDL_SCANCODE_ESCAPE) { if (!e->key.repeat) gamemenu_close(); }
+        else if (k == SDL_SCANCODE_UP || a == CA_UP) id = gamemenu_key(GM_UP);
+        else if (k == SDL_SCANCODE_DOWN || a == CA_DOWN) id = gamemenu_key(GM_DOWN);
+        else if (k == SDL_SCANCODE_PAGEUP) id = gamemenu_key(GM_PAGEUP);
+        else if (k == SDL_SCANCODE_PAGEDOWN) id = gamemenu_key(GM_PAGEDOWN);
+        else if (e->key.repeat) break;
+        else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER || k == SDL_SCANCODE_SPACE || a == CA_A) {
+            if (k == SDL_SCANCODE_RETURN && (e->key.keysym.mod & KMOD_ALT)) do_action(MI_FULL);
+            else id = gamemenu_key(GM_OK);
+        }
+        else if (k == SDL_SCANCODE_BACKSPACE || k == SDL_SCANCODE_LEFT || a == CA_B) id = gamemenu_key(GM_BACK);
+        else if (a == CA_MENU) gamemenu_close();
+        else if (a == CA_FULL || a == CA_SHOT || a == CA_VOLDOWN || a == CA_VOLUP) { hotkey(a); gamemenu_changed(); }
+        break;
+    }
+    case SDL_CONTROLLERBUTTONDOWN: {
+        if (g_cap_action >= 0) return 0;
+        int b = e->cbutton.button;
+        if (b == g_ctl_pad[CA_A]) id = gamemenu_key(GM_OK);
+        else if (b == g_ctl_pad[CA_B]) id = gamemenu_key(GM_BACK);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_UP || b == g_ctl_pad[CA_UP]) id = gamemenu_key(GM_UP);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN || b == g_ctl_pad[CA_DOWN]) id = gamemenu_key(GM_DOWN);
+        else if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) id = gamemenu_key(GM_PAGEUP);
+        else if (b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) id = gamemenu_key(GM_PAGEDOWN);
+        else if (b == g_ctl_pad[CA_MENU] || b == SDL_CONTROLLER_BUTTON_GUIDE || b == SDL_CONTROLLER_BUTTON_START) gamemenu_close();
+        g_pad_resync = 1;                                    /* (not a shortcut too, once the menu is closed) */
+        break;
+    }
+    case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEWHEEL: {
+        if (!g_win || e->window.windowID != SDL_GetWindowID(g_win)) return 0;
+        if (e->type == SDL_MOUSEWHEEL) { gamemenu_wheel(e->wheel.y); break; }
+        int ww, wh, dw, dh; SDL_GetWindowSize(g_win, &ww, &wh); SDL_GL_GetDrawableSize(g_win, &dw, &dh);
+        int mx = e->type == SDL_MOUSEMOTION ? e->motion.x : e->button.x, my = e->type == SDL_MOUSEMOTION ? e->motion.y : e->button.y;
+        int click = e->type != SDL_MOUSEBUTTONDOWN ? 0 : e->button.button == SDL_BUTTON_LEFT ? 1 : e->button.button == SDL_BUTTON_RIGHT ? 2 : -1;
+        if (click < 0) break;
+        id = gamemenu_mouse(((float)mx + 0.5f) * (float)dw / (float)(ww > 0 ? ww : 1), ((float)my + 0.5f) * (float)dh / (float)(wh > 0 ? wh : 1), click);
+        break;
+    }
+    default: return 0;
+    }
+    game_menu_chose(id);
+    return 1;
+}
+
+/* the left stick moves through the menu (repeating while held) */
+static void game_menu_stick(void) {
+    static int dir; static Uint32 next;
+    int v = g_pad ? SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTY) : 0;
+    int d = v < -20000 ? -1 : v > 20000 ? 1 : 0;
+    Uint32 now = SDL_GetTicks();
+    if (!d) { dir = 0; return; }
+    if (d != dir) { dir = d; next = now + 350; }
+    else if ((Sint32)(now - next) < 0) return;
+    else next = now + 110;
+    gamemenu_key(d < 0 ? GM_UP : GM_DOWN);
+}
+
+/* tests: DQIX_MENU_TEST=frame,keys (U D O B; ',' = save the window as menuN.ppm, also done at the end) */
+static void game_menu_test(void) {
+    static long long at = -2; static const char* keys;
+    if (at == -2) { const char* e = getenv("DQIX_MENU_TEST"); at = e ? atoll(e) : -1; keys = e ? strchr(e, ',') : NULL; }
+    if (at < 0 || g_frame != (uint64_t)at || !g_gl) return;
+    game_menu_toggle();
+    int shot = 0;
+    for (const char* c = keys ? keys + 1 : ""; ; c++) {
+        if (*c == ',' || !*c) {
+            snprintf(g_shot_next, sizeof g_shot_next, "menu%d.ppm", shot++);
+            present();
+            if (!*c) break;
+            continue;
+        }
+        game_menu_chose(gamemenu_key(*c == 'U' ? GM_UP : *c == 'D' ? GM_DOWN : *c == 'O' ? GM_OK : GM_BACK));
+    }
+    gamemenu_close();
+}
+
+/* ---------------------------------------------------------------- the journal (journal.h) */
+static void journal_ui_toggle(void) {
+    if (!journal_open() && !in_adventure()) return;              /* the title, the character's creation: nothing to show yet */
+    if (!journal_open() && !g_gl) { notice("The journal needs the graphics card (OpenGL)"); return; }
+    if (gamemenu_is_open()) gamemenu_close();
+    journal_toggle();
+}
+
+/* An event while the journal is open: 1 if it took it. */
+static int journal_event(const SDL_Event* e) {
+    switch (e->type) {
+    case SDL_KEYDOWN: {
+        if (g_cap_action >= 0) return 0;
+        SDL_Scancode k = e->key.keysym.scancode;
+        int a = controls_key_action(k, e->key.keysym.mod);
+        if (journal_searching()) {   /* a page with a search: letters, digits, space go to it (SDL_TEXTINPUT), not to the shortcuts */
+            if (k == SDL_SCANCODE_BACKSPACE) { journal_typed("\b"); break; }
+            if (k == SDL_SCANCODE_SPACE || (k >= SDL_SCANCODE_A && k <= SDL_SCANCODE_0) || (k >= SDL_SCANCODE_MINUS && k <= SDL_SCANCODE_SLASH) || k == SDL_SCANCODE_NONUSBACKSLASH)
+                break;
+        }
+        if (k == SDL_SCANCODE_UP || a == CA_UP) journal_input(JK_UP);
+        else if (k == SDL_SCANCODE_DOWN || a == CA_DOWN) journal_input(JK_DOWN);
+        else if (k == SDL_SCANCODE_LEFT || a == CA_LEFT) journal_input(JK_LEFT);
+        else if (k == SDL_SCANCODE_RIGHT || a == CA_RIGHT) journal_input(JK_RIGHT);
+        else if (k == SDL_SCANCODE_PAGEUP) journal_input(JK_PAGE_UP);
+        else if (k == SDL_SCANCODE_PAGEDOWN) journal_input(JK_PAGE_DOWN);
+        else if (e->key.repeat) break;
+        else if (k == SDL_SCANCODE_ESCAPE || k == SDL_SCANCODE_BACKSPACE || a == CA_B || a == CA_JOURNAL) journal_input(JK_CLOSE);
+        else if (k == SDL_SCANCODE_TAB || a == CA_R) journal_input((e->key.keysym.mod & KMOD_SHIFT) && k == SDL_SCANCODE_TAB ? JK_TAB_PREV : JK_TAB_NEXT);
+        else if (a == CA_L) journal_input(JK_TAB_PREV);
+        else if (k == SDL_SCANCODE_H || a == CA_Y) journal_input(JK_MORE);
+        else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER || k == SDL_SCANCODE_SPACE || a == CA_A) {
+            if (k == SDL_SCANCODE_RETURN && (e->key.keysym.mod & KMOD_ALT)) do_action(MI_FULL);
+            else journal_input(JK_OK);
+        }
+        else if (a == CA_FULL || a == CA_SHOT || a == CA_VOLDOWN || a == CA_VOLUP) hotkey(a);
+        break;
+    }
+    case SDL_TEXTINPUT: journal_typed(e->text.text); break;
+    case SDL_CONTROLLERBUTTONDOWN: {
+        if (g_cap_action >= 0) return 0;
+        int b = e->cbutton.button;
+        if (b == g_ctl_pad[CA_B] || b == g_ctl_pad[CA_JOURNAL] || b == SDL_CONTROLLER_BUTTON_START) journal_input(JK_CLOSE);
+        else if (b == g_ctl_pad[CA_A]) journal_input(JK_OK);
+        else if (b == g_ctl_pad[CA_Y]) journal_input(JK_MORE);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_UP || b == g_ctl_pad[CA_UP]) journal_input(JK_UP);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN || b == g_ctl_pad[CA_DOWN]) journal_input(JK_DOWN);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT || b == g_ctl_pad[CA_LEFT]) journal_input(JK_LEFT);
+        else if (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT || b == g_ctl_pad[CA_RIGHT]) journal_input(JK_RIGHT);
+        else if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || b == g_ctl_pad[CA_L]) journal_input(JK_TAB_PREV);
+        else if (b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER || b == g_ctl_pad[CA_R]) journal_input(JK_TAB_NEXT);
+        else if (b == g_ctl_pad[CA_MENU] || b == SDL_CONTROLLER_BUTTON_GUIDE) { journal_input(JK_CLOSE); game_menu_toggle(); }
+        g_pad_resync = 1;
+        break;
+    }
+    case SDL_MOUSEWHEEL: journal_input(e->wheel.y > 0 ? JK_UP : JK_DOWN); break;
+    case SDL_MOUSEBUTTONDOWN: if (e->button.button == SDL_BUTTON_RIGHT) journal_input(JK_CLOSE); break;
+    default: return 0;
+    }
+    return 1;
+}
+
+/* the left stick moves through the journal (repeating while held) */
+static void journal_stick(void) {
+    static int dir; static Uint32 next;
+    int vy = g_pad ? SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTY) : 0, vx = g_pad ? SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTX) : 0;
+    int d = vy < -20000 ? JK_UP + 1 : vy > 20000 ? JK_DOWN + 1 : vx < -20000 ? JK_LEFT + 1 : vx > 20000 ? JK_RIGHT + 1 : 0;
+    Uint32 now = SDL_GetTicks();
+    if (!d) { dir = 0; return; }
+    if (d != dir) { dir = d; next = now + 350; }
+    else if ((Sint32)(now - next) < 0) return;
+    else next = now + 110;
+    journal_input(d - 1);
+}
+
+/* tests: DQIX_JOURNAL_TEST=frame,keys (U D L R, > next tab, < previous tab, H more; ',' = save the window as journalN.ppm, also done at the end) */
+static void journal_test(void) {
+    static long long at = -2; static const char* keys;
+    if (at == -2) { const char* e = getenv("DQIX_JOURNAL_TEST"); at = e ? atoll(e) : -1; keys = e ? strchr(e, ',') : NULL; }
+    if (at < 0 || g_frame != (uint64_t)at || !g_gl) return;
+    journal_ui_toggle();
+    int shot = 0;
+    for (const char* c = keys ? keys + 1 : ""; ; c++) {
+        if (*c == ',' || !*c) {
+            snprintf(g_shot_next, sizeof g_shot_next, "journal%d.ppm", shot++);
+            present();
+            if (!*c) break;
+            continue;
+        }
+        journal_input(*c == 'U' ? JK_UP : *c == 'D' ? JK_DOWN : *c == 'L' ? JK_LEFT : *c == 'R' ? JK_RIGHT : *c == '>' ? JK_TAB_NEXT :
+                      *c == '<' ? JK_TAB_PREV : *c == 'H' ? JK_MORE : *c == 'O' ? JK_OK : JK_PAGE_DOWN);
+    }
+    journal_input(JK_CLOSE);
+}
+
 /* ---------------------------------------------------------------- hotkeys (Game > Controls) */
 static int wide_now(void) { return g_wide && WIDE_GL && !g_side_by_side; }
 static void hotkey(int a) {
@@ -2321,6 +3387,7 @@ static void hotkey(int a) {
     case CA_PAUSE: do_action(MI_PAUSE); break;
     case CA_FULL: do_action(MI_FULL); break;
     case CA_MINIMAP: do_action(MI_MINIMAP); notice(g_map_shown ? "Map shown" : "Map hidden"); break;
+    case CA_JOURNAL: journal_ui_toggle(); break;
     case CA_WINSIZE: do_action(MI_SIZE1 + g_scale % 4); break;
     case CA_RES3D:
         if (g_gl && !g_classic) {                                /* 1x 2x 3x 4x 6x 8x Auto */
@@ -2342,6 +3409,7 @@ static void hotkey(int a) {
     case CA_RESET: do_action(MI_RESET); break;
     case CA_SHOT: do_action(MI_SHOT); break;
     case CA_REPORT: do_action(MI_REPORT); break;
+    case CA_MENU: game_menu_toggle(); break;
     }
 }
 
@@ -2349,7 +3417,7 @@ static void hotkey(int a) {
 static int g_cap_action = -1, g_cap_what;                    /* what: 0 key, 1 second key, 2 controller button */
 static int g_pad_resync;                                     /* a button just given out: don't fire it while still held */
 static void capture_done(const char* what) {
-    if (what) notice("%s: %s", g_ctl[g_cap_action].name, what); else notice("Not changed");
+    if (what) notice("%s: %s", T(g_ctl[g_cap_action].name), T(what)); else notice("Not changed");
     g_cap_action = -1;
     controls_save();
     controls_window_refresh();
@@ -2387,7 +3455,9 @@ static void handle_events(void) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         int mi = menu_command(&e);
-        if (mi) { do_action(mi); continue; }
+        if (mi) { do_action(mi); gamemenu_changed(); continue; }
+        if (gamemenu_is_open() && game_menu_event(&e)) continue;
+        if (journal_open() && journal_event(&e)) continue;
         switch (e.type) {
         case SDL_QUIT: exit(0);                                   /* Ctrl+C, the system shutting down */
         case SDL_KEYDOWN: {
@@ -2395,18 +3465,35 @@ static void handle_events(void) {
             SDL_Scancode k = e.key.keysym.scancode;
             if (g_cap_action >= 0) { capture_key(k, e.key.keysym.mod); break; }   /* Game > Controls: the new key */
             int in2 = g_win2 && e.key.windowID == SDL_GetWindowID(g_win2);   /* typed in the second window */
-            if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else if (g_fullscreen) do_action(MI_FULL); else quit_ask(); break; }
+            if (name_typing_active() && text_key(k) && !(e.key.keysym.mod & (KMOD_ALT | KMOD_CTRL | KMOD_GUI))) {   /* the name's keyboard (letters: SDL_TEXTINPUT) */
+                if (k == SDL_SCANCODE_BACKSPACE) name_typed('\b');
+                else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER) name_typed('\n');
+                break;
+            }
+            if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else game_menu_toggle(); break; }   /* the in-game menu */
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }
             if (k == SDL_SCANCODE_G && (e.key.keysym.mod & KMOD_CTRL)) { do_action(MI_FARM); break; }   /* Modern > Farm gold by itself */
             int a = controls_key_action(k, e.key.keysym.mod);
+            { int o = controls_key_owner((int)k, NULL); if (o >= 0 && o < CA_N_DS) g_hint_pad = 0; }   /* a DS button on the keyboard */
             if (a == CA_FULL && in2) { second_window_fullscreen(); settings_save(); break; }
             if (a >= 0) hotkey(a);
             break;
         }
+        case SDL_TEXTINPUT:
+            if (name_typing_active())                         /* UTF-8 -> the letters, one by one */
+                for (const unsigned char* t = (const unsigned char*)e.text.text; *t; ) {
+                    uint32_t c = *t++; int more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+                    if (more) c &= 0x3F >> more;
+                    while (more-- && (*t & 0xC0) == 0x80) c = c << 6 | (*t++ & 0x3F);
+                    if (c >= ' ') name_typed(c);
+                }
+            break;
         case SDL_CONTROLLERBUTTONDOWN:
+            g_hint_pad = 1;
             if (g_cap_action >= 0) capture_pad(e.cbutton.button);
             break;
         case SDL_CONTROLLERAXISMOTION:
+            if (e.caxis.value > 16000 || e.caxis.value < -16000) g_hint_pad = 1;
             if (g_cap_action >= 0 && e.caxis.value > 16000 && (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT))
                 capture_pad(e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? CTL_PAD_LT : CTL_PAD_RT);
             break;
@@ -2470,7 +3557,12 @@ void frontend_frame(void) {
     handle_events();
     if (g_win) {
         const Uint8* ks = SDL_GetKeyboardState(NULL);
-        g_fe_keys = key_bits(ks) | pad_bits();
+        if (name_typing_active()) {                           /* typing the name: the keys that type aren't the game's buttons */
+            static Uint8 kc[SDL_NUM_SCANCODES];
+            memcpy(kc, ks, sizeof kc);
+            for (int i = 0; i < SDL_NUM_SCANCODES; i++) if (text_key((SDL_Scancode)i)) kc[i] = 0;
+            g_fe_keys = key_bits(kc) | pad_bits();
+        } else g_fe_keys = key_bits(ks) | pad_bits();
         static int always_fast = -1; if (always_fast < 0) always_fast = getenv("DQIX_FAST") != NULL;   /* tests */
         g_fast = controls_key_held(CA_FAST, ks) || controls_pad_held(CA_FAST, g_pad) || always_fast || g_turbo || (g_farm_on && g_farm_fast) || bootskip_active();
         {   /* the controller's own shortcuts (stick clicks, triggers...): when pressed */
@@ -2499,9 +3591,16 @@ void frontend_frame(void) {
         int tx, ty;
         static int dragging;                                  /* the press began on the touch screen */
         int held = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-        g_fe_touch = held && to_touch_in(SDL_GetMouseFocus(), mx, my, &tx, &ty, dragging);
+        g_fe_touch = held && !gamemenu_is_open() && !journal_open() && to_touch_in(SDL_GetMouseFocus(), mx, my, &tx, &ty, dragging);
         dragging = g_fe_touch;
         if (g_fe_touch) { g_fe_tx = tx; g_fe_ty = ty; }
+        if (g_tap_frames > 0) {                               /* the name typed: the game's key pressed (name_typing_step) */
+            g_fe_touch = 1; g_fe_tx = g_tap_x; g_fe_ty = g_tap_y;
+            if (--g_tap_frames == 0) g_tap_wait = 6;          /* (let go, and the keyboard redrawn, before the next) */
+        } else if (g_tap_wait > 0) g_tap_wait--;
+        game_menu_test();
+        journal_test();
+        if (gamemenu_is_open() || journal_open()) g_fe_keys = 0;              /* the menu has the buttons (in a session the game goes on) */
         uint64_t tp = SDL_GetPerformanceCounter();
         static int shown;                                     /* Modern > Start: the logos run unseen (the window stays as first drawn: black) */
         if (!shown || !bootskip_active()) { present(); shown = 1; }
@@ -2512,6 +3611,20 @@ void frontend_frame(void) {
             menu_sync();
             info_box(SDL_MESSAGEBOX_INFORMATION, "Farm gold by itself", g_farm_why, g_win);
             g_paused = 0;
+        }
+        if (g_autosave_done) { g_autosave_done = 0; notice("Saved"); }   /* Modern > Save by itself */
+        if (gamemenu_is_open() && !session_requested()) {      /* the in-game menu: the game waits */
+            update_title(0);
+            while (gamemenu_is_open()) { handle_events(); game_menu_stick(); present(); SDL_Delay(15); }
+            g_next_frame = SDL_GetPerformanceCounter();
+            g_fps_t0 = 0;
+            g_pad_resync = 1;
+        }
+        if (journal_open() && !session_requested()) {          /* the journal: the game waits */
+            while (journal_open()) { handle_events(); journal_stick(); present(); SDL_Delay(15); }
+            g_next_frame = SDL_GetPerformanceCounter();
+            g_fps_t0 = 0;
+            g_pad_resync = 1;
         }
         if (g_paused) {                                       /* Game > Pause: keep the window alive, the game waits */
             update_title(0);
@@ -2527,8 +3640,17 @@ void frontend_frame(void) {
     uint64_t period = (uint64_t)(g_perf_freq / DS_FPS);
     int battle = party_in_battle();
     { static int was; if (battle != was) { LOG_INFO("battle %s\n", battle ? "begins" : "over"); was = battle; } }
+    {   /* ...only while the turn plays out: the usual pace from the moment someone's
+         * commands show, faster again once they have been gone a few frames */
+        static int gone = 1000;
+        int shown = battle && battle_commands_shown();
+        if (g_battle_turn_only && shown != (gone == 0)) LOG_INFO("battle: commands %s\n", shown ? "shown" : "gone");
+        gone = shown ? 0 : gone + (gone < 1000);
+        if (g_battle_turn_only && gone < 8) battle = 0;
+    }
     int speed = battle && g_battle_speed > 1 && !g_fast && !session_requested() ? g_battle_speed : 1;   /* Modern > Battle speed */
     sound_set_speed(speed);
+    g_battle_pace = speed;
     if (g_fast) {
         sound_discard();
         g_next_frame = now;

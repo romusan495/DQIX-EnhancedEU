@@ -22,6 +22,7 @@
 #include "gpu3d.h"
 #include "gl_render.h"
 #include "hdtext.h"
+#include "farm.h"
 #include "hdmovie.h"
 #include "hdsprite.h"
 
@@ -29,6 +30,7 @@
 #define GL_FUNCS(X) \
     X(const GLubyte*, glGetString, (GLenum)) \
     X(void, glViewport, (GLint, GLint, GLsizei, GLsizei)) \
+    X(void, glScissor, (GLint, GLint, GLsizei, GLsizei)) \
     X(void, glClearColor, (GLfloat, GLfloat, GLfloat, GLfloat)) \
     X(void, glClear, (GLbitfield)) \
     X(void, glClearBufferfv, (GLenum, GLint, const GLfloat*)) \
@@ -85,6 +87,7 @@
     X(void, glUniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat)) \
     X(void, glUniform1fv, (GLint, GLsizei, const GLfloat*)) \
     X(void, glUniform3fv, (GLint, GLsizei, const GLfloat*)) \
+    X(void, glUniform4fv, (GLint, GLsizei, const GLfloat*)) \
     X(void, glUniform2fv, (GLint, GLsizei, const GLfloat*)) \
     X(void, glGenVertexArrays, (GLsizei, GLuint*)) \
     X(void, glBindVertexArray, (GLuint)) \
@@ -179,9 +182,55 @@ static const char* FS_POST =
     "uniform int u_estep; uniform float u_emix;\n"                       /* outlines: neighbour distance, how much of the outline colour */
     "uniform int u_fog; uniform int u_fog_alpha_only; uniform vec4 u_fogcol; uniform float u_fogtab[32];\n"
     "uniform int u_fogoff; uniform int u_fogshift; uniform int u_wbuf;\n"
+    "uniform float u_ao; uniform float u_aorad;\n"                    /* soft shadows: strength (0 off), reach in pixels */
+    "uniform float u_ink; uniform int u_inkstep; uniform float u_inkmin; uniform sampler2D u_odepth; uniform sampler2D u_ocolor;\n"   /* thin dark lines round things: strength (0 off), width, how far behind */
+    /* Soft shadows in corners and under things: a pixel whose neighbours are
+     * nearer than itself on both sides, along a line through it, sits in a
+     * hollow (where a wall meets the floor, under a counter, behind a pot)
+     * and gets darker. Measured on 1/w (1 - z with the z-buffer), which is
+     * flat across any flat surface on screen, so walls and floors at any
+     * angle stay as they are; nearer on one side only is the edge of
+     * something in front (a character before a wall): no halo round it. */
+    "float invw(ivec2 q) { float d = texelFetch(u_depth, q, 0).r; return u_wbuf != 0 ? 1.0 / max(d, 1e-6) : 1.0 - d; }\n"
+    "float hollow(ivec2 p) {\n"
+    "  ivec2 sz = textureSize(u_depth, 0); float c0 = max(invw(p), 1e-6), s = 0.0, n = 0.0;\n"
+    "  for (int k = 0; k < 8; k++) {\n"
+    "    float an = float(k & 3) * 0.7854 + (k >= 4 ? 0.3927 : 0.0); float r = u_aorad * (k >= 4 ? 1.0 : 0.5);\n"
+    "    ivec2 o = ivec2(round(vec2(cos(an), sin(an)) * r));\n"
+    "    ivec2 q1 = clamp(p + o, ivec2(0), sz - 1), q2 = clamp(p - o, ivec2(0), sz - 1);\n"
+    "    if (texelFetch(u_attr, q1, 0).a < 0.5 || texelFetch(u_attr, q2, 0).a < 0.5) continue;\n"   /* nothing drawn there */
+    "    float d1 = (invw(q1) - c0) / c0, d2 = (invw(q2) - c0) / c0;\n"
+    "    s += clamp(min(d1, d2), 0.0, 0.02) * (1.0 - smoothstep(0.02, 0.06, max(d1, d2))); n += 1.0;\n"   /* (much nearer: another object) */
+    "  }\n"
+    "  return n > 0.0 ? clamp(s / (n * 0.02), 0.0, 1.0) : 0.0;\n"
+    "}\n"
+    /* Thin dark lines round things: a pixel just behind the edge of something
+     * nearer (a pot before the wall, a tree's leaves before the sky...) is
+     * darkened, so shapes stand apart from what is behind them instead of
+     * melting into it. Only between solid polygons (their depth alone,
+     * odepth_tex): never in flames, glows or water, nor on what they cover
+     * (the colour changed since the solid ones: ocolor_tex);
+     * not round the windows (drawn in 3D right at the front: far nearer than
+     * anything in the scene) */
+    "float oinvw(ivec2 q) { float d = texelFetch(u_odepth, q, 0).r; return u_wbuf != 0 ? 1.0 / max(d, 1e-6) : 1.0 - d; }\n"
+    "float ink(ivec2 p) {\n"
+    "  if (texelFetch(u_depth, p, 0).r < texelFetch(u_odepth, p, 0).r - 1e-6) return 0.0;\n"   /* under a flame, a glow... */
+    "  vec4 dc = abs(texelFetch(u_color, p, 0) - texelFetch(u_ocolor, p, 0)); if (max(max(dc.r, dc.g), max(dc.b, dc.a)) > 1.5 / 255.0) return 0.0;\n"   /* ...even one that leaves the depth */
+    "  ivec2 sz = textureSize(u_odepth, 0); float c0 = max(oinvw(p), 1e-6), e = 0.0;\n"
+    "  ivec2 o[4] = ivec2[4](ivec2(-u_inkstep, 0), ivec2(u_inkstep, 0), ivec2(0, -u_inkstep), ivec2(0, u_inkstep));\n"
+    "  for (int k = 0; k < 4; k++) {\n"
+    "    ivec2 q = clamp(p + o[k], ivec2(0), sz - 1);\n"
+    "    if (texelFetch(u_attr, q, 0).a < 0.5) continue;\n"
+    "    float d = (oinvw(q) - c0) / c0;\n"
+    "    if (d < 1.0) e = max(e, smoothstep(u_inkmin, 2.0 * u_inkmin, d));\n"
+    "  }\n"
+    "  return e;\n"
+    "}\n"
     "void main() {\n"
     "  ivec2 p = ivec2(gl_FragCoord.xy);\n"
     "  vec4 c = texelFetch(u_color, p, 0); vec4 at = texelFetch(u_attr, p, 0);\n"
+    "  if (u_ao > 0.0 && at.a > 0.5 && c.a > 0.0) c.rgb *= 1.0 - u_ao * hollow(p);\n"
+    "  if (u_ink > 0.0 && at.a > 0.5 && c.a > 0.0) c.rgb *= 1.0 - u_ink * ink(p);\n"
     "  if (u_edge != 0 && at.b > 0.5 && at.a > 0.5) {\n"
     "    float id = at.r; float d = texelFetch(u_depth, p, 0).r;\n"
     "    ivec2 sz = textureSize(u_color, 0);\n"
@@ -225,6 +274,17 @@ static const char* FS_COMP =
     "uniform int u_wide; uniform float u_wtot, u_wside;\n"   /* widescreen: DS pixels across, added each side */
     "uniform float u_s2d;\n"                                    /* smooth 2D: the width of an output pixel in DS pixels (0: off) */
     "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
+    "uniform int u_only;\n"                                    /* the 3D screen apart: 1 its 2D alone (see-through where the 3D shows), 2 its 3D alone */
+    "uniform vec4 u_dlg[4]; uniform int u_ndlg;\n"            /* modern windows: the 3D screen's windows (x0, y0, x1, y1, DS pixels), a line round each */
+    "uniform int u_amb; uniform sampler2D u_ambt;\n"                                     /* widescreen menus (a 3D model over a 2D page): the sides blurred, list rows see-through */
+    "vec3 dlgline(vec3 c, vec2 q) {\n"
+    "  for (int i = 0; i < u_ndlg; i++) {\n"
+    "    vec4 r = u_dlg[i];\n"
+    "    if (q.x < r.x || q.y < r.y || q.x >= r.z || q.y >= r.w) continue;\n"
+    "    if (min(min(q.x - r.x, q.y - r.y), min(r.z - q.x, r.w - q.y)) < 1.0) return vec3(0.5);\n"
+    "  }\n"
+    "  return c;\n"
+    "}\n"
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     /* Smooth 2D: xBR's corner rule (the same as xbr_upscale below): at each
      * corner of a DS pixel, if the neighbours across that corner form an
@@ -232,28 +292,90 @@ static const char* FS_COMP =
      * so staircases become slopes and round shapes become round. */
     "vec3 px2(ivec2 p) { return texelFetch(u_col, clamp(p, ivec2(0), ivec2(255, 191)), 0).rgb; }\n"
     "float dd(vec3 a, vec3 b) { vec3 d = a - b; return 48.0 * abs(dot(d, vec3(0.299, 0.587, 0.114))) + 7.0 * abs(dot(d, vec3(-0.169, -0.331, 0.5))) + 6.0 * abs(dot(d, vec3(0.5, -0.419, -0.081))); }\n"
-    "vec3 smooth2d(ivec2 p, vec2 f) {\n"
-    "  ivec2 s = ivec2(f.x < 0.0 ? -1 : 1, f.y < 0.0 ? -1 : 1); vec2 a = abs(f);\n"
+    "float s2d_w(ivec2 p, vec2 f, out ivec2 pn) {\n"          /* how much of this point is the neighbour pn's (0: all E's) */
+    "  ivec2 s = ivec2(f.x < 0.0 ? -1 : 1, f.y < 0.0 ? -1 : 1); vec2 a = abs(f); pn = p;\n"
     "  vec3 E = px2(p), F = px2(p + ivec2(1, 0) * s), H = px2(p + ivec2(0, 1) * s), I = px2(p + s);\n"
     "  vec3 B = px2(p - ivec2(0, 1) * s), D = px2(p - ivec2(1, 0) * s), C = px2(p + ivec2(1, -1) * s), G = px2(p + ivec2(-1, 1) * s);\n"
     "  vec3 F4 = px2(p + ivec2(2, 0) * s), H5 = px2(p + ivec2(0, 2) * s), I4 = px2(p + ivec2(2, 1) * s), I5 = px2(p + ivec2(1, 2) * s);\n"
     "  float wd1 = dd(E, C) + dd(E, G) + dd(I, F4) + dd(I, H5) + 4.0 * dd(H, F);\n"
     "  float wd2 = dd(H, D) + dd(H, I5) + dd(F, I4) + dd(F, B) + 4.0 * dd(E, I);\n"
     "  float eF = dd(E, F), eH = dd(E, H);\n"
-    "  if (!(wd1 < wd2 && eF > 0.01 && eH > 0.01)) return E;\n"
-    "  ivec2 pn = eF <= eH ? p + ivec2(1, 0) * s : p + ivec2(0, 1) * s;\n"
-    /* (not toward a pixel where the 3D shows: its 2D colour there is the
-     * backdrop - the magenta round the quill of the save box) */
-    "  if (u_has3d != 0 && (texelFetch(u_info, clamp(pn, ivec2(0), ivec2(255, 191)), 0).r & 3u) != 0u) return E;\n"
-    "  vec3 N = eF <= eH ? F : H;\n"
+    "  if (!(wd1 < wd2 && eF > 0.01 && eH > 0.01)) return 0.0;\n"
+    "  pn = clamp(eF <= eH ? p + ivec2(1, 0) * s : p + ivec2(0, 1) * s, ivec2(0), ivec2(255, 191));\n"
     "  float k = max(u_s2d, 0.05);\n"
-    "  return mix(E, N, smoothstep(0.5 - k, 0.5 + k, a.x + a.y));\n"
+    "  return smoothstep(0.5 - k, 0.5 + k, a.x + a.y);\n"
+    "}\n"
+    /* (toward a pixel where the 3D shows, main() takes the 3D, not its 2D
+     * colour there: that is the backdrop - the magenta round the quill of the save box) */
+    "int s2d_mode(ivec2 q) { return u_has3d != 0 ? int(texelFetch(u_info, q, 0).r & 3u) : 0; }\n"
+    "vec3 smooth2d(ivec2 p, vec2 f) {\n"
+    "  ivec2 pn; float w = s2d_w(p, f, pn); vec3 E = px2(p);\n"
+    "  if (w <= 0.0 || s2d_mode(pn) != 0) return E;\n"
+    "  return mix(E, px2(pn), w);\n"
+    "}\n"
+    /* DS pixel q's 2D over or under the 3D (s, this point's), at q2 (DS pixels) */
+    "vec3 comp(ivec2 q, vec4 s, vec2 q2) {\n"
+    "  uvec4 info = texelFetch(u_info, q, 0); int mode = int(info.r & 3u);\n"
+    "  vec3 col = texelFetch(u_col, q, 0).rgb;\n"
+    "  vec4 c2t = texelFetch(u_c2, q, 0);\n"
+    "  vec3 c2 = c2t.rgb; int mb = int(c2t.a * 255.0 + 0.5);\n"
+    "  float A = s.a; vec3 c3 = s.rgb;\n"
+    "  float eva = float(info.g) / 16.0, evb = float(info.b) / 16.0, evy = float(info.a) / 16.0;\n"
+    "  vec3 o;\n"
+    "  if (mode == 1) {\n"
+    "    bool sec = (info.r & 4u) != 0u; int eff = int((info.r >> 3) & 3u);\n"
+    /* The 3D layer over a 2nd blend target: the DS blends by the 3D pixel's own
+     * alpha, never by EVA/EVB (solid models stay solid: the equipment screen
+     * asks for 10/16 over its background), whatever the effect is set to */
+    "    if (A <= 0.0) o = col;\n"
+    "    else if (sec) o = A < 0.999 ? c3 * A + c2 * (1.0 - A) : c3;\n"
+    "    else if (eff == 2) o = c3 + (1.0 - c3) * evy;\n"
+    "    else if (eff == 3) o = c3 - c3 * evy;\n"
+    "    else o = c3;\n"
+    /* widescreen menus: Equip's list rows (the game's plain dark grey, and
+     * the chosen row's lighter grey) see-through like the shops' modern
+     * windows: the page shows through a little */
+    "    if (u_amb != 0 && A > 0.99) {\n"
+    "      vec3 g = c3 * 255.0;\n"
+    "      if (abs(g.r - g.g) < 2.0 && abs(g.g - g.b) < 2.0) {\n"
+    "        if (abs(g.r - 28.0) < 4.0) o = mix(c2, vec3(0.08), 0.75);\n"
+    "        else if (abs(g.r - 85.0) < 4.0) o = mix(c2, vec3(0.30), 0.75);\n"
+    "      }\n"
+    "    }\n"
+    "  } else {\n"
+    "    vec3 under = A > 0.0 ? c3 : c2;\n"
+    "    o = min(col * eva + under * evb, vec3(1.0));\n"
+    "  }\n"
+    "  o = dlgline(o, q2);\n"
+    "  int mbm = mb >> 5; float mbf = float(mb & 31) / 16.0;\n"
+    "  if (mbm == 1) o = o + (1.0 - o) * mbf; else if (mbm == 2) o = o - o * mbf;\n"
+    "  return o;\n"
     "}\n"
     "void main() {\n"
     "  vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);\n"                  /* row 0 = top line */
     "  float dsx = u_wide != 0 ? uv.x * u_wtot - u_wside : uv.x * 256.0;\n"
     "  ivec2 p2 = ivec2(min(vec2(dsx, uv.y * 192.0), vec2(255.0, 191.0)));\n"
     "  bool side = u_wide != 0 && (dsx < 0.0 || dsx >= 256.0);\n"
+    "  if (side && u_only == 1) { o_color = vec4(0.0); return; }\n"
+    /* A menu over a 2D page (Equip, the adventure log): its page doesn't go
+     * on past the DS's edge, and copying the edge's column across the side
+     * drew streaks. Instead the page near the edge, mirrored, blurred and
+     * dimmed (darker toward the window's edge), with the screen's fade. Not
+     * the 3D there: a menu's own 3D past the edge is its list's rows that
+     * the DS doesn't show (Equip's long names). */
+    "  if (side && u_amb != 0) {\n"
+    "    float d = dsx < 0.0 ? -dsx : dsx - 256.0;\n"
+    "    float ex = dsx < 0.0 ? min(d, 48.0) : 256.0 - min(d, 48.0);\n"
+    "    float y = uv.y * 192.0;\n"
+    "    vec3 a = vec3(0.0);\n"
+    "    for (int j = -2; j <= 2; j++) a += texture(u_ambt, vec2(ex, y + float(j) * 6.0) / vec2(256.0, 192.0)).rgb * (3.0 - abs(float(j)));\n"
+    "    a = a / 9.0 * (0.6 - 0.25 * clamp(d / max(u_wside, 1.0), 0.0, 1.0));\n"
+    "    if (d < 0.75) a = vec3(0.5);\n"   /* a thin grey line along the DS's edge (the modern windows' line): the rows the edge cuts look framed, not broken */
+    "    int mba = int(texelFetch(u_c2, ivec2(dsx < 0.0 ? 0 : 255, p2.y), 0).a * 255.0 + 0.5);\n"
+    "    float mf = float(mba & 31) / 16.0;\n"
+    "    if ((mba >> 5) == 1) a = a + (1.0 - a) * mf; else if ((mba >> 5) == 2) a = a - a * mf;\n"
+    "    o_color = vec4(a, 1.0); return;\n"
+    "  }\n"
     "  if (side) {\n"
     /* Beyond the DS's picture there are no 2D layers: show the 3D there on lines
      * where the edge of the DS's picture shows it (the field), with that
@@ -275,48 +397,43 @@ static const char* FS_COMP =
     "  if (u_has3d == 0) {\n"
     /* (premultiplied: the HUD's pieces are see-through there) */
     "    int k = u_cut != 0 ? int(texelFetch(u_col, p2, 0).a * 255.0 + 0.5) : 0;\n"
+    "    if (k == 255) { o_color = vec4(vec3(0.5), 1.0); return; }\n"                     /* modern: the line round a card's box */
     "    if (k > 2) { o_color = vec4(u_tint[min(k - 3, 7)] * 0.6, 0.6); return; }\n"
     "    if (k != 0) { o_color = vec4(0.0, 0.0, 0.0, k == 1 ? 0.0 : 0.55); return; }\n"
     "    o_color = vec4(u_s2d > 0.0 && !side ? smooth2d(p2, fr) : col, 1.0); return;\n"
     "  }\n"
     "  uvec4 info = texelFetch(u_info, p2, 0);\n"
     "  int mode = int(info.r & 3u);\n"
+    /* Smooth 2D where a sprite meets the 3D (an item's picture over the
+     * field): the slope's other side is the 3D (or the sprite, seen from the
+     * 3D's side), not left in steps */
+    "  ivec2 pe = p2; float we = 0.0;\n"
+    "  if (u_s2d > 0.0 && !side && mode < 2) { ivec2 pn; float w = s2d_w(p2, fr, pn); int mn = s2d_mode(pn);\n"
+    "    if (w > 0.0 && (mode == 0 ? mn == 1 : mn == 0)) { pe = pn; we = w; } }\n"
     "  if (u_s2d > 0.0 && !side && mode == 0) col = smooth2d(p2, fr);\n"
-
-    "  if (mode == 0) { o_color = vec4(col, 1.0); return; }\n"
-    "  vec4 c2t = texelFetch(u_c2, p2, 0);\n"
-    "  vec3 c2 = c2t.rgb; int mb = int(c2t.a * 255.0 + 0.5);\n"
+    /* (premultiplied: a window blended over the 3D keeps its part, EVA, and lets EVB of what is under through) */
+    "  if (u_only == 1 && mode != 0) { float a = mode == 2 ? clamp(1.0 - float(info.b) / 16.0, 0.0, 1.0) : 0.0;\n"
+    "    if (we > 0.0) { o_color = vec4(px2(pe) * we, we); return; }\n"
+    "    o_color = vec4(mode == 2 ? min(col * float(info.g) / 16.0, vec3(1.0)) : vec3(0.0), a); return; }\n"
+    "  if (u_only == 1 || (u_only == 2 && mode != 1)) {\n"
+    "    if (u_only == 1) { o_color = vec4(col * (1.0 - we), 1.0 - we); return; }\n"
+    "    ivec2 sz0 = textureSize(u_3d, 0); vec4 s0 = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz0)), sz0 - 1), 0);\n"
+    "    o_color = vec4(dlgline(s0.a > 0.0 ? s0.rgb : vec3(0.0), vec2(dsx, uv.y * 192.0)), 1.0); return;\n"
+    "  }\n"
     "  ivec2 sz = textureSize(u_3d, 0);\n"
     "  vec4 s = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz)), sz - 1), 0);\n"
-    "  float A = s.a; vec3 c3 = s.rgb;\n"
-    "  float eva = float(info.g) / 16.0, evb = float(info.b) / 16.0, evy = float(info.a) / 16.0;\n"
-    "  vec3 o;\n"
-    "  if (mode == 1) {\n"
-    "    bool sec = (info.r & 4u) != 0u; int eff = int((info.r >> 3) & 3u);\n"
-    /* The 3D layer over a 2nd blend target: the DS blends by the 3D pixel's own
-     * alpha, never by EVA/EVB (solid models stay solid: the equipment screen
-     * asks for 10/16 over its background), whatever the effect is set to */
-    "    if (A <= 0.0) o = col;\n"
-    "    else if (sec) o = A < 0.999 ? c3 * A + c2 * (1.0 - A) : c3;\n"
-    "    else if (eff == 2) o = c3 + (1.0 - c3) * evy;\n"
-    "    else if (eff == 3) o = c3 - c3 * evy;\n"
-    "    else o = c3;\n"
-    "  } else {\n"
-    "    vec3 under = A > 0.0 ? c3 : c2;\n"
-    "    o = min(col * eva + under * evb, vec3(1.0));\n"
-    "  }\n"
-    "  int mbm = mb >> 5; float mbf = float(mb & 31) / 16.0;\n"
-    "  if (mbm == 1) o = o + (1.0 - o) * mbf; else if (mbm == 2) o = o - o * mbf;\n"
-    "  o_color = vec4(o, 1.0);\n"
+    "  if (mode == 0) { o_color = vec4(we > 0.0 ? mix(col, comp(pe, s, vec2(dsx, uv.y * 192.0)), we) : col, 1.0); return; }\n"
+    "  vec3 o = comp(p2, s, vec2(dsx, uv.y * 192.0));\n"
+    "  o_color = vec4(we > 0.0 ? mix(o, px2(pe), we) : o, 1.0);\n"
     "}\n";
 
 /* HD text (hdtext.h): each letter a quad in DS pixels of one screen, its
  * coverage from the atlas, kept to where the game shows a letter's box. */
 static const char* VS_TEXT =
     "#version 330 core\n"
-    "in vec2 a_pos; in vec2 a_uv; in vec3 a_col; out vec2 v_uv; out vec2 v_ds; flat out vec3 v_col;\n"
-    "uniform float u_wtot, u_wside; uniform int u_top;\n"
-    "void main() { v_uv = a_uv; v_ds = a_pos; v_col = a_col;\n"
+    "in vec2 a_pos; in vec2 a_uv; in vec3 a_col; in float a_dx; out vec2 v_uv; out vec2 v_ds; flat out vec3 v_col;\n"
+    "uniform float u_wtot, u_wside; uniform int u_top;\n"   /* a_dx: how far the letter was moved across (hdtext_follow); its mask where it was */
+    "void main() { v_uv = a_uv; v_ds = a_pos - vec2(a_dx, 0.0); v_col = a_col;\n"
     "  gl_Position = vec4(-1.0 + 2.0 * (a_pos.x + u_wside) / u_wtot, (u_top != 0 ? 1.0 : 0.0) - a_pos.y / 192.0, 0.0, 1.0); }\n";
 static const char* FS_TEXT =
     "#version 330 core\n"
@@ -341,7 +458,53 @@ static const char* FS_MOVIE =
 static const char* FS_COPY =
     "#version 330 core\n"
     "in vec2 v_uv; out vec4 o_color; uniform sampler2D u_src;\n"
-    "void main() { o_color = texture(u_src, v_uv); }\n";
+    /* u_mode (draw_pieces): 1 dark letters on a light page become light letters on
+     * nothing (premultiplied); 2 no picture: a window of
+     * the minimal style, u_px its size and u_line one DS pixel, in window pixels;
+     * 3 light letters on a dark bar, alone; 4 no picture: a thin grey line;
+     * 6 as 1, each pixel from 4 points at full size (small, its strokes kept),
+     * red ink left out (5's);
+     * 5 red ink (a quest's Complete! stamp) alone, its specks and holes smoothed
+     * over (u_ds: one DS pixel in u_src); 7 as 2, solid inside, the game's dark
+     * panels' grey (24, 24, 24); 8 an item's rarity stars off their brown
+     * plate: the ones it has gold, the others grey, the rest nothing; 9 its
+     * word's cream letters alone, made light */
+    "uniform int u_mode; uniform vec2 u_px; uniform float u_line; uniform vec2 u_ds;\n"
+    "float red(vec2 uv) { vec4 c = texture(u_src, uv); vec3 r = c.rgb / max(c.a, 0.001); return smoothstep(0.3, 0.45, r.r - max(r.g, r.b)) * c.a; }\n"
+    "float ink(vec2 uv, int light) { vec4 c = textureLod(u_src, uv, 0.0); float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
+    "  return (light != 0 ? smoothstep(0.45, 0.65, L) : smoothstep(0.52, 0.32, L)) * c.a; }\n"
+    "float goldness(vec4 c) { vec3 r = c.rgb / max(c.a, 0.001); return smoothstep(0.3, 0.5, r.r - r.b) * smoothstep(0.5, 0.65, r.g) * smoothstep(0.25, 0.1, r.b); }\n"
+    "float letters(int light) {\n"   /* (each of 4 points in the pixel at full size, then averaged: thin strokes kept when drawn small) */
+    "  vec2 dx = dFdx(v_uv) * 0.25, dy = dFdy(v_uv) * 0.25; float t = 0.0;\n"
+    "  for (int i = 0; i < 4; i++) { vec2 uv = v_uv + dx * (i == 0 || i == 2 ? -1.0 : 1.0) + dy * (i < 2 ? -1.0 : 1.0); t += ink(uv, light) * (light != 0 ? 1.0 : 1.0 - red(uv)); }\n"
+    "  return t * 0.25; }\n"
+    "void main() {\n"
+    "  if (u_mode == 2 || u_mode == 7) {\n"
+    "    vec2 p = v_uv * u_px; float d = min(min(p.x, p.y), min(u_px.x - p.x, u_px.y - p.y)) / u_line;\n"
+    "    o_color = d < 0.6 ? vec4(vec3(0.08), 0.8) : d < 1.6 ? vec4(vec3(0.5), 1.0) : u_mode == 7 ? vec4(vec3(0.094), 1.0) : vec4(0.0, 0.0, 0.0, 0.55); return;\n"
+    "  }\n"
+    "  if (u_mode == 4) { o_color = vec4(vec3(0.5), 1.0); return; }\n"
+    "  if (u_mode == 5) {\n"
+    "    float m = 0.0;\n"
+    "    for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) m += red(v_uv + vec2(i, j) * 0.6 * u_ds);\n"
+    "    float a = smoothstep(0.3, 0.5, m / 25.0) * 0.92; o_color = vec4(vec3(0.82, 0.1, 0.1) * a, a); return;\n"
+    "  }\n"
+    "  vec4 c = texture(u_src, v_uv);\n"
+    "  float L = dot(c.rgb / max(c.a, 0.001), vec3(0.299, 0.587, 0.114));\n"
+    "  if (u_mode == 8 || u_mode == 9) {\n"   /* (the word cream, a star gold, the others dark brown; the plates brown, the edges darker) */
+    "    vec3 r = c.rgb / max(c.a, 0.001);\n"
+    "    float gold = goldness(c) * float(u_mode == 8), near = 0.0;\n"
+    "    for (int i = 0; i < 8; i++) { vec2 o = vec2(i < 3 ? -1.0 : i < 5 ? 0.0 : 1.0, i == 0 || i == 3 || i == 5 ? -1.0 : i == 1 || i == 6 ? 0.0 : 1.0); near = max(near, max(goldness(texture(u_src, v_uv + o * u_ds * 1.2)), goldness(texture(u_src, v_uv + o * u_ds * 2.4)))); }\n"
+    "    float word = smoothstep(0.6, 0.72, L) * smoothstep(0.45, 0.55, r.b);\n"
+    "    float star = smoothstep(0.17, 0.2, L) * smoothstep(0.36, 0.28, L) * (1.0 - near) * float(u_mode == 8);\n"   /* (not the gold star's dark edge) */
+    "    vec3 col = gold * vec3(0.95, 0.76, 0.0) + word * vec3(0.93) + star * vec3(0.42); float a = min(gold + word + star, 1.0) * c.a;\n"
+    "    o_color = vec4(col * c.a, a); return;\n"
+    "  }\n"
+    "  if (u_mode == 1) { float t = smoothstep(0.52, 0.32, L) * c.a;\n"
+    "    o_color = vec4(vec3(0.93) * t, t); return; }\n"
+    "  if (u_mode == 3 || u_mode == 6) { float t = letters(u_mode == 3 ? 1 : 0); o_color = vec4(vec3(0.93) * t, t); return; }\n"
+    "  o_color = c;\n"
+    "}\n";
 
 /* Showing the screens in the window: exact pixels, or the DS Lite screen
  * (its LCD colours, pixel grid, backlight), optionally inside a drawn DS Lite.
@@ -590,7 +753,7 @@ static GLuint program(const char* vs, const char* fs, int poly) {
     if (!a || !b) return 0;
     p_glAttachShader(p, a); p_glAttachShader(p, b);
     if (poly == 2) {                                             /* HD text */
-        p_glBindAttribLocation(p, 0, "a_pos"); p_glBindAttribLocation(p, 1, "a_uv"); p_glBindAttribLocation(p, 2, "a_col");
+        p_glBindAttribLocation(p, 0, "a_pos"); p_glBindAttribLocation(p, 1, "a_uv"); p_glBindAttribLocation(p, 2, "a_col"); p_glBindAttribLocation(p, 3, "a_dx");
     } else if (poly) {
         p_glBindAttribLocation(p, 0, "a_pos"); p_glBindAttribLocation(p, 1, "a_color");
         p_glBindAttribLocation(p, 2, "a_tex"); p_glBindAttribLocation(p, 3, "a_attr"); p_glBindAttribLocation(p, 4, "a_edge");
@@ -616,16 +779,25 @@ typedef struct {
     int valid;
 } Fb3D;
 static Fb3D g_fb[2];
+static GLuint odepth_fbo, odepth_tex, ocolor_tex;              /* the depth and colour of the solid polygons alone (thin dark lines: none in flames and glows) */
 static int g_fb_latest = -1, g_fb_shown = -1;                  /* rendered last / visible this frame */
 static int g_fb_w, g_fb_h;                                     /* one DS screen at scale */
 static int g_wside, g_fb3_w;                                   /* widescreen: DS pixels added each side; 3D / final width at scale */
 static int g_wide_shown = -1;                                  /* the screen composed wide last: 0 top, 1 bottom, -1 none */
 static int g_cut;                                               /* gl_set_hud_cut() */
+static int g_cut_top;                                           /* gl_set_top_cut() */
+static int g_split;                                             /* gl_set_split() */
+static GLuint only2d_fbo, only2d_tex;                           /* the 3D screen's 2D alone (gl_set_split()), as final_tex */
+#define DLG_BOXES 4
+static float g_dlg_boxes[DLG_BOXES][4]; static int g_ndlg;      /* the modern windows' lines: each panel of the 3D screen */
+static float g_dlg_box[4];                                      /* gl_dialog_box() */
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
-static GLuint overlay_tex; static int overlay_on;   /* gl_set_overlay() */
+static GLuint overlay_tex[2 + GL_LAYERS]; static int overlay_on[2 + GL_LAYERS];   /* gl_set_overlay(), gl_set_icons(), then gl_set_layer()'s */
+static GLuint menu_tex; static int menu_on;         /* gl_set_menu() */
+static float menu_box[5];                           /* gl_set_menu_box(); menu_box[4] 0: none */
 static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
 static int g_ready;
 
@@ -639,7 +811,10 @@ static int g_smooth;                                           /* smooth texture
 static int g_smooth2d;                                         /* smooth 2D (FS_COMP's smooth2d) */
 static int g_outline;                                          /* 0 the DS's outlines, 1 thin and soft, 2 none */
 static int g_texup;                                            /* upscale textures (xbr_upscale) */
+static int g_softshadow;                                       /* soft shadows in corners and under things (FS_POST) */
+static int g_ink;                                              /* thin dark lines round things (FS_POST) */
 extern int g_winstyle;                                         /* window style (gpu2d.c) */
+extern int g_dlg_outline;                                      /* ...battles: the text box keeps its frame (frontend_sdl.c) */
 static uint64_t g_frameno;
 static uint8_t* g_decode;
 
@@ -710,8 +885,9 @@ static int xdist(const uint8_t* a, const uint8_t* b) {
     int y = (299 * dr + 587 * dg + 114 * db) / 1000, u = (-169 * dr - 331 * dg + 500 * db) / 1000, v = (500 * dr - 419 * dg - 81 * db) / 1000;
     return 48 * abs(y) + 7 * abs(u) + 6 * abs(v) + 48 * abs(da);
 }
-static void xbr_upscale(const uint8_t* src, int w, int h, int f, uint8_t* dst) {
-#define XP(ox, oy) (src + ((size_t)(((y + (oy) * sy) % h + h) % h) * w + (size_t)(((x + (ox) * sx) % w + w) % w)) * 4)
+static int xclamp(int v, int n) { return v < 0 ? 0 : v >= n ? n - 1 : v; }
+static void xbr_upscale(const uint8_t* src, int w, int h, int f, uint8_t* dst, int edge) {   /* edge: beyond a side, that side's own texels (not the other side's) */
+#define XP(ox, oy) (src + ((size_t)(edge ? xclamp(y + (oy) * sy, h) : ((y + (oy) * sy) % h + h) % h) * w + (size_t)(edge ? xclamp(x + (ox) * sx, w) : ((x + (ox) * sx) % w + w) % w)) * 4)
     int ow = w * f;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
@@ -818,7 +994,7 @@ static void pack_add_file(const char* dir, const char* name) {  /* <16 hex digit
     t->path = malloc(len); snprintf(t->path, len, "%s/%s", dir, name);
 }
 
-static void pack_scan(const char* dir, int depth) {             /* every folder under textures/ except dump/ and dump-2d/ */
+static void pack_scan(const char* dir, int depth) {             /* every folder under textures/ except dump/, dump-2d/ and hd-auto-tmp/ */
     if (depth > 8) return;
 #ifdef _WIN32
     char pat[1024]; snprintf(pat, sizeof pat, "%s/*", dir);
@@ -827,7 +1003,7 @@ static void pack_scan(const char* dir, int depth) {             /* every folder 
     do {
         if (fd.name[0] == '.') continue;
         if (fd.attrib & _A_SUBDIR) {
-            if (depth == 0 && (!strcmp(fd.name, "dump") || !strcmp(fd.name, "dump-2d"))) continue;
+            if (depth == 0 && (!strcmp(fd.name, "dump") || !strcmp(fd.name, "dump-2d") || !strcmp(fd.name, "hd-auto-tmp"))) continue;
             char sub[1024]; snprintf(sub, sizeof sub, "%s/%s", dir, fd.name); pack_scan(sub, depth + 1);
         } else pack_add_file(dir, fd.name);
     } while (_findnext(h, &fd) == 0);
@@ -840,7 +1016,7 @@ static void pack_scan(const char* dir, int depth) {             /* every folder 
         if (e->d_name[0] == '.') continue;
         char sub[1024]; snprintf(sub, sizeof sub, "%s/%s", dir, e->d_name);
         struct stat st;
-        if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode)) { if (!(depth == 0 && (!strcmp(e->d_name, "dump") || !strcmp(e->d_name, "dump-2d")))) pack_scan(sub, depth + 1); }
+        if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode)) { if (!(depth == 0 && (!strcmp(e->d_name, "dump") || !strcmp(e->d_name, "dump-2d") || !strcmp(e->d_name, "hd-auto-tmp")))) pack_scan(sub, depth + 1); }
         else pack_add_file(dir, e->d_name);
     }
     closedir(d);
@@ -924,10 +1100,14 @@ static void textures_hd_after(void) {
 #endif
 }
 
+void gl_textures_hd_start(void) { textures_hd_after(); }
+
 static void texcache_redo(void) { for (int i = 0; i < TEXCACHE; i++) g_texcache[i].w = 0; }   /* every texture decodes again */
 
 void gl_set_texture_pack(int on) { g_pack_on = on != 0; if (!g_pack_on) pack_unload(); texcache_redo(); hdsprite_update(); }
 void gl_set_smooth2d(int on) { g_smooth2d = on != 0; }
+void gl_set_soft_shadows(int on) { g_softshadow = on != 0; }
+void gl_set_ink_lines(int on) { g_ink = on != 0; }
 void gl_set_outline(int mode) { g_outline = mode >= 0 && mode <= 2 ? mode : 0; }
 void gl_set_tex_upscale(int on) { on = on != 0; if (on != g_texup) { g_texup = on; texcache_redo(); } }
 void gl_set_texture_dump(int on) { g_dump_on = on != 0; texcache_redo(); hdsprite_update(); }
@@ -949,8 +1129,9 @@ static int win_frame_tile(const uint8_t* rgba, int w, int h) {
 
 /* A piece of a sprite cut into several textures (a far character's head and
  * body, a speech bubble's corners, an item on the ground): small, with
- * see-through pixels. Upscaled one by one (pack or xBR), the pieces no
- * longer meet ("cut and glued back" heads): they stay at the DS's size. */
+ * see-through pixels. Replaced one by one by the pack, the pieces no longer
+ * meet ("cut and glued back" heads): the pack leaves them alone. xBR smooths
+ * them, but not along their sides (where they meet the next piece). */
 static int sprite_piece(const uint8_t* rgba, int w, int h) {
     if (w > 32 || h > 32) return 0;
     for (int i = 0; i < w * h; i++) if (!rgba[i * 4 + 3]) return 1;
@@ -984,10 +1165,11 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
                     if (g_dump_on) dump_texture(key, g_decode, *w, *h);
                     if (g_pack_on && g_pack_n && !piece) e->hd = pack_texture(key);
                 }
-                if (!e->hd && g_texup && *w * *h <= 256 * 256 && !piece) {   /* upscaled: 4x (2x for the big ones) */
+                static int pxbr = -1; if (pxbr < 0) pxbr = !getenv("DQIX_PIECE_XBR") || atoi(getenv("DQIX_PIECE_XBR")) != 0;   /* tests */
+                if (!e->hd && g_texup && *w * *h <= 256 * 256 && (!piece || pxbr)) {   /* upscaled: 4x (2x for the big ones) */
                     f = *w * *h <= 128 * 128 ? 4 : 2;
                     bleed(g_decode, *w, *h);
-                    xbr_upscale(g_decode, *w, *h, f, g_upbuf);
+                    xbr_upscale(g_decode, *w, *h, f, g_upbuf, piece);
                 }
             }
             if (f) {
@@ -1043,10 +1225,20 @@ static void make_fbs(void) {
         p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->post, 0);
         f->valid = 0;
     }
+    odepth_tex = new_tex(GL_DEPTH24_STENCIL8, g_fb3_w, g_fb_h, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_NEAREST);
+    p_glGenFramebuffers(1, &odepth_fbo);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, odepth_fbo);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, odepth_tex, 0);
+    ocolor_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ocolor_tex, 0);
     final_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h * 2, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
     p_glGenFramebuffers(1, &final_fbo);
     p_glBindFramebuffer(GL_FRAMEBUFFER, final_fbo);
     p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, final_tex, 0);
+    only2d_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h * 2, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+    p_glGenFramebuffers(1, &only2d_fbo);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, only2d_fbo);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, only2d_tex, 0);
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
     g_fb_latest = g_fb_shown = -1;
 }
@@ -1057,7 +1249,9 @@ static void free_fbs(void) {
         GLuint t[4] = { f->color, f->attr, f->depth, f->post }, b[2] = { f->fbo, f->post_fbo };
         p_glDeleteTextures(4, t); p_glDeleteFramebuffers(2, b);
     }
+    p_glDeleteTextures(1, &odepth_tex); p_glDeleteTextures(1, &ocolor_tex); p_glDeleteFramebuffers(1, &odepth_fbo);
     p_glDeleteTextures(1, &final_tex); p_glDeleteFramebuffers(1, &final_fbo);
+    p_glDeleteTextures(1, &only2d_tex); p_glDeleteFramebuffers(1, &only2d_fbo);
     if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); held_tex = held_fbo = 0; held_w = held_h = 0; }
 }
 
@@ -1204,6 +1398,51 @@ static void gl_vblank(void) {
     g_fb_shown = g_fb_latest;                                  /* what was rendered last is visible now */
 }
 
+/* HD text, the dialogue windows' letters (a quad each, at the game's
+ * spacing for its own letters): along each line, moved so each PC letter
+ * follows the one before it at the PC font's own spacing (a narrow r or i
+ * otherwise leaves a gap; hdtext_follow). dx: per polygon, DS pixels to
+ * move it across. */
+typedef struct { int i; float x, y, k, extra; int glyph; } LetterQuad;
+static int by_line(const void* a, const void* b) {
+    const LetterQuad* p = a; const LetterQuad* q = b;
+    if (p->y != q->y) return p->y < q->y ? -1 : 1;
+    return p->x < q->x ? -1 : p->x > q->x;
+}
+static int letter_spacing(const Frame3D* f, int textures_on, float* dx) {
+    static LetterQuad q[MAX_POLY];
+    int n = 0;
+    if (!g_hdtext_on || !hdtext_font_ok() || !textures_on) return 0;
+    for (int i = 0; i < f->n && i < MAX_POLY; i++) {
+        const Poly* p = f->order[i];
+        dx[i] = 0;
+        if (((p->teximg >> 26) & 7) != 3 || p->n != 4 || ((p->attr >> 16) & 31) == 0) continue;
+        float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f; int front = 1;
+        for (int k = 0; k < p->n; k++) {
+            if (p->v[k].zn > 1e-4f) front = 0;
+            x0 = fminf(x0, p->v[k].x); x1 = fmaxf(x1, p->v[k].x); y0 = fminf(y0, p->v[k].y);
+        }
+        int w, h, glyph, ox, copies;
+        if (!front) continue;
+        gpu3d_tex_size(p->teximg, &w, &h);
+        if (!hdtext_texture_letter(gpu3d_texels(p->teximg), w, h, &glyph, &ox, &copies)) continue;
+        float k = (x1 - x0) / (float)w;                          /* DS pixels per texel (1: the usual) */
+        q[n].i = i; q[n].k = k; q[n].x = x0 + (float)ox * k; q[n].y = roundf(y0); q[n].glyph = glyph; q[n].extra = (float)copies * 0.5f;   /* (a shadow: some room for it before the next letter) */
+        n++;
+    }
+    if (n < 2) return 0;
+    qsort(q, (size_t)n, sizeof *q, by_line);
+    float shift = 0;
+    for (int j = 0; j < n; j++) {
+        const LetterQuad* a = j ? &q[j - 1] : NULL; const LetterQuad* b = &q[j];
+        shift = a && a->y == b->y ? hdtext_follow(a->glyph, a->x, b->glyph, b->x, shift, b->k, a->extra) : 0;   /* a line starts where the game starts it */
+        dx[b->i] = shift;
+    }
+    return 1;
+}
+
+static float g_centre_w;
+float gl_3d_centre_w(void) { return g_centre_w; }
 static void gl_render_(const Frame3D* f);
 static void gl_render(const Frame3D* f) {
     double t0 = perf_ms();
@@ -1213,6 +1452,16 @@ static void gl_render(const Frame3D* f) {
 }
 static void gl_render_(const Frame3D* f) {
     g_frameno++;
+    {   /* how far the 3D in the middle of the picture is (gl_3d_centre_w()) */
+        double A = 0, Aw = 0;
+        for (int i = 0; i < f->n_opaque; i++) {
+            const Poly* p = f->order[i]; double a = 0, w = 0, cx = 0, cy = 0;
+            for (int k = 0; k < p->n; k++) { const SVtx* u = &p->v[k], *t = &p->v[(k + 1) % p->n]; a += u->x * t->y - t->x * u->y; w += u->iw > 0 ? 1.0 / u->iw : 0; cx += u->x; cy += u->y; }
+            a = fabs(a) / 2; cx /= p->n; cy /= p->n;
+            if (cx > f->width * 0.35 && cx < f->width * 0.65 && cy > 50 && cy < 150) { A += a; Aw += a * w / p->n; }
+        }
+        g_centre_w = A > 0 ? (float)(Aw / A) : 0;
+    }
     {   static uint32_t font_gen; static int text_on;                   /* letters in textures (hdtext_texture): drawn again */
         if (font_gen != hdtext_font_gen() || text_on != g_hdtext_on) { font_gen = hdtext_font_gen(); text_on = g_hdtext_on; texcache_redo(); } }
     {   /* tests: DQIX_GL_PROBE="f,x,y": on the first 3D frame from frame f, list the polygons over DS pixel x,y */
@@ -1239,6 +1488,10 @@ static void gl_render_(const Frame3D* f) {
     int textures_on = disp3d & 1;
     /* vertices + batches */
     int nv = 0, nb = 0;
+    float dlg[4] = { 256, 192, 0, 0 };                           /* the dialogue window's panel, this frame (gl_dialog_box) */
+    float boxes[DLG_BOXES][4]; int boxid[DLG_BOXES], ndlg = 0;      /* ...and each window apart (the modern line) */
+    static float letter_dx[MAX_POLY];
+    int spaced = letter_spacing(f, textures_on, letter_dx);
     for (int i = 0; i < f->n; i++) {
         const Poly* p = f->order[i];
         int fmt = (p->teximg >> 26) & 7;
@@ -1270,6 +1523,12 @@ static void gl_render_(const Frame3D* f) {
         if (wire) {
             for (int k = 0; k < p->n; k++) { push_vertex(&nv, &p->v[k], a, p, (float)textured, -1, 7); push_vertex(&nv, &p->v[(k + 1) % p->n], a, p, (float)textured, -1, 7); }
         } else {
+            static Poly moved;                                     /* a letter moved along its line (letter_spacing) */
+            if (spaced && i < MAX_POLY && letter_dx[i] != 0.0f) {
+                moved = *p;
+                for (int k = 0; k < p->n; k++) moved.v[k].x += letter_dx[i];
+                p = &moved;
+            }
             for (int k = 1; k + 1 < p->n; k++) {                  /* fan: (v0, vk, vk+1) */
                 int ext = 1 | (k + 2 == p->n ? 2 : 0) | (k == 1 ? 4 : 0);
                 push_vertex(&nv, &p->v[0], a, p, (float)textured, 0, ext);
@@ -1278,19 +1537,39 @@ static void gl_render_(const Frame3D* f) {
             }
         }
         b.count = nv - b.first;
-        if (g_winstyle && !wire && ((p->attr >> 4) & 3) == 0) {     /* minimal windows (gpu2d.c): the dialogue window, drawn in 3D in front of all */
+        if (!wire && ((p->attr >> 4) & 3) == 0) {                   /* the dialogue window, drawn in 3D in front of all */
             int front = 1, black = 1;
-            float y0 = 192.0f, y1 = 0.0f;
+            float x0 = 256.0f, x1 = 0.0f, y0 = 192.0f, y1 = 0.0f;
             for (int k = 0; k < p->n; k++) {
                 if (p->v[k].zn > 1e-4f) front = 0;
                 if (p->v[k].r + p->v[k].g + p->v[k].b > 0.0f) black = 0;
+                x0 = fminf(x0, p->v[k].x); x1 = fmaxf(x1, p->v[k].x);
                 y0 = fminf(y0, p->v[k].y); y1 = fmaxf(y1, p->v[k].y);
             }
             if (y1 - y0 > 144.0f) black = 0;                        /* (not a fade over the whole screen) */
+            if (front && !textured && black && b.translucent) {
+                dlg[0] = fminf(dlg[0], x0); dlg[1] = fminf(dlg[1], y0); dlg[2] = fmaxf(dlg[2], x1); dlg[3] = fmaxf(dlg[3], y1);
+                /* each window its own line: a name plate over the dialogue window
+                 * is a panel of its own (another polygon id); the pieces of one
+                 * panel (the same id, side by side) make one */
+                int k = 0;
+                for (; k < ndlg; k++) {
+                    float* r = boxes[k];
+                    if (boxid[k] == b.pid && x0 <= r[2] + 1 && x1 >= r[0] - 1 && y0 <= r[3] + 1 && y1 >= r[1] - 1) {
+                        r[0] = fminf(r[0], x0); r[1] = fminf(r[1], y0); r[2] = fmaxf(r[2], x1); r[3] = fmaxf(r[3], y1);
+                        break;
+                    }
+                }
+                if (k == ndlg && ndlg < DLG_BOXES) { boxes[ndlg][0] = x0; boxes[ndlg][1] = y0; boxes[ndlg][2] = x1; boxes[ndlg][3] = y1; boxid[ndlg++] = b.pid; }
+            }
             float* o = g_verts + (size_t)b.first * VTX_FLOATS;
-            if (front && !textured && black && b.translucent)       /* its panel: fainter */
+            int modern = g_winstyle == 2 && !g_dlg_outline;
+            if (modern && front && textured && fmt == 3 && g_tex_frame) { nv = b.first; continue; }   /* modern: no frame (a line in FS_COMP instead) */
+            if (modern && front && !textured && black && b.translucent)   /* ...and the panel a little fainter, like the other windows (in proportion: one the game keeps faint stays faint) */
+                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 9 / 10);
+            else if (g_winstyle && front && !textured && black && b.translucent)   /* minimal windows (gpu2d.c): its panel fainter */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);
-            else if (front && textured && fmt == 3 && g_tex_frame)  /* its frame: a thin grey edge */
+            else if (g_winstyle && front && textured && fmt == 3 && g_tex_frame)   /* its frame: a thin grey edge */
                 for (int k = 0; k < b.count; k++, o += VTX_FLOATS) { o[4] *= 0.4f; o[5] *= 0.4f; o[6] *= 0.4f; }
         }
         if (nb > 0) {
@@ -1302,6 +1581,8 @@ static void gl_render_(const Frame3D* f) {
         if (nb == g_bcap) { g_bcap = g_bcap ? g_bcap * 2 : 1024; g_batches = realloc(g_batches, sizeof(Batch) * (size_t)g_bcap); }
         g_batches[nb++] = b;
     }
+    memcpy(g_dlg_box, dlg, sizeof dlg);
+    memcpy(g_dlg_boxes, boxes, sizeof boxes); g_ndlg = ndlg;
 
     int target = g_fb_latest < 0 ? 0 : (g_fb_latest ^ 1);
     if (target == g_fb_shown) target ^= 1;
@@ -1358,8 +1639,15 @@ static void gl_render_(const Frame3D* f) {
      * Shadows: the mask (id 0) marks where it is hidden (depth test fails); the
      * shadow then darkens only those pixels, and not the object of its own id. */
     p_glEnable(GL_STENCIL_TEST);
-    int in_mask = 0;
-    for (int i = 0; i < nb; i++) {
+    int in_mask = 0, odepth = 0;
+    for (int i = 0; i <= nb; i++) {
+        if (g_ink && !odepth && (i == nb || g_batches[i].translucent)) {   /* the solid ones are drawn: keep their depth and colour */
+            odepth = 1;
+            p_glBindFramebuffer(GL_READ_FRAMEBUFFER, fb->fbo); p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, odepth_fbo);
+            p_glBlitFramebuffer(0, 0, g_fb3_w, g_fb_h, 0, 0, g_fb3_w, g_fb_h, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            p_glBindFramebuffer(GL_FRAMEBUFFER, fb->fbo);
+        }
+        if (i == nb) break;
         Batch* b = &g_batches[i];
         p_glBindTexture(GL_TEXTURE_2D, b->tex);
         p_glBindSampler(0, samplers[b->sampler]);
@@ -1453,6 +1741,10 @@ static void gl_render_(const Frame3D* f) {
     p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, fb->color); p_glBindSampler(0, 0);
     p_glActiveTexture(GL_TEXTURE1); p_glBindTexture(GL_TEXTURE_2D, fb->attr);
     p_glActiveTexture(GL_TEXTURE2); p_glBindTexture(GL_TEXTURE_2D, fb->depth);
+    p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, odepth_tex); p_glBindSampler(3, 0);
+    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_odepth"), 3);
+    p_glActiveTexture(GL_TEXTURE4); p_glBindTexture(GL_TEXTURE_2D, ocolor_tex); p_glBindSampler(4, 0);
+    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_ocolor"), 4);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_color"), 0);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_attr"), 1);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_depth"), 2);
@@ -1478,6 +1770,13 @@ static void gl_render_(const Frame3D* f) {
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_fogoff"), IO16_(0x35C) & 0x7FFF);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_fogshift"), (disp3d >> 8) & 15);
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_wbuf"), f->wbuf);
+    { static float aos = -1, aor; if (aos < 0) { const char* e = getenv("DQIX_SOFTSHADOW"); aos = e ? (float)atof(e) : 0.6f; e = getenv("DQIX_SOFTSHADOW_REACH"); aor = e ? (float)atof(e) : 6.0f; }   /* tests: strength, reach in DS pixels */
+      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_ao"), g_softshadow ? aos : 0.0f);
+      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_aorad"), aor * (float)g_scale); }
+    { static float ks = -1, km; if (ks < 0) { const char* e = getenv("DQIX_INK"); ks = e ? (float)atof(e) : 0.7f; e = getenv("DQIX_INK_MIN"); km = e ? (float)atof(e) : 0.01f; }   /* tests: strength, how far behind */
+      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_ink"), g_ink ? ks : 0.0f);
+      p_glUniform1i(p_glGetUniformLocation(prog_post, "u_inkstep"), g_scale >= 3 ? g_scale / 3 : 1);
+      p_glUniform1f(p_glGetUniformLocation(prog_post, "u_inkmin"), km); }
     p_glUniform4f(p_glGetUniformLocation(prog_post, "u_rect"), -1, -1, 2, 2);
     p_glUniform4f(p_glGetUniformLocation(prog_post, "u_uv"), 0, 0, 1, 1);
     p_glBindVertexArray(vao_quad);
@@ -1547,22 +1846,40 @@ static void text_init(void) {
     for (int i = 0; i < 2; i++) mask_tex[i] = new_tex(GL_R8, 256, 192, GL_RED, GL_UNSIGNED_BYTE, GL_NEAREST);
     p_glGenVertexArrays(1, &vao_text); p_glBindVertexArray(vao_text);
     p_glGenBuffers(1, &vbo_text); p_glBindBuffer(GL_ARRAY_BUFFER, vbo_text);
-    GLsizei st = 7 * sizeof(float);
+    GLsizei st = 8 * sizeof(float);
     p_glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, st, (void*)0);
     p_glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, st, (void*)(2 * sizeof(float)));
     p_glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, st, (void*)(4 * sizeof(float)));
-    for (int i = 0; i < 3; i++) p_glEnableVertexAttribArray((GLuint)i);
+    p_glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, st, (void*)(7 * sizeof(float)));
+    for (int i = 0; i < 4; i++) p_glEnableVertexAttribArray((GLuint)i);
 }
 
+static const HdGlyph* g_line_glyphs;                           /* (by_line_glyph's) */
+static int by_line_glyph(const void* a, const void* b) {        /* along the lines, top to bottom */
+    const HdGlyph* p = &g_line_glyphs[*(const int*)a]; const HdGlyph* q = &g_line_glyphs[*(const int*)b];
+    if (p->y != q->y) return p->y < q->y ? -1 : 1;
+    return p->x < q->x ? -1 : p->x > q->x;
+}
 /* Draw this frame's letters of one engine over its composed picture (bound: final_fbo). */
 static void draw_text(int eng, int top, float W, float wside) {
     const HdGlyph* gl; int n = hdtext_glyphs(eng, &gl);
     if (!n || !prog_text) return;
     text_init();
     if (g_atlas_gen != hdtext_font_gen()) { g_atlas_gen = hdtext_font_gen(); memset(g_slot, 0, sizeof g_slot); g_nslots = 0; }
-    if (!g_text_verts) g_text_verts = malloc(sizeof(float) * 7 * 6 * 4096);
+    if (!g_text_verts) g_text_verts = malloc(sizeof(float) * 8 * 6 * 4096);
     int nv = 0;
     int per_row = ATLAS / SLOT_W;
+    static float dx[4096];                                        /* each letter moved along its line (hdtext_follow) */
+    {   static int line[4096]; int m = 0;
+        for (int i = 0; i < n && i < 4096; i++) { dx[i] = 0; if (gl[i].has_color) line[m++] = i; }   /* (a letter none of whose ink shows: no say in the spacing) */
+        g_line_glyphs = gl;
+        qsort(line, (size_t)m, sizeof *line, by_line_glyph);
+        if (hdtext_font_ok() && !party_in_battle())             /* (not in battles: the party's cards as the game has them) */
+            for (int j = 1; j < m; j++) {
+                const HdGlyph* a = &gl[line[j - 1]]; const HdGlyph* b = &gl[line[j]];
+                if (a->y == b->y) dx[line[j]] = hdtext_follow(a->glyph, (float)a->x, b->glyph, (float)b->x, dx[line[j - 1]], 1.0f, 0.0f);
+            }
+    }
     for (int i = 0; i < n && i < 4096; i++) {
         const HdGlyph* g = &gl[i];
         if (!g->has_color) continue;                              /* none of its ink shows */
@@ -1570,18 +1887,18 @@ static void draw_text(int eng, int top, float W, float wside) {
         if (sl < 0) continue;
         float u0 = (float)((sl % per_row) * SLOT_W + 4) / ATLAS, v0 = (float)((sl / per_row) * SLOT_H + 4) / ATLAS;
         float u1 = u0 + (float)(g->w * HDT_R) / ATLAS, v1 = v0 + (float)(12 * HDT_R) / ATLAS;
-        float x0 = (float)g->x, y0 = (float)g->y, x1 = x0 + (float)g->w, y1 = y0 + 12.0f;
+        float x0 = (float)g->x + dx[i], y0 = (float)g->y, x1 = x0 + (float)g->w, y1 = y0 + 12.0f;
         float r = (float)((g->color >> 16) & 255) / 255.0f, gr = (float)((g->color >> 8) & 255) / 255.0f, b = (float)(g->color & 255) / 255.0f;
         const float q[6][4] = { { x0, y0, u0, v0 }, { x1, y0, u1, v0 }, { x1, y1, u1, v1 }, { x0, y0, u0, v0 }, { x1, y1, u1, v1 }, { x0, y1, u0, v1 } };
         for (int k = 0; k < 6; k++) {
-            float* o = &g_text_verts[(size_t)nv * 7];
-            o[0] = q[k][0]; o[1] = q[k][1]; o[2] = q[k][2]; o[3] = q[k][3]; o[4] = r; o[5] = gr; o[6] = b;
+            float* o = &g_text_verts[(size_t)nv * 8];
+            o[0] = q[k][0]; o[1] = q[k][1]; o[2] = q[k][2]; o[3] = q[k][3]; o[4] = r; o[5] = gr; o[6] = b; o[7] = dx[i];
             nv++;
         }
     }
     { static int lg = -1; if (lg < 0) lg = getenv("DQIX_HDTEXT_LOG") != NULL;
-      if (lg) { int col = 0; for (int i = 0; i < n; i++) col += gl[i].has_color; fprintf(stderr, "hdtext f%llu eng %d: %d letters, %d with colour, %d vertices; first at %d,%d w %d glyph %d colour %06x\n",
-                (unsigned long long)g_frame, eng, n, col, nv, gl[0].x, gl[0].y, gl[0].w, gl[0].glyph, gl[0].color); } }
+      if (lg) { int col = 0; for (int i = 0; i < n; i++) col += gl[i].has_color; fprintf(stderr, "hdtext f%llu eng %d: %d letters, %d with colour, %d vertices; first at %d,%d w %d glyph %d font %d colour %06x\n",
+                (unsigned long long)g_frame, eng, n, col, nv, gl[0].x, gl[0].y, gl[0].w, gl[0].glyph, gl[0].font, gl[0].color); } }
     if (!nv) return;
     if (g_atlas_dirty) { p_glBindTexture(GL_TEXTURE_2D, atlas_tex); p_glGenerateMipmap(GL_TEXTURE_2D);
         p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); g_atlas_dirty = 0; }
@@ -1597,7 +1914,7 @@ static void draw_text(int eng, int top, float W, float wside) {
     p_glActiveTexture(GL_TEXTURE1); p_glBindTexture(GL_TEXTURE_2D, mask_tex[eng]); p_glBindSampler(1, 0);
     p_glBindVertexArray(vao_text);
     p_glBindBuffer(GL_ARRAY_BUFFER, vbo_text);
-    p_glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(sizeof(float) * 7 * (size_t)nv), g_text_verts, GL_STREAM_DRAW);
+    p_glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(sizeof(float) * 8 * (size_t)nv), g_text_verts, GL_STREAM_DRAW);
     p_glEnable(GL_BLEND);
     p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   /* (solid where the letters are: the HUD's see-through panels) */
@@ -1623,8 +1940,11 @@ static void draw_sprites(int eng, int top, float W, float wside) {
     p_glEnable(GL_BLEND);
     p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    p_glEnable(GL_SCISSOR_TEST);                                  /* kept to its screen: a sprite past its edge (the top screen's cards, from its last rows) not over the other one */
+    p_glScissor(0, top ? g_fb_h : 0, g_fb3_w, g_fb_h);
     for (int i = 0; i < g_hdsprite_n[eng]; i++) {
         const HdSprite* sp = &g_hdsprites[eng][i];
+        if (!sp->shown) continue;                                 /* (hidden on the DS: by a window, a layer...) */
         GLuint t = pack_texture(sp->key);
         if (!t) continue;
         p_glBindTexture(GL_TEXTURE_2D, t);
@@ -1637,6 +1957,7 @@ static void draw_sprites(int eng, int top, float W, float wside) {
         p_glUniform4f(loc_uv, sp->hflip ? 1.0f : 0.0f, sp->vflip ? 0.0f : 1.0f, sp->hflip ? -1.0f : 1.0f, sp->vflip ? 1.0f : -1.0f);   /* (the picture's first row at the top) */
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
     }
+    p_glDisable(GL_SCISSOR_TEST);
     p_glDisable(GL_BLEND);
     p_glUseProgram(prog_comp);
 }
@@ -1672,6 +1993,38 @@ static void draw_movie(int eng, const float* r) {
     p_glUseProgram(prog_comp);
 }
 
+/* Widescreen menus: the 3D screen's 2D page in blocks of 8 x 8 DS pixels,
+ * filtered: the blurred colours its
+ * sides are made of (FS_COMP, u_amb). */
+static GLuint tex_amb;
+static void amb_upload(void) {
+    enum { B = 8, AW = 256 / B, AH = 192 / B };
+    static uint8_t buf[AW * AH * 4];
+    for (int by = 0; by < AH; by++)
+        for (int bx = 0; bx < AW; bx++) {
+            unsigned r = 0, g = 0, b = 0;
+            for (int y = by * B; y < by * B + B; y++)
+                for (int x = bx * B; x < bx * B + B; x++) {
+                    uint32_t c = g_engine_out[0][y * 256 + x];
+                    r += (c >> 16) & 255; g += (c >> 8) & 255; b += c & 255;
+                }
+            uint8_t* o = &buf[(by * AW + bx) * 4];
+            o[0] = (uint8_t)(r / (B * B)); o[1] = (uint8_t)(g / (B * B)); o[2] = (uint8_t)(b / (B * B)); o[3] = 255;
+        }
+    if (!tex_amb) {
+        p_glGenTextures(1, &tex_amb);
+        p_glBindTexture(GL_TEXTURE_2D, tex_amb);
+        p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, AW, AH, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    p_glActiveTexture(GL_TEXTURE4); p_glBindTexture(GL_TEXTURE_2D, tex_amb); p_glBindSampler(4, 0);
+    p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, AW, AH, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    p_glActiveTexture(GL_TEXTURE0);
+}
+
 void gl_compose(int a_on_top, int lcd_on) {
     upload_rgb(tex_col[0], g_engine_out[0]);
     upload_rgb(tex_col[1], g_engine_out[1]);
@@ -1695,6 +2048,15 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_3d"), 3);
     GLint loc_rect = p_glGetUniformLocation(prog_comp, "u_rect"), loc_has3d = p_glGetUniformLocation(prog_comp, "u_has3d");
     GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
+    GLint loc_only = p_glGetUniformLocation(prog_comp, "u_only"), loc_dlg = p_glGetUniformLocation(prog_comp, "u_dlg"), loc_ndlg = p_glGetUniformLocation(prog_comp, "u_ndlg");
+    p_glUniform1i(loc_only, 0);
+    {   /* a menu with a 3D model over its 2D page (gpu2d.c counts those pixels): its sides blurred */
+        extern int g_comp_3d_on2d;
+        int amb = g_comp_3d_on2d * 4 > 256 * 192 && has3d && g_wside > 0;
+        p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_amb"), amb);
+        p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_ambt"), 4);
+        if (amb) amb_upload();
+    }
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
     p_glUniform4f(p_glGetUniformLocation(prog_comp, "u_uv"), 0, 0, 1, 1);
@@ -1707,7 +2069,7 @@ void gl_compose(int a_on_top, int lcd_on) {
         p_glActiveTexture(GL_TEXTURE2); p_glBindTexture(GL_TEXTURE_2D, tex_info);
         p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, has3d ? g_fb[g_fb_shown].post : white_tex);
         p_glUniform1i(loc_has3d, eng == 0 && has3d);
-        p_glUniform1i(loc_cut, g_cut && !top);                     /* the commands screen (the HUD's pieces) */
+        p_glUniform1i(loc_cut, (g_cut && !top) || (g_cut_top && top));   /* the commands screen (the HUD's pieces), the top screen's page (its pop-up) */
         if (g_cut && !top) {
             float t[8 * 3];
             for (int i = 0; i < 8 * 3; i++) t[i] = (float)((g_hud_tint[i / 3] >> (16 - 8 * (i % 3))) & 255) / 255.0f;
@@ -1718,10 +2080,31 @@ void gl_compose(int a_on_top, int lcd_on) {
         if (wide) g_wide_shown = top ? 0 : 1;
         if (wide) p_glUniform4f(loc_rect, -1.0f, top ? 0.0f : -1.0f, 2.0f, 1.0f);   /* top screen = upper half of NDC */
         else p_glUniform4f(loc_rect, -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f);
+        int split = wide && g_split;                                 /* the 3D alone here; its 2D apart, in only2d_tex */
+        p_glUniform1i(loc_only, split ? 2 : 0);
+        if (eng == 0 && has3d && g_winstyle == 2 && !g_dlg_outline) {
+            float r[DLG_BOXES][4];
+            for (int k = 0; k < g_ndlg; k++) {                       /* (the boxes: in the widened 3D's columns) */
+                r[k][0] = g_dlg_boxes[k][0] - (float)g_wside; r[k][1] = g_dlg_boxes[k][1];
+                r[k][2] = g_dlg_boxes[k][2] - (float)g_wside; r[k][3] = g_dlg_boxes[k][3];
+            }
+            if (g_ndlg) p_glUniform4fv(loc_dlg, g_ndlg, &r[0][0]);
+            p_glUniform1i(loc_ndlg, g_ndlg);
+        } else p_glUniform1i(loc_ndlg, 0);
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
+        if (split) {
+            p_glUseProgram(prog_comp);
+            p_glBindFramebuffer(GL_FRAMEBUFFER, only2d_fbo);
+            p_glClearColor(0, 0, 0, 0); p_glClear(GL_COLOR_BUFFER_BIT);
+            p_glUniform1i(loc_only, 1);
+            p_glDrawArrays(GL_TRIANGLES, 0, 6);
+            p_glUniform1i(loc_only, 0);
+        }
         if (g_hdmovie_on && !wide) { const float r[4] = { -1.0f + 2.0f * (float)g_wside / W, top ? 0.0f : -1.0f, 2.0f * 256.0f / W, 1.0f }; draw_movie(eng, r); }
         if (g_hdtext_on) draw_text(eng, top, W, (float)g_wside);
         if (g_hdsprite_n[eng]) draw_sprites(eng, top, W, (float)g_wside);
+        if (split) { p_glBindFramebuffer(GL_FRAMEBUFFER, final_fbo); p_glDisable(GL_BLEND); }
+        p_glUseProgram(prog_comp); p_glBindVertexArray(vao_quad);
     }
     p_glActiveTexture(GL_TEXTURE0);
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1790,35 +2173,52 @@ void gl_hold(void) {
 static void draw_pieces(const GlPresent* v, GLuint src) {
     float W = (float)(256 + 2 * g_wside);
     p_glUseProgram(prog_copy);
-    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, src); p_glBindSampler(0, 0);
-    p_glGenerateMipmap(GL_TEXTURE_2D);                           /* drawn smaller than rendered: averaged, not shimmering */
-    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindSampler(0, 0);
+    GLuint texs[2] = { src, g_split ? only2d_tex : 0 };
+    for (int t = 0; t < 2; t++) {
+        if (!texs[t]) continue;
+        p_glBindTexture(GL_TEXTURE_2D, texs[t]);
+        p_glGenerateMipmap(GL_TEXTURE_2D);                       /* drawn smaller than rendered: averaged, not shimmering */
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
+    GLint loc_mode = p_glGetUniformLocation(prog_copy, "u_mode");
+    p_glUniform1f(p_glGetUniformLocation(prog_copy, "u_line"), v->sc);
+    p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_ds"), 1.0f / W, 1.0f / 384.0f);
     p_glBindVertexArray(vao_quad);
-    if (g_cut) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
+    int restyled = 0;
+    for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) restyled |= v->piece[i][9] > 0.5f;
+    if (g_cut || g_cut_top || g_split || restyled) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
     for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) {
         const float* q = v->piece[i];
         if (q[2] <= 0 || q[3] <= 0) continue;
+        p_glBindTexture(GL_TEXTURE_2D, q[4] > 1.5f && texs[1] ? texs[1] : src);   /* 2, 3: the 3D screen's 2D alone */
         /* canvas (DS pixels, y down) -> window pixels -> NDC (y up); the rect's origin is its bottom left */
         float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
         p_glUniform4f(loc_rect, x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
                       q[2] * v->sc / (float)v->win_w * 2, q[3] * v->sc / (float)v->win_h * 2);
         /* the screen in the composed picture: the top one in the upper half, the DS's 256 columns after the sides */
-        float vtop = q[4] < 0.5f ? 1.0f : 0.5f;
+        float vtop = ((int)(q[4] + 0.5f) & 1) ? 0.5f : 1.0f;
         p_glUniform4f(loc_uv, ((float)g_wside + q[5]) / W, vtop - (q[6] + q[8]) / 384.0f, q[7] / W, q[8] / 384.0f);
+        int mode = (int)(q[9] + 0.5f);
+        p_glUniform1i(loc_mode, mode);
+        if (mode == 2 || mode == 7) {
+            p_glUniform4f(loc_uv, 0, 0, 1, 1);
+            p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_px"), q[2] * v->sc, q[3] * v->sc);
+        }
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
     }
+    p_glUniform1i(loc_mode, 0);
     p_glDisable(GL_BLEND);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 }
 
-/* gl_set_overlay()'s picture (the map's markers) over the canvas rect v->overlay. */
-static void draw_overlay(const GlPresent* v) {
-    const float* q = v->overlay;
+/* gl_set_overlay()'s picture (the map's markers) or gl_set_icons()' over the canvas rect q. */
+static void draw_overlay(const GlPresent* v, const float* q, GLuint tex) {
     p_glUseProgram(prog_copy);
-    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, overlay_tex); p_glBindSampler(0, 0);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, tex); p_glBindSampler(0, 0);
     p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
     float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
     p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
@@ -1829,6 +2229,49 @@ static void draw_overlay(const GlPresent* v) {
     p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   /* premultiplied */
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
     p_glDisable(GL_BLEND);
+}
+
+/* gl_set_menu()'s picture over the whole window, on its window of the minimal
+ * style (FS_COPY's u_mode 2, as draw_pieces' restyled windows). */
+static void draw_menu(const GlPresent* v) {
+    p_glUseProgram(prog_copy);
+    p_glBindVertexArray(vao_quad);
+    p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   /* premultiplied */
+    if (menu_box[4] > 0) {
+        const float* b = menu_box;
+        p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), b[0] / (float)v->win_w * 2 - 1, 1 - b[3] / (float)v->win_h * 2,
+                      (b[2] - b[0]) / (float)v->win_w * 2, (b[3] - b[1]) / (float)v->win_h * 2);
+        p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_uv"), 0, 0, 1, 1);
+        p_glUniform2f(p_glGetUniformLocation(prog_copy, "u_px"), b[2] - b[0], b[3] - b[1]);
+        p_glUniform1f(p_glGetUniformLocation(prog_copy, "u_line"), b[4]);
+        p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_mode"), 2);
+        p_glDrawArrays(GL_TRIANGLES, 0, 6);
+        p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_mode"), 0);
+    }
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, menu_tex); p_glBindSampler(0, 0);
+    p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), -1, -1, 2, 2);
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_uv"), 0, 1, 1, -1);   /* rows top-down */
+    p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    p_glDisable(GL_BLEND);
+}
+
+void gl_set_menu_box(const float* b) {
+    if (b) memcpy(menu_box, b, sizeof menu_box); else menu_box[4] = 0;
+}
+
+void gl_set_menu(const uint8_t* rgba, int w, int h) {
+    menu_on = rgba != NULL;
+    if (!rgba) return;
+    if (!menu_tex) p_glGenTextures(1, &menu_tex);
+    p_glBindTexture(GL_TEXTURE_2D, menu_tex);
+    p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
 /* Draw the screens (and the console, if chosen) into the window. Call once
@@ -1901,7 +2344,11 @@ void gl_present(const GlPresent* v) {
     p_glBindVertexArray(vao_quad);
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
     if (v->npiece) draw_pieces(v, final_tex);
-    if (overlay_on && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v);
+    if (overlay_on[0] && v->overlay[2] > 0 && v->overlay[3] > 0) draw_overlay(v, v->overlay, overlay_tex[0]);
+    if (overlay_on[1] && v->icons[2] > 0 && v->icons[3] > 0) draw_overlay(v, v->icons, overlay_tex[1]);
+    for (int i = 0; i < GL_LAYERS; i++)                           /* the layers, in their order (under the in-game menu) */
+        if (overlay_on[2 + i] && v->layer[i][2] > 0 && v->layer[i][3] > 0) draw_overlay(v, v->layer[i], overlay_tex[2 + i]);
+    if (menu_on && !v->again) draw_menu(v);
 }
 
 /* A console photo (RGBA, rows top-down), drawn around the screens. */
@@ -1920,11 +2367,11 @@ void gl_set_skin(const uint8_t* rgba, int w, int h) {
 
 /* A picture drawn over the screens where GlPresent.overlay says (premultiplied
  * RGBA, rows top-down); NULL: none. */
-void gl_set_overlay(const uint8_t* rgba, int w, int h) {
-    overlay_on = rgba != NULL;
+static void set_overlay(int i, const uint8_t* rgba, int w, int h) {
+    overlay_on[i] = rgba != NULL;
     if (!rgba) return;
-    if (!overlay_tex) p_glGenTextures(1, &overlay_tex);
-    p_glBindTexture(GL_TEXTURE_2D, overlay_tex);
+    if (!overlay_tex[i]) p_glGenTextures(1, &overlay_tex[i]);
+    p_glBindTexture(GL_TEXTURE_2D, overlay_tex[i]);
     p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1932,6 +2379,9 @@ void gl_set_overlay(const uint8_t* rgba, int w, int h) {
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
+void gl_set_overlay(const uint8_t* rgba, int w, int h) { set_overlay(0, rgba, w, h); }
+void gl_set_icons(const uint8_t* rgba, int w, int h) { set_overlay(1, rgba, w, h); }
+void gl_set_layer(int id, const uint8_t* rgba, int w, int h) { if (id >= 0 && id < GL_LAYERS) set_overlay(2 + id, rgba, w, h); }
 
 /* The window as shown (for tests): top-down RGB, caller frees. */
 uint8_t* gl_read_window(int w, int h) {
@@ -2001,3 +2451,10 @@ int gl_read_3d(uint8_t* out, int* w, int* h) {
 int gl_wide_shown(int* side) { *side = g_wside; return g_wide_shown; }
 int gl_3d_ready(void) { return g_comp_has3d && g_fb_shown >= 0 && g_fb[g_fb_shown].valid; }
 void gl_set_hud_cut(int on) { g_cut = on != 0; }
+void gl_set_top_cut(int on) { g_cut_top = on != 0; }
+void gl_set_split(int on) { g_split = on != 0; }
+int gl_dialog_box(int r[4]) {
+    if (g_dlg_box[2] <= g_dlg_box[0] || g_dlg_box[3] <= g_dlg_box[1]) return 0;
+    for (int i = 0; i < 4; i++) r[i] = (int)lroundf(g_dlg_box[i]);
+    return 1;
+}
