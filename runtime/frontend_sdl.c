@@ -1826,7 +1826,7 @@ static void creation_update(int a_on_top) {
         }
         if (x0 < 0) continue;
         int* b = g_cc_box[g_cc_n];                                /* its inside, without the rounded corners (a window of the minimal style goes round it) */
-        b[0] = x0 + 2; b[1] = y0 + 2; b[2] = x1 - x0 - 3; b[3] = h - 4;
+        b[0] = x0 + 4; b[1] = y0 + 4; b[2] = x1 - x0 - 7; b[3] = h - 8;   /* (4: past its light corner pixels) */
         g_cc_at[g_cc_n][0] = b[0]; g_cc_at[g_cc_n][1] = b[1];      /* (in the pop-up as on the touch screen) */
         g_cc_n++;
     }
