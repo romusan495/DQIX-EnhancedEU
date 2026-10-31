@@ -1198,3 +1198,41 @@ en = HD textures ready (%d new)
 fr = Textures HD prêtes (%d nouvelles)
 en = HD textures ready
 fr = Textures HD prêtes
+
+# ---- hints.c (the name on a keyboard key, under the X Menu sign: short)
+
+en = Del
+fr = Suppr
+
+en = Ins
+fr = Inser
+
+en = End
+fr = Fin
+
+en = PgUp
+fr = Pg préc
+
+en = PgDn
+fr = Pg suiv
+
+en = Ctrl
+fr = Ctrl
+
+en = Alt
+fr = Alt
+
+en = AltGr
+fr = AltGr
+
+en = PrtSc
+fr = Impr
+
+en = ScrLk
+fr = Défil
+
+en = NumLk
+fr = Verr num
+
+en = num
+fr = num

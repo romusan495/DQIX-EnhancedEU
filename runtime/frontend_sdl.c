@@ -2000,7 +2000,7 @@ static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
 #define SIGN_BTN_Y 23.8f
 #define SIGN_BTN_R 4.8f
 static void hint_update(GlPresent* v) {
-    static uint8_t img[HINT_PX * HINT_PX * 4];
+    static uint8_t img[3 * HINT_PX * HINT_PX * 4];                /* a key's picture: up to 3 times as wide as high */
     static char shown[96];
     int side = 0, pad = g_hint_pad < 0 ? g_pad != NULL : g_hint_pad && g_pad;
     if (!g_hints || !g_sign_move || g_frame - g_sign_frame >= 4 || gl_wide_shown(&side) != 1 || v->bot[2] <= 0 || v->botx[1] <= 0) return;
@@ -2022,19 +2022,23 @@ static void hint_update(GlPresent* v) {
         face = b == SDL_CONTROLLER_BUTTON_B ? HINT_RIGHT : b == SDL_CONTROLLER_BUTTON_A ? HINT_BOTTOM : b == SDL_CONTROLLER_BUTTON_Y ? HINT_TOP :
                b == SDL_CONTROLLER_BUTTON_X ? HINT_LEFT : HINT_OTHER;
         if (face == HINT_OTHER) controls_pad_name(b, lab, sizeof lab);
-    } else controls_key_name(g_ctl_key[CA_X][g_ctl_key[CA_X][0] ? 0 : 1], lab, sizeof lab);
+    } else controls_key_label(g_ctl_key[CA_X][g_ctl_key[CA_X][0] ? 0 : 1], lab, sizeof lab);
     {   /* tests: DQIX_HINT_STYLE=keyboard|generic|playstation|xbox|nintendo */
         static const char* t = (const char*)-1; if (t == (const char*)-1) t = getenv("DQIX_HINT_STYLE");
         static const char* const names[5] = { "keyboard", "generic", "playstation", "xbox", "nintendo" };
-        for (int i = 0; t && i < 5; i++) if (!strcmp(t, names[i])) { style = i; face = i ? HINT_TOP : HINT_OTHER; if (!i) controls_key_name(g_ctl_key[CA_X][0], lab, sizeof lab); }
+        for (int i = 0; t && i < 5; i++) if (!strcmp(t, names[i])) { style = i; face = i ? HINT_TOP : HINT_OTHER; if (!i) controls_key_label(g_ctl_key[CA_X][0], lab, sizeof lab); }
+        static const char* k = (const char*)-1; if (k == (const char*)-1) k = getenv("DQIX_HINT_KEY");   /* tests: a key's name ("Return", "é") */
+        if (k && style == HINT_KEYBOARD) snprintf(lab, sizeof lab, "%s", k);
     }
+    float aspect = style == HINT_KEYBOARD ? hint_key_aspect(lab) : 1;
+    int w = (int)lroundf(HINT_PX * aspect);
     snprintf(key, sizeof key, "%d %d %s", style, face, lab);
-    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hint_draw(img, HINT_PX, HINT_PX, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, HINT_PX, HINT_PX); }
+    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); memset(img, 0, sizeof img); hint_draw(img, w, HINT_PX, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, w, HINT_PX); }
     float kx = v->bot[2] / v->botx[1], ky = v->bot[3] / 192.0f, r = SIGN_BTN_R + 0.5f;
     float cx = (float)g_sign_rect[0] + SIGN_BTN_X, cy = (float)g_sign_rect[1] + SIGN_BTN_Y;
     float* q = v->layer[GL_LAYER_HINT];
-    q[0] = v->bot[0] + (cx - r - v->botx[0] + (float)side) * kx; q[1] = v->bot[1] + (cy - r) * ky;
-    q[2] = 2 * r * kx; q[3] = 2 * r * ky;
+    q[0] = v->bot[0] + (cx + r - 2 * r * aspect - v->botx[0] + (float)side) * kx; q[1] = v->bot[1] + (cy - r) * ky;   /* a long key grows to the left: its right edge stays */
+    q[2] = 2 * r * aspect * kx; q[3] = 2 * r * ky;
 }
 
 /* textures-hd at work (textures-hd-progress.txt, next to the game): a bar at
@@ -2112,6 +2116,7 @@ static void present_gl(void) {
     auto_scale();
     g_wide_side = g_classic ? 0 : wide_side_target();            /* the next 3D frames (only the picture changes) */
     g_sign_move = g_minimap && g_wide_side > 0;                  /* the map's corner: the "X Menu" sign at the bottom right (even with the map hidden) */
+    g_sign_crop = g_hints ? 7 * 16 : 0;                          /* the sign without the game's X button (ours is drawn over it): cut where the wing begins */
     {   /* ...and what the game counts as in view (not in a session: every PC must decide alike) */
         static int off = -1; if (off < 0) off = getenv("DQIX_NO_WIDE_CULL") != NULL;
         g_wide_cull = off || session_requested() ? 0 : g_wide_side;

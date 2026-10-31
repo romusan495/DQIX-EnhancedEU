@@ -15,7 +15,7 @@ import sys
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ["runtime/menu_win32.c", "runtime/gamemenu.c", "runtime/frontend_sdl.c", "runtime/farm.c", "runtime/cheats.c", "runtime/controls.c"]
+SOURCES = ["runtime/menu_win32.c", "runtime/gamemenu.c", "runtime/frontend_sdl.c", "runtime/farm.c", "runtime/cheats.c", "runtime/controls.c", "runtime/hints.c"]
 # calls whose string arguments are shown translated
 SINKS = {"item", "sub", "label", "TW", "T", "notice", "info_box", "choose", "ask_yes", "ask_text", "choice_box", "stop", "farm_cancel"}
 # the session window (menu_win32.c) and its texts stay as they are: multiplayer is left alone
@@ -131,6 +131,8 @@ def texts_in(path):
         for m in re.finditer(r'\{ SDL_CONTROLLER_BUTTON_\w+, "\w+", ((?:"[^"]*"|0)(?:, (?:"[^"]*"|0))*) \}', src):
             for name in re.findall(r'"([^"]*)"', m.group(1)): add(name, m.start())
         for m in re.finditer(r'"(Controller|none)"', src): pass
+    if path == "runtime/hints.c":                          # { "Escape", K_TEXT, "Esc" }: the name on a keyboard key
+        for m in re.finditer(r'\{ "[^"]+", K_TEXT, "([^"]+)" \}', src): add(m.group(1), m.start())
     if path == "runtime/cheats.c":                         # { "id", "Name", ...
         for m in re.finditer(r'\{ "\w+", "([^"]+)",', src): add(c_unescape(m.group(1)), m.start())
     return found

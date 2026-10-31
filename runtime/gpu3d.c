@@ -256,6 +256,7 @@ static int clip_coords_equal(const Vtx* a, const Vtx* b) {
  * (a 3D picture inside a menu) is copied unwidened, in the middle. */
 int g_wide_side;
 int g_sign_move;
+int g_sign_crop;
 uint64_t g_sign_frame;
 int g_sign_rect[4], g_sign_dx;
 #define WPOLY_MAX 6144
@@ -346,6 +347,20 @@ static void wide_submit(int nverts, int facing) {
             ytop += GX_SIGN_DY; ybot += GX_SIGN_DY;
             g_sign_frame = g_frame; g_sign_dx = side;
             g_sign_rect[0] = x0 + side; g_sign_rect[1] = y0 + GX_SIGN_DY; g_sign_rect[2] = x1 + side; g_sign_rect[3] = y1 + GX_SIGN_DY;
+            if (g_sign_crop > 0 && g_sign_crop < (x1 - x0) * 16) {   /* cut its button off: the left vertices move right, their texture with them */
+                s32 xl = p->v[0]->hpos[0];
+                for (int i = 1; i < 4; i++) if (p->v[i]->hpos[0] < xl) xl = p->v[i]->hpos[0];
+                for (int i = 0; i < 4; i++) {
+                    Vtx* l = p->v[i]; Vtx* r = NULL;
+                    if (l->hpos[0] > xl + 16) continue;                  /* not a left vertex */
+                    for (int j = 0; j < 4; j++) if (j != i && abs(p->v[j]->hpos[1] - l->hpos[1]) <= 16 && p->v[j]->hpos[0] > xl + 16) r = p->v[j];
+                    if (!r) continue;
+                    s32 d = r->hpos[0] - l->hpos[0];
+                    l->tex[0] += (s32)((s64)(r->tex[0] - l->tex[0]) * g_sign_crop / d);
+                    l->tex[1] += (s32)((s64)(r->tex[1] - l->tex[1]) * g_sign_crop / d);
+                    l->hpos[0] += g_sign_crop;
+                }
+            }
         }
     }
     if (ybot > 192) p->degenerate = 1;
