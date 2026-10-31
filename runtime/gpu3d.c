@@ -341,7 +341,7 @@ static void wide_submit(int nverts, int facing) {
             if (v->pos[3] != p->v[0]->pos[3] || x < 200 || x > 256 || y < 0 || y > 48) sign = 0;
             x0 = x < x0 ? x : x0; x1 = x > x1 ? x : x1; y0 = y < y0 ? y : y0; y1 = y > y1 ? y : y1;
         }
-        if (sign && x1 - x0 <= 40 && y1 - y0 <= 40) {
+        if (sign && x1 - x0 >= 24 && x1 - x0 <= 40 && y1 - y0 >= 24 && y1 - y0 <= 40) {   /* (32 x 32; not a 16 x 16 letter of a menu's list there: Equip's long names) */
             for (int i = 0; i < 4; i++) { p->v[i]->hpos[0] += side * 16; p->v[i]->hpos[1] += GX_SIGN_DY * 16; }
             ytop += GX_SIGN_DY; ybot += GX_SIGN_DY;
             g_sign_frame = g_frame; g_sign_dx = side;

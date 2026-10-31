@@ -276,7 +276,7 @@ static const char* FS_COMP =
     "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
     "uniform int u_only;\n"                                    /* the 3D screen apart: 1 its 2D alone (see-through where the 3D shows), 2 its 3D alone */
     "uniform vec4 u_dlg[4]; uniform int u_ndlg;\n"            /* modern windows: the 3D screen's windows (x0, y0, x1, y1, DS pixels), a line round each */
-    "uniform int u_amb; uniform sampler2D u_ambt;\n"                                     /* widescreen menus (a 3D model over a 2D page): the sides blurred */
+    "uniform int u_amb; uniform sampler2D u_ambt;\n"                                     /* widescreen menus (a 3D model over a 2D page): the sides blurred, list rows see-through */
     "vec3 dlgline(vec3 c, vec2 q) {\n"
     "  for (int i = 0; i < u_ndlg; i++) {\n"
     "    vec4 r = u_dlg[i];\n"
@@ -332,6 +332,16 @@ static const char* FS_COMP =
     "    else if (eff == 2) o = c3 + (1.0 - c3) * evy;\n"
     "    else if (eff == 3) o = c3 - c3 * evy;\n"
     "    else o = c3;\n"
+    /* widescreen menus: Equip's list rows (the game's plain dark grey, and
+     * the chosen row's lighter grey) see-through like the shops' modern
+     * windows: the page shows through a little */
+    "    if (u_amb != 0 && A > 0.99) {\n"
+    "      vec3 g = c3 * 255.0;\n"
+    "      if (abs(g.r - g.g) < 2.0 && abs(g.g - g.b) < 2.0) {\n"
+    "        if (abs(g.r - 28.0) < 4.0) o = mix(c2, vec3(0.08), 0.75);\n"
+    "        else if (abs(g.r - 85.0) < 4.0) o = mix(c2, vec3(0.30), 0.75);\n"
+    "      }\n"
+    "    }\n"
     "  } else {\n"
     "    vec3 under = A > 0.0 ? c3 : c2;\n"
     "    o = min(col * eva + under * evb, vec3(1.0));\n"
@@ -360,6 +370,7 @@ static const char* FS_COMP =
     "    vec3 a = vec3(0.0);\n"
     "    for (int j = -2; j <= 2; j++) a += texture(u_ambt, vec2(ex, y + float(j) * 6.0) / vec2(256.0, 192.0)).rgb * (3.0 - abs(float(j)));\n"
     "    a = a / 9.0 * (0.6 - 0.25 * clamp(d / max(u_wside, 1.0), 0.0, 1.0));\n"
+    "    if (d < 0.75) a = vec3(0.5);\n"   /* a thin grey line along the DS's edge (the modern windows' line): the rows the edge cuts look framed, not broken */
     "    int mba = int(texelFetch(u_c2, ivec2(dsx < 0.0 ? 0 : 255, p2.y), 0).a * 255.0 + 0.5);\n"
     "    float mf = float(mba & 31) / 16.0;\n"
     "    if ((mba >> 5) == 1) a = a + (1.0 - a) * mf; else if ((mba >> 5) == 2) a = a - a * mf;\n"
