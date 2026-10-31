@@ -958,8 +958,11 @@ de = Gasthaus: höchste Stufe und alle Ausbauten (Select drücken)
 en = Time of day: Start+Up for day, Start+Down for night
 de = Tageszeit: Start+Oben für Tag, Start+Unten für Nacht
 
-en = Monsters: HP to 0, any hit finishes them (press B+Start in battle)
-de = Monster: LP auf 0, jeder Treffer erledigt sie (im Kampf B+Start drücken)
+en = Monsters: HP to 0 in battles, any hit finishes them
+de = Monster: LP im Kampf auf 0, jeder Treffer erledigt sie
+
+en = Monsters: always drop their item (the rare one first)
+de = Monster: lassen immer ihren Gegenstand fallen (zuerst den seltenen)
 
 # ---- controls.c
 

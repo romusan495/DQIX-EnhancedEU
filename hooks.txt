@@ -17,3 +17,8 @@ ov017 0218d0ec FieldFrame                  # once a frame on the field
 # chest of a grotto's floor, shown beside its mark.
 main 0201afd0 GrottoFloorObjects           # a grotto's floor: its chests (and the rest) placed
 main 02090018 GrottoChestRank              # ActiveGrottoClass::RandomizeChestRank: one chest's rank (1-10)
+
+# Cheats > Monsters always drop their item (runtime/cheats.c): the battle's
+# end rolls each monster's item with this (a random number below r0; 0 drops
+# it); the hook makes it 0 for those two calls only (rare item, then common).
+main 02032370 RandBelow                    # a random number from 0 to r0 - 1
