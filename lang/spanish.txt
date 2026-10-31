@@ -958,8 +958,11 @@ es = Posada: nivel máximo y todas las mejoras (pulsa Select)
 en = Time of day: Start+Up for day, Start+Down for night
 es = Hora del día: Start+Arriba para el día, Start+Abajo para la noche
 
-en = Monsters: HP to 0, any hit finishes them (press B+Start in battle)
-es = Monstruos: PV a 0, cualquier golpe los remata (pulsa B+Start en combate)
+en = Monsters: HP to 0 in battles, any hit finishes them
+es = Monstruos: PV a 0 en combate, cualquier golpe los remata
+
+en = Monsters: always drop their item (the rare one first)
+es = Monstruos: siempre sueltan su objeto (primero el raro)
 
 # ---- controls.c
 

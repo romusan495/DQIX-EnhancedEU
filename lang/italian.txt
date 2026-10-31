@@ -958,8 +958,11 @@ it = Locanda: livello massimo e tutte le migliorie (premi Select)
 en = Time of day: Start+Up for day, Start+Down for night
 it = Ora del giorno: Start+Su per il giorno, Start+Giù per la notte
 
-en = Monsters: HP to 0, any hit finishes them (press B+Start in battle)
-it = Mostri: PV a 0, ogni colpo li finisce (premi B+Start in battaglia)
+en = Monsters: HP to 0 in battles, any hit finishes them
+it = Mostri: PV a 0 in battaglia, ogni colpo li finisce
+
+en = Monsters: always drop their item (the rare one first)
+it = Mostri: lasciano sempre il loro oggetto (prima quello raro)
 
 # ---- controls.c
 

@@ -958,8 +958,11 @@ fr = Auberge : niveau maximum et toutes les améliorations (appuyez sur Select)
 en = Time of day: Start+Up for day, Start+Down for night
 fr = Heure : Start+Haut pour le jour, Start+Bas pour la nuit
 
-en = Monsters: HP to 0, any hit finishes them (press B+Start in battle)
-fr = Monstres : PV à 0, un coup les achève (appuyez sur B+Start en combat)
+en = Monsters: HP to 0 in battles, any hit finishes them
+fr = Monstres : PV à 0 en combat, un coup les achève
+
+en = Monsters: always drop their item (the rare one first)
+fr = Monstres : lâchent toujours leur objet (le rare d'abord)
 
 # ---- controls.c
 
