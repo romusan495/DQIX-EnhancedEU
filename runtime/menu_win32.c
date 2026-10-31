@@ -1,4 +1,8 @@
 /* Menu bar for the game window on Windows (see menu.h). */
+#if defined(_WIN32) && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0601)
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601        /* QueryDisplayConfig (display_hdr_on): Windows 7 and later */
+#endif
 #include "menu.h"
 #include "controls.h"
 #include "cheats.h"
@@ -187,6 +191,7 @@ static void build(int all, const char* const* shell_names, int n_shells) {
     item(size, MI_SIZE4, L"4x");
     if (all) item(view, MI_INTEGER, L"&Integer scaling");
     item(view, MI_FULL, L"&Fullscreen\tF11");
+    item(view, MI_HDR_FIX, L"Normal &brightness in fullscreen with HDR");
     Menu rd = sub(view, L"&Readability of the options menu (Esc)");
     item(rd, MI_UICONTRAST, L"Stronger &contrast");
     sep(rd);
@@ -384,6 +389,43 @@ int menu_command(const SDL_Event* e) {
 /* The monitor's EDID (in the registry under its device id) holds its
  * physical size: the first detailed timing block in mm, else the basic
  * size in cm. Divided by the monitor's width in pixels. */
+/* Windows HDR on for the window's monitor: the display path whose source is
+ * that monitor, then its "advanced colour" (HDR or, without HDR, the wide
+ * colours of automatic colour management: wideColorEnforced). The structure
+ * is spelled out here (Windows 10 1709+) so older headers still build. */
+typedef struct {
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    UINT32 value;                     /* bit 0 supported, bit 1 enabled, bit 2 wide colour enforced, bit 3 force disabled */
+    UINT32 colorEncoding, bitsPerColorChannel;
+} DqixAdvancedColor;
+int display_hdr_on(SDL_Window* win) {
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(win, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return 0;
+    MONITORINFOEXW mi; mi.cbSize = sizeof mi;
+    if (!GetMonitorInfoW(MonitorFromWindow(info.info.win.window, MONITOR_DEFAULTTONEAREST), (MONITORINFO*)&mi)) return 0;
+    UINT32 np = 0, nm = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &np, &nm) != ERROR_SUCCESS || !np) return 0;
+    DISPLAYCONFIG_PATH_INFO* paths = calloc(np, sizeof *paths);
+    DISPLAYCONFIG_MODE_INFO* modes = calloc(nm ? nm : 1, sizeof *modes);
+    int hdr = 0;
+    if (paths && modes && QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &np, paths, &nm, modes, NULL) == ERROR_SUCCESS) {
+        for (UINT32 i = 0; i < np; i++) {
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME src; memset(&src, 0, sizeof src);
+            src.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME; src.header.size = sizeof src;
+            src.header.adapterId = paths[i].sourceInfo.adapterId; src.header.id = paths[i].sourceInfo.id;
+            if (DisplayConfigGetDeviceInfo(&src.header) != ERROR_SUCCESS || wcscmp(src.viewGdiDeviceName, mi.szDevice)) continue;
+            DqixAdvancedColor ac; memset(&ac, 0, sizeof ac);
+            ac.header.type = (DISPLAYCONFIG_DEVICE_INFO_TYPE)9;   /* DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO */
+            ac.header.size = sizeof ac;
+            ac.header.adapterId = paths[i].targetInfo.adapterId; ac.header.id = paths[i].targetInfo.id;
+            if (DisplayConfigGetDeviceInfo(&ac.header) == ERROR_SUCCESS && (ac.value & 2) && !(ac.value & 4)) { hdr = 1; break; }
+        }
+    }
+    free(paths); free(modes);
+    return hdr;
+}
+
 float display_mm_per_pixel(SDL_Window* win) {
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
@@ -950,6 +992,7 @@ int choice_box(SDL_Window* win, const char* title, const char* text, const char*
                const char* check, int* checked) { (void)win; (void)title; (void)text; (void)buttons; (void)n; (void)def; (void)cancel; (void)check; (void)checked; return -1; }
 char* ask_text(SDL_Window* win, const char* title, const char* prompt) { (void)win; (void)title; (void)prompt; return NULL; }
 float display_mm_per_pixel(SDL_Window* win) { (void)win; return 0; }
+int display_hdr_on(SDL_Window* win) { (void)win; return 0; }
 void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells, int all) { (void)win; build(all, shell_names, n_shells); }
 void menu_show(int on) { (void)on; }
 void menu_init_second(SDL_Window* win) { (void)win; }

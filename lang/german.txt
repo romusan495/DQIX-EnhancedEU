@@ -230,6 +230,9 @@ de = &Ganzzahlige Skalierung
 en = &Fullscreen\tF11
 de = &Vollbild\tF11
 
+en = Normal &brightness in fullscreen with HDR
+de = Normale &Helligkeit im Vollbild mit HDR
+
 en = &Readability of the options menu (Esc)
 de = &Lesbarkeit des Optionsmenüs (Esc)
 

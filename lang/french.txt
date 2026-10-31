@@ -230,6 +230,9 @@ fr = &Mise à l'échelle entière
 en = &Fullscreen\tF11
 fr = &Plein écran\tF11
 
+en = Normal &brightness in fullscreen with HDR
+fr = &Luminosité normale en plein écran avec le HDR
+
 en = &Readability of the options menu (Esc)
 fr = &Lisibilité du menu des options (Échap)
 

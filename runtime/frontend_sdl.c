@@ -70,6 +70,7 @@ static int g_swap;                                                /* the screens
 static int g_two;                                                 /* two windows, one screen in each (two monitors) */
 static SDL_Window* g_win2;                                        /* ...the second one (the top screen, or the bottom one when swapped) */
 static int g_win2_full, g_win2_rect[4];                           /* ...fullscreen; where it was as a window (w = 0: not yet) */
+static int g_hdr_fix = 1;                                         /* fullscreen with Windows HDR on: a borderless window, not SDL's fullscreen (window_fullscreen) */
 static int g_wide_pop = 0;                                        /* widescreen: the small screen in its own window (the field alone; no longer offered) */
 static int g_hints = 1;                                           /* the DS buttons the game shows ("X Menu"): the player's own (hints.c) */
 static int g_hint_pad = -1;                                       /* ...the last used: 1 the controller, 0 the keyboard, -1 not yet */
@@ -713,6 +714,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "button_hints")) g_hints = atoi(val) != 0;
         else if (!strcmp(key, "walk_any_direction")) g_analog_walk = atoi(val) != 0;   /* (the older analog_walk, off by default then, is ignored) */
         else if (!strcmp(key, "fullscreen")) g_fullscreen = atoi(val) != 0;
+        else if (!strcmp(key, "hdr_fullscreen_fix")) g_hdr_fix = atoi(val) != 0;
         else if (!strcmp(key, "dslite_filter")) g_opt.lcd = atoi(val) != 0;
         else if (!strcmp(key, "lcd_colors")) g_opt.lcd_color = atoi(val) != 0;
         else if (!strcmp(key, "pixel_grid")) g_opt.grid = atoi(val) != 0;
@@ -833,6 +835,8 @@ static void settings_save(void) {
     fprintf(f, "button_hints = %d\n", g_hints);
     fprintf(f, "# 0 or 1 (F11)\n");
     fprintf(f, "fullscreen = %d\n", g_fullscreen);
+    fprintf(f, "# fullscreen while Windows HDR is on: 1 = a borderless window (normal brightness), 0 = the usual fullscreen\n");
+    fprintf(f, "hdr_fullscreen_fix = %d\n", g_hdr_fix);
     fprintf(f, "# DS Lite screen filter (F6) and its parts: 0 or 1; backlight: low, medium, high, max\n");
     fprintf(f, "dslite_filter = %d\n", g_opt.lcd);
     fprintf(f, "lcd_colors = %d\n", g_opt.lcd_color);
@@ -1038,6 +1042,51 @@ static void window_icon(void) { window_icon_for(g_win); }
 static void second_window_title(void) {
     if (g_win2) SDL_SetWindowTitle(g_win2, g_wide ? "Dragon Quest IX - map and commands" : g_swap ? "Dragon Quest IX - bottom screen" : "Dragon Quest IX - top screen");
 }
+/* Fullscreen. SDL's own (a borderless window exactly the monitor's size) lets
+ * Windows and the graphics driver take the picture straight to the screen
+ * (independent flip; with an NVIDIA card OpenGL then goes through a DXGI swap
+ * chain, which Auto HDR treats as an HDR game). With Windows HDR on, the
+ * game's ordinary (SDR) colours then skip the "SDR content brightness" setting
+ * and show at full brightness. With hdr_fullscreen_fix and HDR on, the window
+ * is instead borderless and one pixel taller than the monitor: Windows keeps
+ * drawing it like any window (as it does when the game is windowed), with the
+ * player's SDR brightness. Without HDR nothing changes. DQIX_HDR_FORCE=1:
+ * as if HDR were on (tests). */
+typedef struct { int on, x, y, w, h, max; } Borderless;   /* on: fullscreen this way; where it was as a window */
+static Borderless g_bl_main, g_bl_second;
+static int hdr_fix_wanted(SDL_Window* win) {
+    if (!g_hdr_fix) return 0;
+    const char* e = getenv("DQIX_HDR_FORCE");
+    return e ? atoi(e) != 0 : display_hdr_on(win);
+}
+static void borderless_leave(SDL_Window* win, Borderless* b) {
+    if (!b->on) return;
+    b->on = 0;
+    SDL_SetWindowBordered(win, SDL_TRUE);
+    SDL_SetWindowSize(win, b->w, b->h);
+    SDL_SetWindowPosition(win, b->x, b->y);
+    if (b->max) SDL_MaximizeWindow(win);
+}
+static void window_fullscreen(SDL_Window* win, Borderless* b, int on) {
+    if (!win) return;
+    if (!on) { SDL_SetWindowFullscreen(win, 0); borderless_leave(win, b); return; }
+    SDL_Rect r; int d = SDL_GetWindowDisplayIndex(win);
+    if (!hdr_fix_wanted(win) || d < 0 || SDL_GetDisplayBounds(d, &r) != 0) {
+        borderless_leave(win, b);
+        SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        return;
+    }
+    if (b->on) return;
+    SDL_SetWindowFullscreen(win, 0);                         /* (SDL's fullscreen first: the option was just ticked) */
+    b->max = (SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED) != 0;
+    if (b->max) SDL_RestoreWindow(win);
+    SDL_GetWindowPosition(win, &b->x, &b->y); SDL_GetWindowSize(win, &b->w, &b->h);
+    SDL_SetWindowBordered(win, SDL_FALSE);
+    SDL_SetWindowPosition(win, r.x, r.y);
+    SDL_SetWindowSize(win, r.w, r.h + 1);                    /* (the extra row is under the monitor's bottom edge) */
+    b->on = 1;
+}
+
 static void second_window_keep_rect(void) {                     /* remember where it is (as a window) */
     if (!g_win2 || g_win2_full) return;
     SDL_GetWindowPosition(g_win2, &g_win2_rect[0], &g_win2_rect[1]);
@@ -1076,7 +1125,7 @@ static void second_window_sync(void) {
     second_window_title();
     if (SDL_GL_MakeCurrent(g_win2, g_glctx) == 0) SDL_GL_SetSwapInterval(0);
     SDL_GL_MakeCurrent(g_win, g_glctx);
-    if (g_win2_full) { menu_show_second(0); SDL_SetWindowFullscreen(g_win2, SDL_WINDOW_FULLSCREEN_DESKTOP); }
+    if (g_win2_full) { menu_show_second(0); window_fullscreen(g_win2, &g_bl_second, 1); }
     SDL_RaiseWindow(g_win);                                      /* the keyboard stays with the game's window */
 }
 static void second_window_fullscreen(void) {
@@ -1084,7 +1133,7 @@ static void second_window_fullscreen(void) {
     if (!g_win2_full) second_window_keep_rect();
     g_win2_full = !g_win2_full;
     menu_show_second(!g_win2_full);
-    SDL_SetWindowFullscreen(g_win2, g_win2_full ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    window_fullscreen(g_win2, &g_bl_second, g_win2_full);
 }
 
 static void lobby_hook(void);
@@ -1153,7 +1202,7 @@ void frontend_init(int argc, char** argv) {
         update_actual();
         menu_sync();
         layout_window();
-        if (g_fullscreen) { menu_show(0); SDL_SetWindowFullscreen(g_win, SDL_WINDOW_FULLSCREEN_DESKTOP); }
+        if (g_fullscreen) { menu_show(0); window_fullscreen(g_win, &g_bl_main, 1); }
         second_window_sync();
         atexit(settings_save);
         session_lobby_hook = lobby_hook;
@@ -2388,6 +2437,7 @@ static void menu_sync(void) {
     menu_check(MI_INTEGER, g_opt.integer); menu_enable(MI_INTEGER, !g_opt.actual);
     menu_check(MI_ACTUAL, g_opt.actual); menu_enable(MI_ACTUAL, g_gl);
     menu_check(MI_FULL, g_fullscreen);
+    menu_check(MI_HDR_FIX, g_hdr_fix);
 }
 
 static const char* CONTROLS_TEXT =
@@ -3135,8 +3185,13 @@ static void do_action(int id) {
         g_fullscreen = !g_fullscreen;
         g_menu_peek = 0;
         menu_show(!g_fullscreen);
-        SDL_SetWindowFullscreen(g_win, g_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+        window_fullscreen(g_win, &g_bl_main, g_fullscreen);
         relayout = !g_fullscreen;
+        break;
+    case MI_HDR_FIX:                                           /* fullscreen now: it changes at once */
+        g_hdr_fix = !g_hdr_fix;
+        if (g_fullscreen) window_fullscreen(g_win, &g_bl_main, 1);
+        if (g_win2_full) window_fullscreen(g_win2, &g_bl_second, 1);
         break;
     case MI_CONTROLS: info_box(SDL_MESSAGEBOX_INFORMATION, "Controls", CONTROLS_TEXT, g_win); break;
     case MI_UPDATE: update_menu(); break;
