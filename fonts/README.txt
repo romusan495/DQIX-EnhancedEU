@@ -13,9 +13,3 @@ there with all_options = 1 in settings.ini.
 Nunito.ttf and Fredoka.ttf are the medium (500) weight cut out of the
 variable fonts with fontTools' instancer: their default weights are too thin
 for the game's small letters. Neither has a Reserved Font Name.
-
-PixelifySans-Bold.ttf and Jersey10.ttf: the keyboard key under the "X Menu"
-sign (hints.c), drawn in pixels like the game's own button: Pixelify Sans
-Bold for one or two characters, Jersey 10 (narrow) for a key's name. Both are
-Fontsource's Latin subsets of the Google Fonts files (unchanged glyphs),
-under the SIL Open Font License 1.1, without a Reserved Font Name.

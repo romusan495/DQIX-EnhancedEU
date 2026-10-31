@@ -1999,8 +1999,12 @@ static void map_overlay(GlPresent* v, SDL_Window* win, int a_on_top) {
 #define SIGN_BTN_X 6.4f
 #define SIGN_BTN_Y 23.8f
 #define SIGN_BTN_R 4.8f
+#define SIGN_KEY_X1 9                                             /* the button in the sign's texture: columns 1-9, rows 19-27 */
+#define SIGN_KEY_Y 19
+#define SIGN_KEY_H 9
+#define KEY_PX 8
 static void hint_update(GlPresent* v) {
-    static uint8_t img[3 * HINT_PX * HINT_PX * 4];                /* a key's picture: up to 3 times as wide as high */
+    static uint8_t img[64 * KEY_PX * SIGN_KEY_H * KEY_PX * 4];    /* a key's picture: up to 64 DS pixels wide (>= HINT_PX squared) */
     static char shown[96];
     int side = 0, pad = g_hint_pad < 0 ? g_pad != NULL : g_hint_pad && g_pad;
     if (!g_hints || !g_sign_move || g_frame - g_sign_frame >= 4 || gl_wide_shown(&side) != 1 || v->bot[2] <= 0 || v->botx[1] <= 0) return;
@@ -2030,15 +2034,21 @@ static void hint_update(GlPresent* v) {
         static const char* k = (const char*)-1; if (k == (const char*)-1) k = getenv("DQIX_HINT_KEY");   /* tests: a key's name ("Return", "é") */
         if (k && style == HINT_KEYBOARD) snprintf(lab, sizeof lab, "%s", k);
     }
-    float aspect = style == HINT_KEYBOARD ? hint_key_aspect(lab) : 1;
-    int w = (int)lroundf(HINT_PX * aspect);
-    snprintf(key, sizeof key, "%d %d %s", style, face, lab);
-    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); memset(img, 0, sizeof img); hint_draw(img, w, HINT_PX, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, w, HINT_PX); }
-    float kx = v->bot[2] / v->botx[1], ky = v->bot[3] / 192.0f, r = SIGN_BTN_R + 0.5f;
-    float cx = (float)g_sign_rect[0] + SIGN_BTN_X, cy = (float)g_sign_rect[1] + SIGN_BTN_Y;
+    float kx = v->bot[2] / v->botx[1], ky = v->bot[3] / 192.0f;
     float* q = v->layer[GL_LAYER_HINT];
-    q[0] = v->bot[0] + (cx + r - 2 * r * aspect - v->botx[0] + (float)side) * kx; q[1] = v->bot[1] + (cy - r) * ky;   /* a long key grows to the left: its right edge stays */
-    q[2] = 2 * r * aspect * kx; q[3] = 2 * r * ky;
+    snprintf(key, sizeof key, "%d %d %s", style, face, lab);
+    if (style == HINT_KEYBOARD) {   /* on the game's button, pixel for pixel (KEY_PX picture pixels a DS pixel); a long key grows to the left */
+        int cols = (int)lroundf(hint_key_aspect(lab) * SIGN_KEY_H), w = cols * KEY_PX, h = SIGN_KEY_H * KEY_PX;
+        if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hint_draw(img, w, h, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, w, h); }
+        q[0] = v->bot[0] + ((float)(g_sign_rect[0] + SIGN_KEY_X1 + 1 - cols) - v->botx[0] + (float)side) * kx;
+        q[1] = v->bot[1] + (float)(g_sign_rect[1] + SIGN_KEY_Y) * ky;
+        q[2] = (float)cols * kx; q[3] = (float)SIGN_KEY_H * ky;
+        return;
+    }
+    if (strcmp(key, shown)) { snprintf(shown, sizeof shown, "%s", key); hint_draw(img, HINT_PX, HINT_PX, style, face, lab); gl_set_layer(GL_LAYER_HINT, img, HINT_PX, HINT_PX); }
+    float r = SIGN_BTN_R + 0.5f, cx = (float)g_sign_rect[0] + SIGN_BTN_X, cy = (float)g_sign_rect[1] + SIGN_BTN_Y;
+    q[0] = v->bot[0] + (cx - r - v->botx[0] + (float)side) * kx; q[1] = v->bot[1] + (cy - r) * ky;
+    q[2] = 2 * r * kx; q[3] = 2 * r * ky;
 }
 
 /* textures-hd at work (textures-hd-progress.txt, next to the game): a bar at

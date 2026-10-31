@@ -11,6 +11,7 @@ enum { HINT_RIGHT, HINT_BOTTOM, HINT_TOP, HINT_LEFT, HINT_OTHER };   /* a face b
  * which one by position; HINT_OTHER: label on a dark plate). */
 void hint_draw(uint8_t* rgba, int w, int h, int style, int face, const char* label);
 
-/* A keyboard key's picture, width / height (1: an octagon; more: a long one for
- * a name). label: SDL's scancode name, or the character the key types. */
+/* A keyboard key's picture, width / height (1: the game's 9 x 9 button; more:
+ * a long one for a name). label: SDL's scancode name, or the character the key
+ * types. It is drawn on the DS's pixels: 9 high, width 9 * this. */
 float hint_key_aspect(const char* label);

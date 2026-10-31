@@ -338,7 +338,7 @@ static void wide_submit(int nverts, int facing) {
         int sign = 1, x0 = 1 << 20, x1 = -(1 << 20), y0 = 1 << 20, y1 = -(1 << 20);
         for (int i = 0; i < 4 && sign; i++) {
             const Vtx* v = p->v[i];
-            int x = v->hpos[0] / 16 - side, y = v->hpos[1] / 16;
+            int x = (v->hpos[0] + 8) / 16 - side, y = (v->hpos[1] + 8) / 16;   /* nearest pixel: the sign is at 277.94, not 277 */
             if (v->pos[3] != p->v[0]->pos[3] || x < 200 || x > 256 || y < 0 || y > 48) sign = 0;
             x0 = x < x0 ? x : x0; x1 = x > x1 ? x : x1; y0 = y < y0 ? y : y0; y1 = y > y1 ? y : y1;
         }
