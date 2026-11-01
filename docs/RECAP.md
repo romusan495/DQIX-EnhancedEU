@@ -35,7 +35,7 @@ entrées) avec SDL2 et OpenGL.
 
 - Projet d'origine : `sackchief/dqix-enhanced` (fonctionnait seulement avec la
   ROM américaine).
-- Ce fork : `romusan495/DQIX-EnhancedEU`, tenu par Romuald avec Claude depuis le
+- Ce fork : `romusan495/Dragon-Quest-IX-Modern`, tenu par Romuald avec Claude depuis le
   19 octobre 2026.
 - Point de départ : **corriger la ROM européenne** (fait le 19/10). Depuis, le
   fork est devenu une **modernisation façon jeu PC** : un seul écran, fenêtres
@@ -60,7 +60,7 @@ fusionnées dans `main` du 21 au 29 octobre ; 10 versions publiées (v31.1 à v3
 
 | Quoi | Où | Remarque |
 |---|---|---|
-| Code source (seule référence) | GitHub `romusan495/DQIX-EnhancedEU`, branche `main` | Public. Jamais de ROM ni de données du jeu. |
+| Code source (seule référence) | GitHub `romusan495/Dragon-Quest-IX-Modern`, branche `main` | Public. Jamais de ROM ni de données du jeu. |
 | Branche des joueurs | `stable` (+ tags `v31.N`) | Lue par Aide > Rechercher des mises à jour. |
 | Fork pour proposer au projet d'origine | `romusan495/dqix-enhanced` | Sert seulement aux PR vers sackchief. |
 | Projet d'origine | `sackchief/dqix-enhanced` | En v32 depuis le 27/10 (non porté ici, choix de Romuald). |
@@ -282,7 +282,7 @@ Abandonné à la demande de Romuald : comparaison d'équipement dans les magasin
 
 ## 7. Ce qui a été fait, par thème
 
-PR = pull request fusionnée dans `main` de `romusan495/DQIX-EnhancedEU`.
+PR = pull request fusionnée dans `main` de `romusan495/Dragon-Quest-IX-Modern`.
 
 ### ROM européenne et langues
 - Correctif ROM EU (19/10) : décalage des adresses ARM9, stubs BIOS réordonnés,
@@ -486,7 +486,7 @@ règles, suivi), sauf les données du jeu, qui passent d'humain à humain.
 Pour retrouver la même organisation que Romuald avec son propre Claude :
 
 1. **Accès GitHub** : Romuald l'ajoute comme **collaborateur** de
-   `romusan495/DQIX-EnhancedEU` (décidé le 29/10) : il pousse ses branches
+   `romusan495/Dragon-Quest-IX-Modern` (décidé le 29/10) : il pousse ses branches
    `remake/…` directement sur le dépôt. Connecter GitHub à Claude et installer
    l'application Claude sur le dépôt.
 2. **Créer un projet Claude** (claude.ai, Claude Code sur le web) avec ce dépôt
@@ -512,7 +512,7 @@ Tu travailles sur un portage natif PC de Dragon Quest IX déjà très modifié,
 avec une autre équipe Claude (celle de Romuald) sur le même dépôt.
 
 Au démarrage : lis CLAUDE.md, docs/roles/, docs/SUIVI.md et docs/RECAP.md
-du dépôt romusan495/DQIX-EnhancedEU. Regarde les PR ouvertes avant de
+du dépôt romusan495/Dragon-Quest-IX-Modern. Regarde les PR ouvertes avant de
 commencer un sujet.
 
 Obligatoire

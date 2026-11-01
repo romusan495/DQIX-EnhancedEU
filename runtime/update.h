@@ -11,7 +11,7 @@
 #pragma once
 #include <stddef.h>
 
-#define UPDATE_REPO "romusan495/DQIX-EnhancedEU"
+#define UPDATE_REPO "romusan495/Dragon-Quest-IX-Modern"
 
 typedef struct {
     int ok;                       /* both versions were read */

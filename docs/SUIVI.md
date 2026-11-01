@@ -53,7 +53,7 @@ releases v31.1 à v31.9.
 
 | Date | Décision | Raison |
 |---|---|---|
-| 2026-10-21 | Le dépôt `romusan495/DQIX-EnhancedEU` est la seule source ; le dossier de jeu ne change que par `git pull --ff-only` + BUILD.bat. | Des éditions directes dans le dossier de jeu ne revenaient pas au dépôt. |
+| 2026-10-21 | Le dépôt `romusan495/Dragon-Quest-IX-Modern` est la seule source ; le dossier de jeu ne change que par `git pull --ff-only` + BUILD.bat. | Des éditions directes dans le dossier de jeu ne revenaient pas au dépôt. |
 | 2026-10-21 | Méthode 5 (IA + original mélangés) pour toutes les textures HD. | Choix de Romuald après comparaison. |
 | 2026-10-21 | 5 rôles, un thread par fonctionnalité, un worktree par thread de dev. | Plan de réorganisation validé. |
 | 2026-10-22 | Release GitHub hebdomadaire : sources seules (jamais ROM, exe ni données du jeu), publiée après le feu vert de Romuald. | Choix de Romuald ; seul son PC peut vérifier le build. |

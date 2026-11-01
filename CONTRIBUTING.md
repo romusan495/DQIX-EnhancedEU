@@ -1,6 +1,6 @@
 # Working on this fork
 
-This repository (`romusan495/DQIX-EnhancedEU`) is the single source of truth for
+This repository (`romusan495/Dragon-Quest-IX-Modern`) is the single source of truth for
 the code. Two folders on the play PC use it:
 
 | Folder | What it is |

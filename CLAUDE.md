@@ -1,4 +1,4 @@
-# DQIX Enhanced (fork romusan495/DQIX-EnhancedEU)
+# DQIX Enhanced (fork romusan495/Dragon-Quest-IX-Modern)
 
 Dragon Quest IX (DS) recompilé en C et exécuté nativement sur PC. Code :
 `recomp/` (recompilateur Python), `runtime/` (C : CPU, GPU 2D/3D, son, Wi-Fi,
@@ -9,7 +9,7 @@ Tâches en cours et décisions : **`docs/SUIVI.md`** (à lire en début de sessi
 Réponds en français. Messages de commit, noms de branches et PR en anglais.
 
 ## Où vit quoi
-- Dépôt GitHub `romusan495/DQIX-EnhancedEU`, branche `main` = seule source du code.
+- Dépôt GitHub `romusan495/Dragon-Quest-IX-Modern`, branche `main` = seule source du code.
 - `J:\DQIX-Enhanced-repo` = clone de dev, reste sur `main` (rôle Intégration).
 - `J:\DQIX-wt\<role>-<sujet>` = un worktree par thread de dev (voir plus bas).
 - `J:\DQIX-Enhanced` = dossier où Romuald joue (checkout de `main`).

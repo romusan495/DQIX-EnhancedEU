@@ -1,6 +1,6 @@
 # Where the project stands
 
-> **This fork (romusan495/DQIX-EnhancedEU)** makes its own weekly releases,
+> **This fork (romusan495/Dragon-Quest-IX-Modern)** makes its own weekly releases,
 > v31.1 to v31.11, then whole numbers from v32 (v32, v33...; procedure:
 > `docs/roles/integration.md`): tag `vN`,
 > branch `stable` moved to it, notes in `release-notes/`. Help > Check for
