@@ -20,9 +20,8 @@ Ce n'est pas un émulateur : le code ARM du jeu est **recompilé en C**, puis li
 à un runtime qui recrée le matériel de la DS (2D, 3D, son, cartouche, entrées)
 avec SDL2 et OpenGL.
 
-Ce dépôt est un fork de [sackchief/dqix-enhanced](https://github.com/sackchief/dqix-enhanced),
-qui ne fonctionnait qu'avec la ROM américaine. Il est tenu par Romuald depuis
-le 19 octobre 2026, avec l'aide de Claude.
+Projet développé par **Romuald** ([romusan495](https://github.com/romusan495))
+et **TitanFr199**, avec l'aide de Claude.
 
 > **Droits et usage — à lire.** Ce projet est réalisé **à des fins éducatives
 > uniquement** (étude de la recompilation et de la préservation des jeux).
@@ -40,8 +39,7 @@ le 19 octobre 2026, avec l'aide de Claude.
 ### ROM européenne et langues
 - **Correctif de la ROM européenne** : le code ARM9 de la version EU est décalé
   de 16 octets par rapport à la version USA ; les adresses sont maintenant
-  converties automatiquement. Le correctif a été repris par le projet
-  d'origine.
+  converties automatiquement.
 - **Menu Langue** : anglais, français, allemand, italien, espagnol.
 - Les sauvegardes passent de la version USA à la version EU et inversement.
 - **Interface PC traduite** en 5 langues (barre de menus, fenêtres, menu
@@ -105,7 +103,7 @@ le 19 octobre 2026, avec l'aide de Claude.
   toutes les directions.
 - Rapport de bug complet avec F10.
 
-### Hérité du projet d'origine
+### Autres fonctions
 - Multijoueur (mode Tag et coopération jusqu'à 4) par Internet, boutique
   **DQVC** et quêtes téléchargeables hors ligne, mises à jour automatiques.
 
@@ -189,9 +187,9 @@ version) into a native Windows program, built on your PC from the ROM you
 dumped from your cartridge. **This repository contains no game data**: no
 code, graphics, music or ROM. It isn't an emulator: the game's ARM code is
 **recompiled into C** and linked to a runtime that rebuilds the DS hardware
-with SDL2 and OpenGL. It is a fork of
-[sackchief/dqix-enhanced](https://github.com/sackchief/dqix-enhanced), which
-only worked with the USA ROM.
+with SDL2 and OpenGL. Developed by **Romuald**
+([romusan495](https://github.com/romusan495)) and **TitanFr199**, helped by
+Claude.
 
 > **Rights and use, please read.** This project is for **educational purposes
 > only** (studying recompilation and game preservation). Dragon Quest IX and
@@ -219,7 +217,7 @@ only worked with the USA ROM.
 - **Journal** (quests, party, vocations, alchemy, items), **faster battles**
   (up to x4), **autosave**, **Action Replay cheats** menu (all off by default),
   gold farming, remappable keyboard and controller, F10 bug reports.
-- From the original project: online multiplayer, offline DQVC and downloadable
+- Also: online multiplayer, offline DQVC and downloadable
   quests, self-updating.
 - **Weekly releases** from v31.1 to **v40**, 90+ merged pull requests, a smoke
   test on both EU and USA before each merge.
@@ -234,10 +232,9 @@ choose your own ROM (Windows 10/11 64-bit, about 3 GB free). Or put your ROM in
 
 ## Crédits / Credits
 
-- Projet d'origine / original project : **sackchief** ([dqix-enhanced](https://github.com/sackchief/dqix-enhanced)).
-- Fork EU et modernisation / EU fork and modernisation : **Romuald**
-  ([romusan495](https://github.com/romusan495)), avec / with **Tsu**, et l'aide
-  de / helped by Claude.
+- Projet / project : **Romuald** ([romusan495](https://github.com/romusan495))
+  et / and **TitanFr199** ([TitanFr199](https://github.com/TitanFr199)), avec
+  l'aide de / helped by Claude.
 - Noms et limites des fonctions : projet de décompilation de Dragon Quest IX
   (domaine public). Puce Wi-Fi, rendu 3D et son : recherches de l'émulateur
   melonDS. / Function names and boundaries from the public-domain DQIX
