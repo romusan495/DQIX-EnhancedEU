@@ -1,4 +1,4 @@
-# DQIX Enhanced EU
+# Dragon Quest IX Modern
 
 **Dragon Quest IX : Les Sentinelles du firmament, en vrai jeu PC.**
 *English version below: [jump to English](#english).*
