@@ -56,7 +56,7 @@ et **TitanFr199**, avec l'aide de Claude.
 - Fiches d'objets et d'équipement en **pop-up**, **magasins** sur un seul
   écran avec fiche d'objet moderne.
 - **Création du personnage sur un seul écran** (choix en pop-up, nom tapé au
-  clavier en option), aussi chez Patty pour les compagnons.
+  clavier en option), aussi chez Tulipe pour les compagnons.
 - **Écran large 16:9 et 21:9** : l'image suit la forme de la fenêtre ou de
   l'écran, sans bandes noires ; côtés des menus floutés.
 - Tableau des points de compétence à côté des caractéristiques.
