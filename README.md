@@ -126,7 +126,7 @@ ou américaine), Windows 10 ou 11 (64 bits), environ 3 Go libres, et Internet la
 première fois.
 
 1. Téléchargez la dernière version sur la
-   **[page des versions](https://github.com/romusan495/DQIX-EnhancedEU/releases)**
+   **[page des versions](https://github.com/romusan495/Dragon-Quest-IX-Modern/releases)**
    (*Source code (zip)*) et décompressez-la.
 2. Double-cliquez sur **`Install Dragon Quest IX.bat`**, choisissez votre ROM
    (la fenêtre indique sa version), le dossier du jeu et les raccourcis.
@@ -223,7 +223,7 @@ Claude.
   test on both EU and USA before each merge.
 
 **Install**: download the latest
-**[release](https://github.com/romusan495/DQIX-EnhancedEU/releases)**
+**[release](https://github.com/romusan495/Dragon-Quest-IX-Modern/releases)**
 (*Source code (zip)*), unzip it, double-click `Install Dragon Quest IX.bat` and
 choose your own ROM (Windows 10/11 64-bit, about 3 GB free). Or put your ROM in
 `rom` and run `BUILD.bat`. The game then updates itself and keeps your saves.
